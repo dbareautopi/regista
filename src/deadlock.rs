@@ -41,20 +41,15 @@ pub fn analyze(stories: &[Story], graph: &DependencyGraph) -> DeadlockResolution
     }
 
     // 2. ¿Está todo en terminal?
-    let non_terminal: Vec<&Story> = stories
-        .iter()
-        .filter(|s| !s.status.is_terminal())
-        .collect();
+    let non_terminal: Vec<&Story> = stories.iter().filter(|s| !s.status.is_terminal()).collect();
 
     if non_terminal.is_empty() {
         return DeadlockResolution::PipelineComplete;
     }
 
     // 3. Construir mapa status para consultas rápidas
-    let status_map: HashMap<&str, Status> = stories
-        .iter()
-        .map(|s| (s.id.as_str(), s.status))
-        .collect();
+    let status_map: HashMap<&str, Status> =
+        stories.iter().map(|s| (s.id.as_str(), s.status)).collect();
 
     // 4. Encontrar candidatas stuck y puntuarlas
     struct Candidate {
@@ -115,9 +110,7 @@ pub fn analyze(stories: &[Story], graph: &DependencyGraph) -> DeadlockResolution
                     candidates.push(Candidate {
                         id: story.id.clone(),
                         unblocks,
-                        reason: format!(
-                            "en ciclo de dependencias — PO debe romper el ciclo"
-                        ),
+                        reason: "en ciclo de dependencias — PO debe romper el ciclo".to_string(),
                     });
                     continue;
                 }
@@ -274,7 +267,9 @@ mod tests {
         let result = analyze(&stories, &graph);
 
         match result {
-            DeadlockResolution::InvokePoFor { story_id, reason, .. } => {
+            DeadlockResolution::InvokePoFor {
+                story_id, reason, ..
+            } => {
                 assert!(reason.contains("ciclo"));
                 assert!(story_id == "STORY-001" || story_id == "STORY-002");
             }
@@ -310,9 +305,14 @@ mod tests {
         let result = analyze(&stories, &graph);
 
         match result {
-            DeadlockResolution::InvokePoFor { story_id, unblocks, .. } => {
+            DeadlockResolution::InvokePoFor {
+                story_id, unblocks, ..
+            } => {
                 // STORY-003 bloquea 2 historias, STORY-001 solo 1
-                assert_eq!(story_id, "STORY-003", "Debe priorizar la que más desbloquea");
+                assert_eq!(
+                    story_id, "STORY-003",
+                    "Debe priorizar la que más desbloquea"
+                );
                 assert_eq!(unblocks, 2);
             }
             _ => panic!("Expected InvokePoFor, got {result:?}"),

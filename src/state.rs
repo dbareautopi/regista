@@ -76,8 +76,16 @@ impl Status {
         // ── PO ──────────────────────────────────────────────────
         Transition::new(Status::Draft, Status::Ready, Actor::ProductOwner),
         Transition::new(Status::BusinessReview, Status::Done, Actor::ProductOwner),
-        Transition::new(Status::BusinessReview, Status::InReview, Actor::ProductOwner),
-        Transition::new(Status::BusinessReview, Status::InProgress, Actor::ProductOwner),
+        Transition::new(
+            Status::BusinessReview,
+            Status::InReview,
+            Actor::ProductOwner,
+        ),
+        Transition::new(
+            Status::BusinessReview,
+            Status::InProgress,
+            Actor::ProductOwner,
+        ),
         // ── QA ──────────────────────────────────────────────────
         Transition::new(Status::Ready, Status::TestsReady, Actor::QaEngineer),
         Transition::new(Status::Ready, Status::Draft, Actor::QaEngineer),
@@ -95,10 +103,7 @@ impl Status {
     /// Transiciones permitidas DESDE este estado.
     #[allow(dead_code)]
     pub fn allowed_from(&self) -> Vec<&'static Transition> {
-        Self::ALL
-            .iter()
-            .filter(|t| t.from == *self)
-            .collect()
+        Self::ALL.iter().filter(|t| t.from == *self).collect()
     }
 
     /// ¿Es válida la transición de `self` a `target` ejecutada por `actor`?
@@ -193,9 +198,7 @@ mod tests {
 
     #[test]
     fn businessreview_to_done_by_po() {
-        assert!(
-            Status::BusinessReview.can_transition_to(Status::Done, Actor::ProductOwner)
-        );
+        assert!(Status::BusinessReview.can_transition_to(Status::Done, Actor::ProductOwner));
     }
 
     // ── Rechazos ────────────────────────────────────────────────────
@@ -207,16 +210,12 @@ mod tests {
 
     #[test]
     fn businessreview_to_inreview_by_po() {
-        assert!(
-            Status::BusinessReview.can_transition_to(Status::InReview, Actor::ProductOwner)
-        );
+        assert!(Status::BusinessReview.can_transition_to(Status::InReview, Actor::ProductOwner));
     }
 
     #[test]
     fn businessreview_to_inprogress_by_po() {
-        assert!(
-            Status::BusinessReview.can_transition_to(Status::InProgress, Actor::ProductOwner)
-        );
+        assert!(Status::BusinessReview.can_transition_to(Status::InProgress, Actor::ProductOwner));
     }
 
     #[test]
@@ -262,8 +261,18 @@ mod tests {
 
     #[test]
     fn done_cannot_transition_to_anything() {
-        for target in [Status::Ready, Status::InReview, Status::BusinessReview, Status::Draft] {
-            for actor in [Actor::ProductOwner, Actor::QaEngineer, Actor::Developer, Actor::Reviewer] {
+        for target in [
+            Status::Ready,
+            Status::InReview,
+            Status::BusinessReview,
+            Status::Draft,
+        ] {
+            for actor in [
+                Actor::ProductOwner,
+                Actor::QaEngineer,
+                Actor::Developer,
+                Actor::Reviewer,
+            ] {
                 assert!(
                     !Status::Done.can_transition_to(target, actor),
                     "Done should not transition to {target} by {actor}"

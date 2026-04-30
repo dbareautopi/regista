@@ -493,6 +493,7 @@ dependencies = [
  "glob",
  "regex",
  "serde",
+ "serde_json",
  "tempfile",
  "toml",
  "tracing",

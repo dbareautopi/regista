@@ -9,7 +9,7 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
 /// Configuración completa del orquestador.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct Config {
     pub project: ProjectConfig,
@@ -93,13 +93,17 @@ pub struct LimitsConfig {
     /// Delay base en segundos para el backoff exponencial entre reintentos.
     #[serde(default = "default_retry_delay_base")]
     pub retry_delay_base_seconds: u64,
+
+    /// Máximo de iteraciones del bucle groom→validate→corregir.
+    #[serde(default = "default_groom_max_iterations")]
+    pub groom_max_iterations: u32,
 }
 
 /// Comandos opcionales de verificación post-fase.
 ///
 /// Si un hook falla (exit code ≠ 0), se hace rollback del paso.
 /// Si no se define, esa fase no tiene verificación.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct HooksConfig {
     /// Comando a ejecutar después de que QA escriba tests.
@@ -169,6 +173,9 @@ fn default_max_wall_time() -> u64 {
 fn default_retry_delay_base() -> u64 {
     10
 }
+fn default_groom_max_iterations() -> u32 {
+    5
+}
 fn default_git_enabled() -> bool {
     true
 }
@@ -207,16 +214,7 @@ impl Default for LimitsConfig {
             agent_timeout_seconds: default_agent_timeout(),
             max_wall_time_seconds: default_max_wall_time(),
             retry_delay_base_seconds: default_retry_delay_base(),
-        }
-    }
-}
-
-impl Default for HooksConfig {
-    fn default() -> Self {
-        Self {
-            post_qa: None,
-            post_dev: None,
-            post_reviewer: None,
+            groom_max_iterations: default_groom_max_iterations(),
         }
     }
 }
@@ -225,18 +223,6 @@ impl Default for GitConfig {
     fn default() -> Self {
         Self {
             enabled: default_git_enabled(),
-        }
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            project: ProjectConfig::default(),
-            agents: AgentsConfig::default(),
-            limits: LimitsConfig::default(),
-            hooks: HooksConfig::default(),
-            git: GitConfig::default(),
         }
     }
 }
@@ -310,7 +296,10 @@ mod tests {
         let cfg = Config::default();
         assert_eq!(cfg.project.stories_dir, "product/stories");
         assert_eq!(cfg.project.story_pattern, "STORY-*.md");
-        assert_eq!(cfg.agents.product_owner, ".pi/skills/product-owner/SKILL.md");
+        assert_eq!(
+            cfg.agents.product_owner,
+            ".pi/skills/product-owner/SKILL.md"
+        );
         assert_eq!(cfg.limits.max_iterations, 10);
         assert_eq!(cfg.limits.max_retries_per_step, 5);
         assert_eq!(cfg.limits.max_reject_cycles, 3);

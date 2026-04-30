@@ -59,7 +59,10 @@ pub fn snapshot(project_root: &Path, label: &str) -> Option<String> {
 
 /// Hace rollback al commit indicado.
 pub fn rollback(project_root: &Path, prev_hash: &str, label: &str) -> bool {
-    tracing::info!("  ↻ rollback al commit {} ({label})", &prev_hash[..8.min(prev_hash.len())]);
+    tracing::info!(
+        "  ↻ rollback al commit {} ({label})",
+        &prev_hash[..8.min(prev_hash.len())]
+    );
 
     let output = Command::new("git")
         .arg("-C")
@@ -69,10 +72,7 @@ pub fn rollback(project_root: &Path, prev_hash: &str, label: &str) -> bool {
         .arg(prev_hash)
         .output();
 
-    match output {
-        Ok(o) if o.status.success() => true,
-        _ => false,
-    }
+    matches!(output, Ok(o) if o.status.success())
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────
@@ -144,9 +144,7 @@ fn check_git_changes(project_root: &Path) -> bool {
         .arg("--exclude-standard")
         .output();
 
-    output
-        .map(|o| !o.stdout.is_empty())
-        .unwrap_or(false)
+    output.map(|o| !o.stdout.is_empty()).unwrap_or(false)
 }
 
 fn current_hash(project_root: &Path) -> Option<String> {

@@ -38,11 +38,7 @@ fn parse_status(content: &str) -> Option<Status> {
         .skip_while(|l| !l.to_lowercase().starts_with("## status"))
         .nth(1)?; // línea siguiente
 
-    let cleaned = status_section
-        .trim()
-        .replace("**", "")
-        .trim()
-        .to_string();
+    let cleaned = status_section.trim().replace("**", "").trim().to_string();
 
     match cleaned.to_lowercase().as_str() {
         "draft" => Some(Status::Draft),
@@ -60,16 +56,14 @@ fn parse_status(content: &str) -> Option<Status> {
 
 /// Extrae la épica de la sección `## Epic`.
 fn parse_epic(content: &str) -> Option<String> {
-    static EPIC_RE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?i)EPIC-\d+").unwrap());
+    static EPIC_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)EPIC-\d+").unwrap());
     let section = extract_section(content, "## Epic")?;
     EPIC_RE.find(&section).map(|m| m.as_str().to_uppercase())
 }
 
 /// Extrae los bloqueadores de la sección `## Dependencias`.
 fn parse_blockers(content: &str) -> Vec<String> {
-    static BLOCKER_RE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?i)STORY-\d+").unwrap());
+    static BLOCKER_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)STORY-\d+").unwrap());
 
     // Buscar la línea con "Bloqueado por" dentro de la sección Dependencias
     let section = match extract_section(content, "## Dependencias") {
@@ -106,11 +100,10 @@ fn parse_last_rejection(content: &str) -> Option<String> {
 /// El formato esperado por línea es: `- YYYY-MM-DD | Actor | descripción`.
 /// Retorna el Actor (ej: "Dev", "QA", "PO", "Reviewer") de la última línea.
 fn parse_last_actor(content: &str) -> Option<String> {
-    static ACTOR_RE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\|\s*([^|]+?)\s*\|").unwrap());
+    static ACTOR_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\|\s*([^|]+?)\s*\|").unwrap());
 
     let section = extract_section(content, "## Activity Log")?;
-    let last_line = section.lines().filter(|l| !l.trim().is_empty()).last()?;
+    let last_line = section.lines().rfind(|l| !l.trim().is_empty())?;
 
     ACTOR_RE
         .captures(last_line)
@@ -119,7 +112,7 @@ fn parse_last_actor(content: &str) -> Option<String> {
 }
 
 /// Extrae el contenido de una sección markdown (desde `## Header` hasta el siguiente `## `).
-fn extract_section<'a>(content: &'a str, header: &str) -> Option<String> {
+fn extract_section(content: &str, header: &str) -> Option<String> {
     let header_lower = header.to_lowercase();
     let mut in_section = false;
     let mut result = String::new();
@@ -195,7 +188,8 @@ impl Story {
                     let trailing = old_line.len() - old_line.trim_end().len();
                     let spaces_leading = " ".repeat(leading);
                     let spaces_trailing = " ".repeat(trailing);
-                    lines[i + 1] = format!("{}{}{}", spaces_leading, new_status_str, spaces_trailing);
+                    lines[i + 1] =
+                        format!("{}{}{}", spaces_leading, new_status_str, spaces_trailing);
                     found = true;
                 }
                 break;
@@ -251,6 +245,14 @@ impl Story {
     pub fn last_actor(&self) -> Option<String> {
         parse_last_actor(&self.raw_content)
     }
+
+    /// Avanza el estado en memoria sin escribir a disco (útil para dry-run).
+    pub fn advance_status_in_memory(&mut self, new_status: Status) {
+        let old = format!("**{}**", self.status);
+        let new = format!("**{}**", new_status);
+        self.raw_content = self.raw_content.replacen(&old, &new, 1);
+        self.status = new_status;
+    }
 }
 
 #[cfg(test)]
@@ -258,8 +260,7 @@ mod tests {
     use super::*;
 
     fn fixture(name: &str) -> String {
-        std::fs::read_to_string(format!("tests/fixtures/{name}"))
-            .expect("fixture not found")
+        std::fs::read_to_string(format!("tests/fixtures/{name}")).expect("fixture not found")
     }
 
     #[test]

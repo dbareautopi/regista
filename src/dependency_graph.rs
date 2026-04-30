@@ -64,11 +64,7 @@ impl DependencyGraph {
     ///
     /// Usa DFS con colores: 0 = no visitado, 1 = en pila, 2 = procesado.
     pub fn has_cycle_from(&self, story_id: &str) -> bool {
-        let mut color: HashMap<&str, u8> = self
-            .forward
-            .keys()
-            .map(|k| (k.as_str(), 0u8))
-            .collect();
+        let mut color: HashMap<&str, u8> = self.forward.keys().map(|k| (k.as_str(), 0u8)).collect();
 
         self.dfs_has_cycle(story_id, &mut color)
     }
@@ -76,17 +72,13 @@ impl DependencyGraph {
     /// Detecta si existe ALGÚN ciclo en todo el grafo.
     #[allow(dead_code)]
     pub fn has_any_cycle(&self) -> bool {
-        let mut color: HashMap<&str, u8> = self
-            .forward
-            .keys()
-            .map(|k| (k.as_str(), 0u8))
-            .collect();
+        let mut color: HashMap<&str, u8> = self.forward.keys().map(|k| (k.as_str(), 0u8)).collect();
 
         for node in self.forward.keys() {
-            if color.get(node.as_str()) == Some(&0) {
-                if self.dfs_has_cycle(node, &mut color) {
-                    return true;
-                }
+            if color.get(node.as_str()) == Some(&0)
+                && self.dfs_has_cycle(node, &mut color)
+            {
+                return true;
             }
         }
         false
@@ -101,10 +93,10 @@ impl DependencyGraph {
                 if neighbor_color == 1 {
                     return true; // ciclo detectado
                 }
-                if neighbor_color == 0 {
-                    if self.dfs_has_cycle(neighbor, color) {
-                        return true;
-                    }
+                if neighbor_color == 0
+                    && self.dfs_has_cycle(neighbor, color)
+                {
+                    return true;
                 }
             }
         }
@@ -116,11 +108,7 @@ impl DependencyGraph {
     /// Encuentra los IDs de todas las historias que forman parte de un ciclo.
     #[allow(dead_code)]
     pub fn find_cycle_members(&self) -> HashSet<String> {
-        let mut color: HashMap<&str, u8> = self
-            .forward
-            .keys()
-            .map(|k| (k.as_str(), 0u8))
-            .collect();
+        let mut color: HashMap<&str, u8> = self.forward.keys().map(|k| (k.as_str(), 0u8)).collect();
 
         let mut in_stack = HashSet::new();
         let mut cycle_members = HashSet::new();

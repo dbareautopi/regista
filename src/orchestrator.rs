@@ -10,6 +10,7 @@ use crate::dependency_graph::DependencyGraph;
 use crate::prompts::PromptContext;
 use crate::state::Status;
 use crate::story::Story;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
@@ -26,6 +27,10 @@ pub struct RunOptions {
     /// Solo procesar historias en este rango de épicas (inclusivo).
     /// Tupla (start, end), ej: ("EPIC-001", "EPIC-003").
     pub epics_range: Option<(String, String)>,
+    /// Modo simulación: no invoca agentes ni modifica archivos.
+    pub dry_run: bool,
+    /// Suprimir logs de progreso (útil con --json).
+    pub quiet: bool,
 }
 
 /// Filtra historias según las opciones de ejecución.
@@ -56,18 +61,32 @@ fn filter_stories(stories: Vec<Story>, options: &RunOptions) -> Vec<Story> {
 
 /// Ejecuta el pipeline completo sobre un proyecto.
 ///
-/// Retorna el número de historias que terminaron en `Done`.
+/// En modo normal invoca agentes `pi` y modifica archivos.
+/// En modo dry-run simula todo el pipeline en memoria.
 pub fn run(project_root: &Path, cfg: &Config, options: &RunOptions) -> anyhow::Result<RunReport> {
+    if options.dry_run {
+        return run_dry(project_root, cfg, options);
+    }
+    run_real(project_root, cfg, options)
+}
+
+/// Ejecución real del pipeline (invocando agentes).
+fn run_real(project_root: &Path, cfg: &Config, options: &RunOptions) -> anyhow::Result<RunReport> {
     let start = Instant::now();
     let max_wall = std::time::Duration::from_secs(cfg.limits.max_wall_time_seconds);
 
     let mut reject_cycles: HashMap<String, u32> = HashMap::new();
+    let mut story_iterations: HashMap<String, u32> = HashMap::new();
+    let mut story_errors: HashMap<String, String> = HashMap::new();
     let mut iteration: u32 = 0;
 
     loop {
         iteration += 1;
         if iteration > cfg.limits.max_iterations {
-            tracing::warn!("Alcanzado el máximo de {} iteraciones", cfg.limits.max_iterations);
+            tracing::warn!(
+                "Alcanzado el máximo de {} iteraciones",
+                cfg.limits.max_iterations
+            );
             break;
         }
         if start.elapsed() >= max_wall {
@@ -75,14 +94,17 @@ pub fn run(project_root: &Path, cfg: &Config, options: &RunOptions) -> anyhow::R
             break;
         }
 
-        tracing::info!("══════ Iteración {iteration} ══════");
+        if !options.quiet {
+            tracing::info!("══════ Iteración {iteration} ══════");
+        }
 
         // 1. Cargar todas las historias
         let stories = load_all_stories(project_root, cfg)?;
         let full_graph = DependencyGraph::from_stories(&stories);
 
         // 2. Aplicar transiciones automáticas sobre TODAS las historias
-        let stories = apply_automatic_transitions(stories, &full_graph, &mut reject_cycles, cfg)?;
+        let stories =
+            apply_automatic_transitions(stories, &full_graph, &mut reject_cycles, cfg, false)?;
 
         // 3. Filtrar historias según opciones de ejecución (--story, --epic, --epics)
         let stories = filter_stories(stories, options);
@@ -98,60 +120,295 @@ pub fn run(project_root: &Path, cfg: &Config, options: &RunOptions) -> anyhow::R
         let resolution = deadlock::analyze(&stories, &graph);
 
         if !handle_deadlock(&resolution, project_root, cfg)? {
-            // Si handle_deadlock retornó false, significa que no había nada que hacer
-            // y debemos salir (PipelineComplete o sin candidatos accionables válidos)
             break;
         }
 
-        // 4. Si hay deadlock, procesar la historia stuck (PO groom)
+        // Procesar según la resolución
         match &resolution {
-            DeadlockResolution::InvokePoFor { story_id, reason, .. } => {
-                tracing::info!("🔓 Deadlock detectado: {reason}");
+            DeadlockResolution::InvokePoFor {
+                story_id, reason, ..
+            } => {
+                if !options.quiet {
+                    tracing::info!("🔓 Deadlock detectado: {reason}");
+                }
                 let story = stories.iter().find(|s| s.id == *story_id).unwrap();
-                process_story(story, project_root, cfg, &mut reject_cycles)?;
+                let iter = story_iterations.entry(story.id.clone()).or_insert(0);
+                *iter += 1;
+                if let Err(e) = process_story(story, project_root, cfg, &mut reject_cycles) {
+                    story_errors
+                        .entry(story.id.clone())
+                        .or_insert_with(|| e.to_string());
+                }
             }
             DeadlockResolution::NoDeadlock => {
                 // 5. Procesar la historia de mayor prioridad en el flujo normal
                 if let Some(story) = pick_next_actionable(&stories, &graph) {
-                    process_story(&story, project_root, cfg, &mut reject_cycles)?;
+                    let id = story.id.clone();
+                    let iter = story_iterations.entry(id.clone()).or_insert(0);
+                    *iter += 1;
+                    if let Err(e) = process_story(story, project_root, cfg, &mut reject_cycles) {
+                        story_errors
+                            .entry(id.clone())
+                            .or_insert_with(|| e.to_string());
+                    }
                 }
             }
             DeadlockResolution::PipelineComplete => {
-                tracing::info!("✅ Pipeline completo: todas las historias en estado terminal.");
+                if !options.quiet {
+                    tracing::info!("✅ Pipeline completo: todas las historias en estado terminal.");
+                }
                 break;
             }
         }
 
-        // Si --once, salimos tras una iteración
         if options.once {
-            tracing::info!("🏁 Modo --once: completado tras una iteración.");
+            if !options.quiet {
+                tracing::info!("🏁 Modo --once: completado tras una iteración.");
+            }
             break;
         }
     }
 
-    // Generar reporte final (sobre historias filtradas)
+    // Generar reporte final
     let stories = filter_stories(load_all_stories(project_root, cfg)?, options);
+    build_report(
+        &stories,
+        iteration,
+        start.elapsed(),
+        &story_iterations,
+        &reject_cycles,
+        &story_errors,
+    )
+}
+
+/// Ejecución simulada del pipeline (dry-run).
+fn run_dry(project_root: &Path, cfg: &Config, options: &RunOptions) -> anyhow::Result<RunReport> {
+    let start = Instant::now();
+
+    tracing::info!("🧪 DRY-RUN — No se ejecutarán agentes ni se modificarán archivos.");
+    tracing::info!("");
+
+    // Cargar historias UNA VEZ para el modo simulación
+    let mut stories = filter_stories(load_all_stories(project_root, cfg)?, options);
+    if stories.is_empty() {
+        tracing::info!("Sin historias que procesar.");
+        return build_report(
+            &stories,
+            0,
+            start.elapsed(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+    }
+
+    let reject_cycles: HashMap<String, u32> = HashMap::new();
+    let mut story_iterations: HashMap<String, u32> = HashMap::new();
+    let story_errors: HashMap<String, String> = HashMap::new();
+    let mut iteration: u32 = 0;
+
+    loop {
+        iteration += 1;
+        if iteration > cfg.limits.max_iterations {
+            break;
+        }
+
+        tracing::info!("═══ Iteración {iteration} ═══");
+
+        // Aplicar transiciones automáticas en memoria
+        // Primero recolectamos los estados actuales para evitar borrow conflict
+        let status_snapshot: Vec<(String, Status, Vec<String>)> = stories
+            .iter()
+            .map(|s| (s.id.clone(), s.status, s.blockers.clone()))
+            .collect();
+
+        for (id, status, blockers) in &status_snapshot {
+            if *status == Status::Blocked {
+                let all_done = blockers.iter().all(|b| {
+                    stories
+                        .iter()
+                        .any(|s| s.id == *b && s.status == Status::Done)
+                });
+                if all_done {
+                    tracing::info!("  → {id} (Blocked) desbloqueada automáticamente → Ready");
+                    if let Some(story) = stories.iter_mut().find(|s| s.id == *id) {
+                        story.advance_status_in_memory(Status::Ready);
+                    }
+                }
+            }
+        }
+
+        let graph = DependencyGraph::from_stories(&stories);
+        let resolution = deadlock::analyze(&stories, &graph);
+
+        match &resolution {
+            DeadlockResolution::PipelineComplete => {
+                tracing::info!("✅ Pipeline completo.");
+                break;
+            }
+            DeadlockResolution::InvokePoFor {
+                story_id,
+                reason,
+                unblocks,
+                ..
+            } => {
+                tracing::info!("  → {story_id} (Draft) sería procesada por PO (groom) → Ready");
+                tracing::info!("    Razón: {reason}");
+                if *unblocks > 0 {
+                    tracing::info!("    Desbloquearía: {unblocks} historias");
+                }
+                if let Some(story) = stories.iter_mut().find(|s| s.id == *story_id) {
+                    let iter = story_iterations.entry(story.id.clone()).or_insert(0);
+                    *iter += 1;
+                    story.advance_status_in_memory(Status::Ready);
+                }
+            }
+            DeadlockResolution::NoDeadlock => {
+                if let Some(id) = {
+                    let graph = DependencyGraph::from_stories(&stories);
+                    pick_next_actionable(&stories, &graph).map(|s| s.id.clone())
+                } {
+                    if let Some(story) = stories.iter_mut().find(|s| s.id == id) {
+                        let next = next_status(story.status);
+                        let label = actor_label(story.status);
+                        let iter = story_iterations.entry(story.id.clone()).or_insert(0);
+                        *iter += 1;
+                        tracing::info!(
+                            "  → {} ({}) sería procesada por {} → {}",
+                            story.id,
+                            story.status,
+                            label,
+                            next
+                        );
+                        let unblocks = graph.blocks_count(&story.id);
+                        if unblocks > 0 {
+                            tracing::info!("    Desbloquearía: {unblocks} historias");
+                        }
+                        story.advance_status_in_memory(next);
+                    }
+                }
+            }
+        }
+
+        if options.once {
+            tracing::info!("🏁 Modo --once: simulada una iteración.");
+            break;
+        }
+    }
+
+    tracing::info!("");
+    tracing::info!("═══ Resumen Dry-Run ═══");
+    tracing::info!("  Total historias: {}", stories.len());
     let done = stories.iter().filter(|s| s.status == Status::Done).count();
-    let failed = stories.iter().filter(|s| s.status == Status::Failed).count();
+    let failed = stories
+        .iter()
+        .filter(|s| s.status == Status::Failed)
+        .count();
+    let blocked = stories
+        .iter()
+        .filter(|s| s.status == Status::Blocked)
+        .count();
+    let draft = stories.iter().filter(|s| s.status == Status::Draft).count();
+    tracing::info!("  Done:           {done}");
+    tracing::info!("  Failed:         {failed}");
+    tracing::info!("  Blocked:        {blocked}");
+    tracing::info!("  Draft:          {draft}");
+    tracing::info!("  Iteraciones estimadas: {iteration}");
+    // Tiempo estimado: ~5 min por iteración como promedio entre agentes
+    let est_minutes = iteration as u64 * 5;
+    tracing::info!(
+        "  Tiempo estimado: ~{}-{} min",
+        est_minutes,
+        est_minutes * 2
+    );
+
+    build_report(
+        &stories,
+        iteration,
+        start.elapsed(),
+        &story_iterations,
+        &reject_cycles,
+        &story_errors,
+    )
+}
+
+/// Construye el RunReport final a partir del estado de las historias.
+fn build_report(
+    stories: &[Story],
+    iterations: u32,
+    elapsed: std::time::Duration,
+    story_iterations: &HashMap<String, u32>,
+    reject_cycles: &HashMap<String, u32>,
+    story_errors: &HashMap<String, String>,
+) -> anyhow::Result<RunReport> {
+    let done = stories.iter().filter(|s| s.status == Status::Done).count();
+    let failed = stories
+        .iter()
+        .filter(|s| s.status == Status::Failed)
+        .count();
+    let blocked = stories
+        .iter()
+        .filter(|s| s.status == Status::Blocked)
+        .count();
+    let draft = stories.iter().filter(|s| s.status == Status::Draft).count();
     let total = stories.len();
+
+    let story_records: Vec<StoryRecord> = stories
+        .iter()
+        .map(|s| {
+            let iter_count = story_iterations.get(&s.id).copied().unwrap_or(0);
+            let rej_count = reject_cycles.get(&s.id).copied().unwrap_or(0);
+            let error = story_errors.get(&s.id).cloned();
+            StoryRecord {
+                id: s.id.clone(),
+                status: s.status.to_string(),
+                epic: s.epic.clone(),
+                iterations: iter_count,
+                reject_cycles: rej_count,
+                error,
+            }
+        })
+        .collect();
 
     Ok(RunReport {
         total,
         done,
         failed,
-        iterations: iteration,
-        elapsed: start.elapsed(),
+        blocked,
+        draft,
+        iterations,
+        elapsed,
+        elapsed_seconds: elapsed.as_secs(),
+        stories: story_records,
     })
 }
 
 /// Reporte final de la ejecución del orquestador.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RunReport {
     pub total: usize,
     pub done: usize,
     pub failed: usize,
+    pub blocked: usize,
+    pub draft: usize,
     pub iterations: u32,
+    #[serde(skip)]
     pub elapsed: std::time::Duration,
+    pub elapsed_seconds: u64,
+    pub stories: Vec<StoryRecord>,
+}
+
+/// Registro individual de una historia para el reporte JSON.
+#[derive(Debug, Clone, Serialize)]
+pub struct StoryRecord {
+    pub id: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub epic: Option<String>,
+    pub iterations: u32,
+    pub reject_cycles: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────
@@ -176,11 +433,14 @@ fn load_all_stories(project_root: &Path, cfg: &Config) -> anyhow::Result<Vec<Sto
 /// Aplica transiciones que ejecuta el orquestador sin intervención de agentes:
 /// - Blocked → Ready: todas las dependencias están Done.
 /// - * → Failed: se superó max_reject_cycles.
+///
+/// Si `simulate` es true, no escribe a disco (dry-run).
 fn apply_automatic_transitions(
     stories: Vec<Story>,
     _graph: &DependencyGraph,
     reject_cycles: &mut HashMap<String, u32>,
     cfg: &Config,
+    simulate: bool,
 ) -> anyhow::Result<Vec<Story>> {
     let mut stories = stories;
 
@@ -196,44 +456,51 @@ fn apply_automatic_transitions(
                 story.id,
                 cycles
             );
-            story.set_status(Status::Failed)?;
+            if simulate {
+                story.advance_status_in_memory(Status::Failed);
+            } else {
+                story.set_status(Status::Failed)?;
+            }
             continue;
         }
 
         // Si la historia está en flujo de rechazo (InProgress/InReview pero con ciclos altos)
         if cycles > 0 && cycles >= cfg.limits.max_reject_cycles {
-            story.set_status(Status::Failed)?;
+            if simulate {
+                story.advance_status_in_memory(Status::Failed);
+            } else {
+                story.set_status(Status::Failed)?;
+            }
         }
     }
 
     // Luego: Blocked → Ready si dependencias resueltas
-    let status_map: HashMap<String, Status> = stories
-        .iter()
-        .map(|s| (s.id.clone(), s.status))
-        .collect();
+    let status_map: HashMap<String, Status> =
+        stories.iter().map(|s| (s.id.clone(), s.status)).collect();
 
     for story in stories.iter_mut() {
         if story.status != Status::Blocked {
             continue;
         }
 
-        let all_blockers_done = story.blockers.iter().all(|b| {
-            status_map
-                .get(b)
-                .is_some_and(|s| *s == Status::Done)
-        });
+        let all_blockers_done = story
+            .blockers
+            .iter()
+            .all(|b| status_map.get(b).is_some_and(|s| *s == Status::Done));
 
         if all_blockers_done {
             tracing::info!("🔓 {}: dependencias resueltas → Ready", story.id);
-            story.set_status(Status::Ready)?;
+            if simulate {
+                story.advance_status_in_memory(Status::Ready);
+            } else {
+                story.set_status(Status::Ready)?;
+            }
         }
     }
 
     // Verificar si historias accionables tienen dependencias no resueltas → Blocked
-    let status_map_after: HashMap<String, Status> = stories
-        .iter()
-        .map(|s| (s.id.clone(), s.status))
-        .collect();
+    let status_map_after: HashMap<String, Status> =
+        stories.iter().map(|s| (s.id.clone(), s.status)).collect();
 
     for story in stories.iter_mut() {
         if story.status.is_terminal() || story.status == Status::Blocked {
@@ -243,18 +510,18 @@ fn apply_automatic_transitions(
             continue;
         }
 
-        let any_blocker_not_done = story.blockers.iter().any(|b| {
-            !status_map_after
-                .get(b)
-                .is_some_and(|s| *s == Status::Done)
-        });
+        let any_blocker_not_done = story
+            .blockers
+            .iter()
+            .any(|b| !status_map_after.get(b).is_some_and(|s| *s == Status::Done));
 
         if any_blocker_not_done {
-            tracing::info!(
-                "⛔ {}: dependencias no resueltas → Blocked",
-                story.id
-            );
-            story.set_status(Status::Blocked)?;
+            tracing::info!("⛔ {}: dependencias no resueltas → Blocked", story.id);
+            if simulate {
+                story.advance_status_in_memory(Status::Blocked);
+            } else {
+                story.set_status(Status::Blocked)?;
+            }
         }
     }
 
@@ -273,7 +540,9 @@ fn handle_deadlock(
             tracing::info!("✅ Pipeline completo.");
             Ok(false)
         }
-        DeadlockResolution::InvokePoFor { story_id, reason, .. } => {
+        DeadlockResolution::InvokePoFor {
+            story_id, reason, ..
+        } => {
             tracing::info!("🔓 Deadlock → PO debe refinar {story_id}: {reason}");
             Ok(true)
         }
@@ -284,10 +553,7 @@ fn handle_deadlock(
 /// Elige la siguiente historia accionable con mayor prioridad.
 ///
 /// Prioridad por estado + cantidad de historias que desbloquea.
-fn pick_next_actionable<'a>(
-    stories: &'a [Story],
-    graph: &DependencyGraph,
-) -> Option<&'a Story> {
+fn pick_next_actionable<'a>(stories: &'a [Story], graph: &DependencyGraph) -> Option<&'a Story> {
     stories
         .iter()
         .filter(|s| s.status.is_actionable())
@@ -344,7 +610,11 @@ fn process_story(
             if story.last_actor().as_deref() == Some("Dev") {
                 let qa_ctx = PromptContext {
                     to: Status::TestsReady,
-                    ..ctx
+                    story_id: ctx.story_id.clone(),
+                    stories_dir: ctx.stories_dir.clone(),
+                    decisions_dir: ctx.decisions_dir.clone(),
+                    last_rejection: ctx.last_rejection.clone(),
+                    from: ctx.from,
                 };
                 let skill = project_root.join(&cfg.agents.qa_engineer);
                 (skill, qa_ctx.qa_fix_tests(), "QA (fix tests)")
@@ -371,7 +641,12 @@ fn process_story(
         }
     };
 
-    tracing::info!("  🎯 {label} | {} ({} → {})", story.id, story.status, ctx.to);
+    tracing::info!(
+        "  🎯 {label} | {} ({} → {})",
+        story.id,
+        story.status,
+        ctx.to
+    );
 
     // Snapshot git antes de la invocación (si está habilitado)
     let prev_hash = if cfg.git.enabled {
@@ -392,18 +667,18 @@ fn process_story(
                     story.id,
                     story.status
                 );
-            } else if updated.status == Status::InProgress || updated.status == Status::InReview {
-                if story.status == Status::InReview || story.status == Status::BusinessReview {
-                    // El agente rechazó: incrementar contador
-                    let cycles = reject_cycles.entry(story.id.clone()).or_insert(0);
-                    *cycles += 1;
-                    tracing::info!(
-                        "  📊 {}: ciclo de rechazo {}/{}",
-                        story.id,
-                        cycles,
-                        cfg.limits.max_reject_cycles
-                    );
-                }
+            } else if (updated.status == Status::InProgress || updated.status == Status::InReview)
+                && (story.status == Status::InReview || story.status == Status::BusinessReview)
+            {
+                // El agente rechazó: incrementar contador
+                let cycles = reject_cycles.entry(story.id.clone()).or_insert(0);
+                *cycles += 1;
+                tracing::info!(
+                    "  📊 {}: ciclo de rechazo {}/{}",
+                    story.id,
+                    cycles,
+                    cfg.limits.max_reject_cycles
+                );
             }
 
             // Ejecutar hook post-fase si está definido
@@ -447,6 +722,19 @@ fn next_status(current: Status) -> Status {
         Status::InReview => Status::BusinessReview,
         Status::BusinessReview => Status::Done,
         _ => current,
+    }
+}
+
+/// Etiqueta legible del actor para un estado dado.
+fn actor_label(status: Status) -> &'static str {
+    match status {
+        Status::Draft => "PO (groom)",
+        Status::Ready => "QA (tests)",
+        Status::TestsReady => "Dev (implement)",
+        Status::InProgress => "Dev (fix)",
+        Status::InReview => "Reviewer",
+        Status::BusinessReview => "PO (validate)",
+        _ => "?",
     }
 }
 
@@ -529,9 +817,7 @@ mod tests {
 
     #[test]
     fn filter_by_story_id_empty_when_no_match() {
-        let stories = vec![
-            story_fixture("STORY-001", Status::Ready, None),
-        ];
+        let stories = vec![story_fixture("STORY-001", Status::Ready, None)];
         let options = RunOptions {
             story_filter: Some("STORY-999".into()),
             ..Default::default()
@@ -554,7 +840,9 @@ mod tests {
         };
         let filtered = filter_stories(stories, &options);
         assert_eq!(filtered.len(), 2);
-        assert!(filtered.iter().all(|s| s.epic.as_deref() == Some("EPIC-001")));
+        assert!(filtered
+            .iter()
+            .all(|s| s.epic.as_deref() == Some("EPIC-001")));
     }
 
     #[test]

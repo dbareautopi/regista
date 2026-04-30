@@ -43,7 +43,10 @@ pub fn invoke_with_retry(
     let max_retries = limits.max_retries_per_step;
 
     loop {
-        tracing::info!("  [{attempt}/{max_retries}] invocando pi --skill {}", skill_path.display());
+        tracing::info!(
+            "  [{attempt}/{max_retries}] invocando pi --skill {}",
+            skill_path.display()
+        );
 
         match invoke_once(skill_path, prompt, timeout) {
             Ok(output) if output.status.success() => {
@@ -52,7 +55,9 @@ pub fn invoke_with_retry(
             }
             Ok(output) => {
                 let code = output.status.code().unwrap_or(-1);
-                tracing::warn!("  ✗ agente falló (exit code {code}) — intento {attempt}/{max_retries}");
+                tracing::warn!(
+                    "  ✗ agente falló (exit code {code}) — intento {attempt}/{max_retries}"
+                );
             }
             Err(e) => {
                 tracing::warn!("  ✗ error invocando agente: {e} — intento {attempt}/{max_retries}");
