@@ -3,7 +3,8 @@
 //! Carga historias, construye el grafo de dependencias, evalúa deadlocks,
 //! y dispara agentes según la máquina de estados. Es el corazón del pipeline.
 
-use crate::agent;
+use crate::agent::{self, AgentOptions};
+use crate::checkpoint::OrchestratorState;
 use crate::config::Config;
 use crate::deadlock::{self, DeadlockResolution};
 use crate::dependency_graph::DependencyGraph;
@@ -63,22 +64,50 @@ fn filter_stories(stories: Vec<Story>, options: &RunOptions) -> Vec<Story> {
 ///
 /// En modo normal invoca agentes `pi` y modifica archivos.
 /// En modo dry-run simula todo el pipeline en memoria.
-pub fn run(project_root: &Path, cfg: &Config, options: &RunOptions) -> anyhow::Result<RunReport> {
+pub fn run(
+    project_root: &Path,
+    cfg: &Config,
+    options: &RunOptions,
+    resume_state: Option<OrchestratorState>,
+) -> anyhow::Result<RunReport> {
     if options.dry_run {
         return run_dry(project_root, cfg, options);
     }
-    run_real(project_root, cfg, options)
+    run_real(project_root, cfg, options, resume_state)
 }
 
 /// Ejecución real del pipeline (invocando agentes).
-fn run_real(project_root: &Path, cfg: &Config, options: &RunOptions) -> anyhow::Result<RunReport> {
+fn run_real(
+    project_root: &Path,
+    cfg: &Config,
+    options: &RunOptions,
+    resume_state: Option<OrchestratorState>,
+) -> anyhow::Result<RunReport> {
     let start = Instant::now();
     let max_wall = std::time::Duration::from_secs(cfg.limits.max_wall_time_seconds);
 
-    let mut reject_cycles: HashMap<String, u32> = HashMap::new();
-    let mut story_iterations: HashMap<String, u32> = HashMap::new();
-    let mut story_errors: HashMap<String, String> = HashMap::new();
-    let mut iteration: u32 = 0;
+    let (mut reject_cycles, mut story_iterations, mut story_errors, start_iteration) =
+        if let Some(state) = resume_state {
+            tracing::info!(
+                "📂 Reanudando desde checkpoint: iteración {}",
+                state.iteration
+            );
+            (
+                state.reject_cycles,
+                state.story_iterations,
+                state.story_errors,
+                state.iteration,
+            )
+        } else {
+            (
+                HashMap::new(),
+                HashMap::new(),
+                HashMap::new(),
+                0u32,
+            )
+        };
+
+    let mut iteration: u32 = start_iteration;
 
     loop {
         iteration += 1;
@@ -134,11 +163,21 @@ fn run_real(project_root: &Path, cfg: &Config, options: &RunOptions) -> anyhow::
                 let story = stories.iter().find(|s| s.id == *story_id).unwrap();
                 let iter = story_iterations.entry(story.id.clone()).or_insert(0);
                 *iter += 1;
-                if let Err(e) = process_story(story, project_root, cfg, &mut reject_cycles) {
+                let agent_opts = build_agent_opts(story, cfg);
+                if let Err(e) =
+                    process_story(story, project_root, cfg, &mut reject_cycles, &agent_opts)
+                {
                     story_errors
                         .entry(story.id.clone())
                         .or_insert_with(|| e.to_string());
                 }
+                save_checkpoint(
+                    project_root,
+                    iteration,
+                    &reject_cycles,
+                    &story_iterations,
+                    &story_errors,
+                );
             }
             DeadlockResolution::NoDeadlock => {
                 // 5. Procesar la historia de mayor prioridad en el flujo normal
@@ -146,17 +185,28 @@ fn run_real(project_root: &Path, cfg: &Config, options: &RunOptions) -> anyhow::
                     let id = story.id.clone();
                     let iter = story_iterations.entry(id.clone()).or_insert(0);
                     *iter += 1;
-                    if let Err(e) = process_story(story, project_root, cfg, &mut reject_cycles) {
+                    let agent_opts = build_agent_opts(story, cfg);
+                    if let Err(e) =
+                        process_story(story, project_root, cfg, &mut reject_cycles, &agent_opts)
+                    {
                         story_errors
                             .entry(id.clone())
                             .or_insert_with(|| e.to_string());
                     }
+                    save_checkpoint(
+                        project_root,
+                        iteration,
+                        &reject_cycles,
+                        &story_iterations,
+                        &story_errors,
+                    );
                 }
             }
             DeadlockResolution::PipelineComplete => {
                 if !options.quiet {
                     tracing::info!("✅ Pipeline completo: todas las historias en estado terminal.");
                 }
+                OrchestratorState::remove(project_root);
                 break;
             }
         }
@@ -585,6 +635,7 @@ fn process_story(
     project_root: &Path,
     cfg: &Config,
     reject_cycles: &mut HashMap<String, u32>,
+    agent_opts: &AgentOptions,
 ) -> anyhow::Result<()> {
     let ctx = PromptContext {
         story_id: story.id.clone(),
@@ -655,7 +706,7 @@ fn process_story(
         None
     };
 
-    let result = agent::invoke_with_retry(&skill_path, &prompt, &cfg.limits);
+    let result = agent::invoke_with_retry(&skill_path, &prompt, &cfg.limits, agent_opts);
 
     match result {
         Ok(_) => {
@@ -745,6 +796,34 @@ fn extract_numeric(id: &str) -> u32 {
         .collect::<String>()
         .parse()
         .unwrap_or(0)
+}
+
+/// Construye AgentOptions con los valores de configuración actuales.
+fn build_agent_opts(story: &Story, cfg: &Config) -> AgentOptions {
+    AgentOptions {
+        story_id: Some(story.id.clone()),
+        decisions_dir: Some(Path::new(&cfg.project.decisions_dir).to_path_buf()),
+        inject_feedback: cfg.limits.inject_feedback_on_retry,
+    }
+}
+
+/// Guarda el checkpoint del orquestador.
+fn save_checkpoint(
+    project_root: &Path,
+    iteration: u32,
+    reject_cycles: &HashMap<String, u32>,
+    story_iterations: &HashMap<String, u32>,
+    story_errors: &HashMap<String, String>,
+) {
+    let state = OrchestratorState {
+        iteration,
+        reject_cycles: reject_cycles.clone(),
+        story_iterations: story_iterations.clone(),
+        story_errors: story_errors.clone(),
+    };
+    if let Err(e) = state.save(project_root) {
+        tracing::warn!("⚠️  no se pudo guardar el checkpoint: {e}");
+    }
 }
 
 #[cfg(test)]

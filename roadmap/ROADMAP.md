@@ -25,8 +25,8 @@ y notas de implementación.
 |---|---|---|---|
 | 5 | **`regista validate`**: chequeo pre-vuelo de historias, skills, dependencias | [`05-validate.md`](./05-validate.md) | Bajo |
 | 6 | **`regista init`**: scaffolding de proyecto nuevo (config + skills + historia ejemplo) | [`06-init-scaffold.md`](./06-init-scaffold.md) | Bajo-Medio |
-| 7 | **Checkpoint / resume**: reanudar pipeline interrumpido sin reprocesar todo | [`07-checkpoint-resume.md`](./07-checkpoint-resume.md) | Medio |
-| 8 | **Feedback rico de agentes**: capturar y usar stdout/stderr de agentes fallidos | [`08-feedback-agentes.md`](./08-feedback-agentes.md) | Bajo |
+| 7 | **Checkpoint / resume**: reanudar pipeline interrumpido sin reprocesar todo | [`07-checkpoint-resume.md`](./07-checkpoint-resume.md) ✅ | Medio |
+| 8 | **Feedback rico de agentes**: capturar y usar stdout/stderr de agentes fallidos | [`08-feedback-agentes.md`](./08-feedback-agentes.md) ✅ | Bajo |
 
 ---
 

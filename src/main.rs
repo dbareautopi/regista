@@ -8,6 +8,7 @@
 //! un archivo `.regista.toml` en la raíz del proyecto.
 
 mod agent;
+mod checkpoint;
 mod config;
 mod daemon;
 mod deadlock;
@@ -71,6 +72,14 @@ pub struct Cli {
     #[arg(long)]
     pub dry_run: bool,
 
+    /// Reanudar desde el último checkpoint guardado.
+    #[arg(long)]
+    pub resume: bool,
+
+    /// Borrar el checkpoint sin ejecutar el pipeline.
+    #[arg(long)]
+    pub clean_state: bool,
+
     /// Lanzar en segundo plano (modo daemon). El proceso sobrevive a la desconexión SSH.
     #[arg(long, conflicts_with_all = ["follow", "status", "kill"])]
     pub detach: bool,
@@ -110,6 +119,13 @@ fn main() {
 
     let cli = Cli::parse();
     let project_root = Path::new(&cli.project_dir);
+
+    // ── Limpiar checkpoint y salir ────────────────────────────────
+    if cli.clean_state {
+        checkpoint::OrchestratorState::remove(project_root);
+        println!("✅ Checkpoint eliminado.");
+        return;
+    }
 
     // ── Comandos de gestión del daemon (salen inmediatamente) ───────────
 
@@ -263,9 +279,15 @@ fn main() {
 
     // ── Ejecutar pipeline ───────────────────────────────────────────────
 
+    let resume_state = if cli.resume {
+        checkpoint::OrchestratorState::load(project_root)
+    } else {
+        None
+    };
+
     tracing::info!("🚀 Iniciando pipeline...");
 
-    match orchestrator::run(project_root, &cfg, &run_options) {
+    match orchestrator::run(project_root, &cfg, &run_options, resume_state) {
         Ok(report) => {
             if cli.json {
                 output_json_report(&report, &cli.project_dir);

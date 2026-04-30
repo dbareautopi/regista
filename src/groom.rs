@@ -6,7 +6,7 @@
 //! en el directorio de historias. Un bucle de validación asegura que el grafo
 //! de dependencias resultante es correcto antes de dar el backlog por bueno.
 
-use crate::agent;
+use crate::agent::{self, AgentOptions};
 use crate::config::Config;
 use crate::validator;
 use std::path::Path;
@@ -148,7 +148,7 @@ pub fn run(
 
         tracing::info!("🤖 Invocando PO para generar/corregir historias...");
 
-        match agent::invoke_with_retry(&skill_path, &prompt, &cfg.limits) {
+        match agent::invoke_with_retry(&skill_path, &prompt, &cfg.limits, &AgentOptions::default()) {
             Ok(_) => {
                 stories_count = count_files(&stories_dir, &cfg.project.story_pattern);
                 epics_count = count_files(&epics_dir, "EPIC-*.md");

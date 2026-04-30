@@ -97,6 +97,10 @@ pub struct LimitsConfig {
     /// Máximo de iteraciones del bucle groom→validate→corregir.
     #[serde(default = "default_groom_max_iterations")]
     pub groom_max_iterations: u32,
+
+    /// Inyectar stderr del intento fallido en el prompt del reintento.
+    #[serde(default = "default_inject_feedback")]
+    pub inject_feedback_on_retry: bool,
 }
 
 /// Comandos opcionales de verificación post-fase.
@@ -176,6 +180,9 @@ fn default_retry_delay_base() -> u64 {
 fn default_groom_max_iterations() -> u32 {
     5
 }
+fn default_inject_feedback() -> bool {
+    true
+}
 fn default_git_enabled() -> bool {
     true
 }
@@ -215,6 +222,7 @@ impl Default for LimitsConfig {
             max_wall_time_seconds: default_max_wall_time(),
             retry_delay_base_seconds: default_retry_delay_base(),
             groom_max_iterations: default_groom_max_iterations(),
+            inject_feedback_on_retry: default_inject_feedback(),
         }
     }
 }

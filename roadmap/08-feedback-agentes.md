@@ -1,5 +1,7 @@
 # 08 — Feedback rico de agentes
 
+> ✅ **IMPLEMENTADO** — 2026-04-30
+
 ## 🎯 Objetivo
 
 Capturar, estructurar y aprovechar el output (stdout/stderr) de los agentes

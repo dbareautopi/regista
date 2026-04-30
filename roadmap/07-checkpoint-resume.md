@@ -1,5 +1,7 @@
 # 07 — Checkpoint / Resume
 
+> ✅ **IMPLEMENTADO** — 2026-04-30
+
 ## 🎯 Objetivo
 
 Guardar el estado del orquestador tras cada iteración para poder reanudar
