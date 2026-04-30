@@ -3,6 +3,12 @@ name = "regista"
 version = "0.1.0"
 edition = "2021"
 description = "🎬 AI agent director — state-machine-driven pipeline for pi"
+license = "MIT"
+repository = "https://github.com/dbareautopi/regista"
+documentation = "https://github.com/dbareautopi/regista"
+readme = "README.md"
+keywords = ["ai", "agent", "orchestrator", "pipeline", "pi", "llm"]
+categories = ["development-tools", "command-line-utilities"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
