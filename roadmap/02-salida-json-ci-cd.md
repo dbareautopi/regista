@@ -33,7 +33,7 @@ regista --json --quiet          # stdout = JSON, stderr = nada (solo errores)
 ```json
 {
   "regista_version": "0.1.0",
-  "project_dir": "/root/repos/purist",
+  "project_dir": "/home/user/mi-proyecto",
   "result": "completed",
   "exit_code": 0,
   "summary": {

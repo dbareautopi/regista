@@ -1,7 +1,7 @@
 # 🏗️ regista — Diseño
 
 🎬 AI agent director para `pi`. Independiente del proyecto: no sabe nada
-de Rust, de Purist, ni de qué construyen los agentes. Solo sabe tres cosas:
+de Rust, ni de qué construyen los agentes. Solo sabe tres cosas:
 
 1. **Dónde están las historias** y cómo leer su estado
 2. **Qué skills de `pi` invocar** para cada rol del workflow
