@@ -19,12 +19,16 @@ Python, o lo que sea. Solo necesita tres cosas:
 ## Instalación
 
 ```bash
+# Instalación oficial desde crates.io
+cargo install regista
+
+# O desde el repositorio
 git clone https://github.com/dbareautopi/regista
 cd regista
 cargo build --release
 ```
 
-El binario estará en `target/release/regista`.
+El binario se instalará en `~/.cargo/bin/regista` (añadido al PATH automáticamente por Rust).
 
 ## Configuración
 
