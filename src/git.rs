@@ -94,7 +94,7 @@ fn init_git(project_root: &Path) -> bool {
         .arg(project_root)
         .arg("config")
         .arg("user.email")
-        .arg("regista@pi.local")
+        .arg("regista@localhost")
         .output();
 
     let _ = Command::new("git")
