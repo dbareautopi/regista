@@ -4,7 +4,8 @@ AI agent director for [`pi`](https://github.com/mariozechner/pi-coding-agent).
 
 Automates the full development pipeline with agents:
 **PO → QA → Dev → Reviewer → Done**, governed by a formal
-state machine with deadlock detection.
+state machine with deadlock detection, checkpoint/resume,
+and CI/CD-ready JSON output.
 
 ## Filosofía
 
@@ -18,7 +19,7 @@ Python, o lo que sea. Solo necesita tres cosas:
 ## Instalación
 
 ```bash
-git clone https://github.com/tu/regista
+git clone https://github.com/dbareautopi/regista
 cd regista
 cargo build --release
 ```
@@ -27,7 +28,15 @@ El binario estará en `target/release/regista`.
 
 ## Configuración
 
-Crea un archivo `.regista.toml` en la raíz de tu proyecto:
+Crea un archivo `.regista.toml` en la raíz de tu proyecto, o ejecuta:
+
+```bash
+regista init                     # genera estructura completa
+regista init --light             # solo .regista.toml
+regista init --with-example      # incluye historia de ejemplo
+```
+
+Configuración de referencia:
 
 ```toml
 [project]
@@ -44,26 +53,28 @@ developer     = ".pi/skills/developer/SKILL.md"
 reviewer      = ".pi/skills/reviewer/SKILL.md"
 
 [limits]
-max_iterations        = 10
-max_retries_per_step  = 5
-max_reject_cycles     = 3
-agent_timeout_seconds = 1800
-max_wall_time_seconds = 28800
-retry_delay_base_seconds = 10
+max_iterations            = 10
+max_retries_per_step      = 5
+max_reject_cycles         = 3
+agent_timeout_seconds     = 1800
+max_wall_time_seconds     = 28800
+retry_delay_base_seconds  = 10
+groom_max_iterations      = 5     # bucle groom→validate→corregir
+inject_feedback_on_retry  = true  # inyectar stderr en reintentos
 
 [hooks]
 # Comandos opcionales de verificación post-fase.
 # Si fallan, se hace rollback automático.
-post_qa       = "npm test"
-post_dev      = "npm run build && npm test && npm run lint"
-post_reviewer = "npm test"
+post_qa       = "cargo check --tests"
+post_dev      = "cargo build && cargo test && cargo clippy -- -D warnings"
+post_reviewer = "cargo test"
 
 [git]
 enabled = true   # snapshots + rollback automáticos
 ```
 
 Todos los campos tienen valores por defecto razonables. Un proyecto mínimo
-solo necesita definir `[agents]` y ajustar las rutas de `[project]`.
+solo necesita definir `[agents]`.
 
 ## Formato de historias
 
@@ -98,6 +109,32 @@ Como [rol], quiero [acción] para que [beneficio].
 
 ## Uso
 
+### Generar el backlog automáticamente
+
+```bash
+# Desde un documento de requisitos
+regista groom product/spec.md
+
+# Con límite de historias
+regista groom product/spec.md --max-stories 8
+
+# Regenerar desde cero
+regista groom product/spec.md --replace
+```
+
+`groom` invoca al PO para descomponer la spec en historias, escribe los `.md`,
+y ejecuta un **bucle de validación** de dependencias hasta que el grafo esté limpio.
+
+### Validar el proyecto
+
+```bash
+# Chequeo pre-vuelo (config, historias, skills, dependencias, git)
+regista validate
+
+# Salida JSON para CI
+regista validate --json
+```
+
 ### Pipeline completo
 
 ```bash
@@ -106,6 +143,47 @@ regista /ruta/a/tu/proyecto
 
 # Una sola iteración (procesa una historia y sale)
 regista /ruta/a/tu/proyecto --once
+```
+
+### Simular antes de ejecutar
+
+```bash
+# Ver qué haría el orquestador sin invocar agentes
+regista --dry-run
+
+# Simular solo una iteración
+regista --dry-run --once
+
+# Simular con salida JSON
+regista --dry-run --json
+```
+
+### Salida JSON para CI/CD
+
+```bash
+# Reporte estructurado a stdout, logs a stderr
+regista --json
+
+# Solo el JSON, sin logs de progreso
+regista --json --quiet
+
+# Validar en CI y capturar reporte
+regista validate --json && regista --json --once > report.json
+```
+
+Exit codes: 0 = éxito, 1 = error de configuración, 2 = hay historias `Failed`.
+
+### Checkpoint y reanudación
+
+```bash
+# El pipeline guarda su estado en .regista.state.toml tras cada iteración
+regista
+
+# Si se interrumpe, reanuda desde donde estaba
+regista --resume
+
+# Borrar el checkpoint manualmente
+regista --clean-state
 ```
 
 ### Filtros de historias
@@ -121,9 +199,6 @@ regista /ruta/a/tu/proyecto --epic EPIC-001
 regista /ruta/a/tu/proyecto --epics "EPIC-001..EPIC-003"
 ```
 
-Los filtros se pueden combinar solo si no son mutuamente excluyentes
-(`--story` excluye `--epic` y `--epics`).
-
 ### Archivo de configuración alternativo
 
 ```bash
@@ -133,36 +208,24 @@ regista /ruta/a/tu/proyecto --config mi-config.toml
 ### Archivo de log personalizado
 
 ```bash
-# Guardar logs en un archivo específico (en vez de stderr)
 regista /ruta/a/tu/proyecto --log-file logs/debug.log
 ```
 
 ### Modo daemon
 
-Regista puede correr en segundo plano, sobreviviendo a desconexiones SSH:
-
 ```bash
 # Lanzar en segundo plano
 regista /ruta/a/tu/proyecto --detach
-# → Daemon lanzado con PID: 12345
 
 # Consultar si sigue corriendo
 regista /ruta/a/tu/proyecto --status
-# → ✅ Daemon corriendo (PID: 12345, log: /ruta/.regista.log)
 
-# Ver el log en vivo (como tail -f)
+# Ver el log en vivo (Ctrl+C para salir)
 regista /ruta/a/tu/proyecto --follow
-# Ctrl+C para salir (el daemon sigue corriendo)
 
 # Detener el daemon
 regista /ruta/a/tu/proyecto --kill
-# → ✅ Daemon (PID: 12345) detenido correctamente.
-
-# Log personalizado en modo daemon
-regista /ruta/a/tu/proyecto --detach --log-file logs/orch.log
 ```
-
-El estado del daemon se guarda en `<project_dir>/.regista.pid` (TOML).
 
 ## Máquina de estados
 
@@ -179,12 +242,9 @@ Draft ──PO(groom)──→ Ready ──QA──→ Tests Ready ──Dev─�
 ### Rechazos
 
 ```
-                         ┌─── Reviewer rechaza ───┐
-                         ▼                         │
-In Review ────────────────────→ In Progress ──────┘
-                         │                    Dev corrige → In Review
-Business Review ──PO──→  In Review  (rechazo leve)
-                   ──PO──→ In Progress (rechazo grave)
+In Review ──Reviewer──→ In Progress ──Dev(fix)──→ In Review
+Business Review ──PO──→ In Review  (rechazo leve)
+                 ──PO──→ In Progress (rechazo grave)
 ```
 
 ### Transiciones automáticas (sin agente)
@@ -195,68 +255,82 @@ Business Review ──PO──→  In Review  (rechazo leve)
 | **Blocked** → **Ready** | Todas las dependencias pasan a `Done` |
 | Cualquier estado → **Failed** | Se superan `max_reject_cycles` (3 por defecto) |
 
-### Detección de QA fix
+### Feedback rico en reintentos
 
-Cuando una historia está en `Tests Ready` y el último actor en el Activity Log
-es **Dev** (reportó problemas con los tests), regista dispara al **QA**
-para corregir los tests (`TestsReady → TestsReady`) en vez de al Developer.
+Cuando un agente falla, regista:
+1. Guarda stdout/stderr en `product/decisions/`
+2. En el reintento, inyecta el error en el prompt: «Tu intento anterior falló. Corrígelo.»
+3. Esto aumenta la probabilidad de éxito en reintentos.
 
-### Deadlock detection
-
-Si no hay historias accionables (`Ready`, `Tests Ready`, `InProgress`,
-`InReview`, `BusinessReview`), regista analiza el grafo de dependencias
-y dispara al **PO** para desatascar la historia que más bloqueos resuelve.
-
-Prioridad de desbloqueo:
-1. Historia que **bloquea más historias** (conteo de referencias inversas)
-2. En empate, el **ID más bajo**
-
-## Hooks de verificación
-
-Se ejecutan comandos shell tras cada fase. Si fallan, se hace rollback
-(vía `git reset --hard` si `git.enabled = true`):
-
-| Hook | Cuándo se ejecuta |
-|---|---|
-| `post_qa` | Tras QA escribir/corregir tests |
-| `post_dev` | Tras Dev implementar/corregir |
-| `post_reviewer` | Tras Reviewer aprobar |
-
-```toml
-[hooks]
-post_qa       = "cargo check --tests"
-post_dev      = "cargo build && cargo test && cargo clippy -- -D warnings"
-post_reviewer = "cargo test && cargo clippy -- -D warnings"
-```
-
-## Rollback con Git
-
-Si `git.enabled = true`, antes de cada paso se crea un commit snapshot.
-Si el agente falla o el hook no pasa, se hace `git reset --hard` al estado
-anterior. Si no existe el repo, se inicializa automáticamente.
+Configurable: `inject_feedback_on_retry = false` para desactivarlo.
 
 ## Referencia completa de CLI
 
 ```
-regista <PROJECT_DIR> [FLAGS]
+regista [PROJECT_DIR] [FLAGS]            # pipeline normal
+regista validate [PROJECT_DIR] [FLAGS]   # validación pre-vuelo
+regista init [PROJECT_DIR] [FLAGS]       # scaffolding de proyecto
+regista groom <SPEC.md> [FLAGS]          # generación de historias
 
-FLAGS:
+FLAGS (pipeline):
   --config <FILE>         Archivo de configuración alternativo
   --epics <RANGE>         Rango de épicas ("EPIC-001..EPIC-003")
   --epic <ID>             Una sola épica
   --story <ID>            Una sola historia
   --once                  Una iteración y salir
+  --json                  Salida JSON a stdout
+  --quiet                 Suprimir logs de progreso
+  --dry-run               Simular sin invocar agentes
+  --resume                Reanudar desde último checkpoint
+  --clean-state           Borrar checkpoint
   --detach                Lanzar en segundo plano (daemon)
   --follow                Ver log en vivo del daemon
   --status                Consultar si el daemon sigue vivo
   --kill                  Detener el daemon
   --log-file <FILE>       Archivo de log (por defecto: stderr)
+
+FLAGS (groom):
+  --max-stories <N>       Máximo de historias (0 = sin límite)
+  --replace               Regenerar desde cero (default: merge)
+  --config <FILE>         Archivo de configuración alternativo
+
+FLAGS (init):
+  --light                 Solo .regista.toml, sin skills
+  --with-example          Incluir historia y épica de ejemplo
+
+FLAGS (validate):
+  --json                  Salida JSON estructurada
+  --config <FILE>         Archivo de configuración alternativo
+```
+
+## Estructura del proyecto
+
+```
+regista/
+├── src/
+│   ├── main.rs                ← CLI, subcomandos, JSON output, exit codes
+│   ├── config.rs              ← Config, carga TOML, defaults
+│   ├── state.rs               ← Status, Actor, Transition
+│   ├── story.rs               ← Story, parseo .md, set_status()
+│   ├── dependency_graph.rs    ← Grafo, ciclos DFS, conteo inverso
+│   ├── deadlock.rs            ← Detección de bloqueos + priorización
+│   ├── agent.rs               ← pi con timeout, retry, feedback rico
+│   ├── prompts.rs             ← Prompts para PO/QA/Dev/Reviewer
+│   ├── orchestrator.rs        ← Loop principal, dry-run, checkpoint
+│   ├── checkpoint.rs          ← Save/load/resume del estado
+│   ├── validator.rs           ← Comando validate (pre-vuelo)
+│   ├── init.rs                ← Comando init (scaffolding)
+│   ├── groom.rs               ← Comando groom (generar backlog)
+│   ├── hooks.rs               ← Comandos post-fase
+│   ├── git.rs                 ← Snapshots + rollback
+│   └── daemon.rs              ← Modo daemon (detach/follow/status/kill)
+└── roadmap/                   ← Documentos de diseño de features futuras
 ```
 
 ## Tests
 
 ```bash
-cargo test   # 82 tests, 0 fallos, 0 warnings
+cargo test   # 104 tests, 0 fallos, 0 warnings
 ```
 
 ## Licencia

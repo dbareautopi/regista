@@ -15,37 +15,35 @@ El proyecto anfitrión se configura mediante un archivo `.regista.toml` en su ra
 
 ```toml
 [project]
-# Dónde encontrar los artefactos del workflow
 stories_dir    = "product/stories"
-story_pattern  = "STORY-*.md"          # glob para encontrar historias
-epics_dir      = "product/epics"       # opcional: para filtrar por épica
+story_pattern  = "STORY-*.md"
+epics_dir      = "product/epics"
 decisions_dir  = "product/decisions"
 log_dir        = "product/logs"
 
 [agents]
-# Rutas a los skills de pi (relativas a la raíz del proyecto)
 product_owner = ".pi/skills/product-owner/SKILL.md"
 qa_engineer   = ".pi/skills/qa-engineer/SKILL.md"
 developer     = ".pi/skills/developer/SKILL.md"
 reviewer      = ".pi/skills/reviewer/SKILL.md"
 
 [limits]
-max_iterations        = 10
-max_retries_per_step  = 5
-max_reject_cycles     = 3
-agent_timeout_seconds = 1800
-max_wall_time_seconds = 28800
-retry_delay_base_seconds = 10
+max_iterations            = 10
+max_retries_per_step      = 5
+max_reject_cycles         = 3
+agent_timeout_seconds     = 1800
+max_wall_time_seconds     = 28800
+retry_delay_base_seconds  = 10
+groom_max_iterations      = 5       # bucle groom→validate→corregir
+inject_feedback_on_retry  = true    # inyectar stderr en reintentos
 
 [hooks]
-# Comandos opcionales que se ejecutan tras cada fase para verificar artefactos.
-# Si fallan, se hace rollback. Si no se definen, se salta la verificación.
 post_qa       = "cargo check --tests"
-post_dev      = "cargo build && cargo test && cargo clippy -- -D warnings && cargo fmt -- --check"
+post_dev      = "cargo build && cargo test && cargo clippy -- -D warnings"
 post_reviewer = "cargo test && cargo clippy -- -D warnings"
 
 [git]
-enabled = true    # si false, no se usan snapshots/rollback
+enabled = true
 ```
 
 ---
@@ -117,30 +115,18 @@ enabled = true    # si false, no se usan snapshots/rollback
 | 14 | `*` | `Failed` | **Orquestador** | Superado `max_reject_cycles` |
 
 > Las transiciones 12, 13, 14 son **automáticas**: las ejecuta el propio orquestador
-> al evaluar el grafo de dependencias y los contadores de ciclos. No invocan agentes.
+> sin invocar agentes.
 
 ### 2.3 Tipo en Rust
 
 ```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Status {
-    Draft,
-    Ready,
-    TestsReady,
-    InProgress,
-    InReview,
-    BusinessReview,
-    Done,
-    Blocked,
-    Failed,
+    Draft, Ready, TestsReady, InProgress, InReview,
+    BusinessReview, Done, Blocked, Failed,
 }
 
 pub enum Actor {
-    ProductOwner,
-    QaEngineer,
-    Developer,
-    Reviewer,
-    Orchestrator,
+    ProductOwner, QaEngineer, Developer, Reviewer, Orchestrator,
 }
 ```
 
@@ -148,37 +134,28 @@ pub enum Actor {
 
 ## 3. Detección de bloqueos (deadlock)
 
-Antes de cada iteración, el orquestador evalúa si existe **progreso posible**.
-Si no, identifica la causa y dispara al agente corrector (casi siempre el PO).
+Si no hay historias accionables, el orquestador analiza el grafo de dependencias
+y dispara al PO para desatascar la historia que más bloqueos resuelve.
 
 ### 3.1 Algoritmo
 
 ```
-Para cada historia no terminal (≠ Done, ≠ Failed):
-
-  1. Si status == Draft         → "stuck": necesita PO (groom)     [caso A]
+Para cada historia no terminal:
+  1. Si status == Draft         → "stuck": necesita PO (groom)
   2. Si status == Blocked:
-     a. Si algún bloqueador está en Draft → "stuck": PO debe groom [caso B]
-     b. Si hay ciclo de dependencias     → "stuck": PO debe romper [caso C]
-     c. Si todos los bloqueadores están Done → automático → Ready    [OK]
-  3. Si status está en el flujo normal (Ready, Tests Ready, InProgress,
-     InReview, BusinessReview) → el propio loop lo maneja (retry,
-     reject cycles, etc.)
+     a. Si algún bloqueador está en Draft → "stuck": PO debe groom el Draft
+     b. Si hay ciclo de dependencias     → "stuck": PO debe romper el ciclo
+     c. Si todos los bloqueadores Done   → automático → Ready
+  3. Resto → el loop normal lo maneja
 
-Si tras evaluar todas las historias:
-  - ninguna es "accionable" por el loop normal
-  Y
-  - existen historias "stuck"
-  → disparar al PO para la historia stuck de mayor prioridad
-    (la que desbloquea más historias)
-
-Si no hay historias stuck Y no hay accionables → pipeline completo (todas Done/Failed)
+Si ninguna accionable Y hay stuck → disparar PO para la de mayor prioridad.
+Si ninguna accionable Y sin stuck  → Pipeline Complete.
 ```
 
 ### 3.2 Prioridad de desbloqueo
 
-Se elige la historia que **desbloquea más historias** (conteo de referencias inversas
-en el grafo de dependencias). En caso de empate, el ID secuencial más bajo.
+La historia que **desbloquea más historias** (conteo de referencias inversas).
+En empate, ID numérico más bajo.
 
 ---
 
@@ -187,28 +164,28 @@ en el grafo de dependencias). En caso de empate, el ID secuencial más bajo.
 ```
 regista/
 ├── Cargo.toml
+├── README.md
 ├── DESIGN.md                  ← este documento
+├── AGENTS.md                  ← guía para agentes de codificación
 ├── src/
-│   ├── main.rs                ← CLI (clap), entrada
-│   ├── config.rs              ← Config, carga de .regista.toml
-│   ├── state.rs               ← Status, Actor, Transition, allowed_transitions()
-│   ├── story.rs               ← Story, parseo de .md, set_status()
-│   ├── dependency_graph.rs    ← Grafo de dependencias, ciclo DFS, refs inversas
-│   ├── deadlock.rs            ← Detección de stuck, priorización
-│   ├── orchestrator.rs        ← Loop principal, process_story()
-│   ├── agent.rs               ← Invocación de `pi` con timeout + retry
-│   ├── prompts.rs             ← Generación de prompts por actor y transición
-│   ├── hooks.rs               ← Comandos post-fase opcionales
-│   └── git.rs                 ← Snapshot + rollback (si git.enabled)
-└── tests/
-    ├── state_tests.rs
-    ├── deadlock_tests.rs
-    ├── story_tests.rs
-    └── fixtures/
-        ├── story_draft.md
-        ├── story_blocked.md
-        ├── story_business_review.md
-        └── ...
+│   ├── main.rs                ← CLI (clap), subcomandos, JSON output, exit codes
+│   ├── config.rs              ← Config, carga TOML, defaults, validate()
+│   ├── state.rs               ← Status, Actor, Transition, can_transition_to()
+│   ├── story.rs               ← Story, parseo .md, set_status(), advance_status_in_memory()
+│   ├── dependency_graph.rs    ← Grafo, ciclo DFS, has_any_cycle(), blocks_count()
+│   ├── deadlock.rs            ← analyze(), DeadlockResolution, priorización
+│   ├── agent.rs               ← invoke_with_retry(), AgentOptions, feedback rico
+│   ├── prompts.rs             ← PromptContext, 7 funciones de prompt
+│   ├── orchestrator.rs        ← run(), run_real(), run_dry(), process_story()
+│   ├── checkpoint.rs          ← OrchestratorState: save/load/remove (.regista.state.toml)
+│   ├── validator.rs           ← validate(): chequeo pre-vuelo de proyecto
+│   ├── init.rs                ← init(): scaffolding de proyecto nuevo
+│   ├── groom.rs               ← run(): generación de backlog desde spec
+│   ├── hooks.rs               ← run_hook(): comandos post-fase
+│   ├── git.rs                 ← snapshot(), rollback()
+│   └── daemon.rs              ← detach(), status(), kill(), follow()
+├── roadmap/                   ← Ideas y features futuras
+└── tests/fixtures/            ← Archivos .md de ejemplo
 ```
 
 ---
@@ -219,7 +196,7 @@ regista/
 # STORY-NNN: Título
 
 ## Status
-**<Draft|Ready|Tests Ready|In Progress|In Review|Business Review|Done|Blocked|Failed>**
+**Draft**   ← uno de los 9 estados
 
 ## Epic
 EPIC-XXX
@@ -234,56 +211,125 @@ EPIC-XXX
 ## Dependencias       ← opcional
 - Bloqueado por: STORY-XXX, STORY-YYY
 
-## Activity Log
-- 2026-04-30 | PO | Movida de Draft a Ready
+## Activity Log       ← obligatorio
+- YYYY-MM-DD | Actor | descripción
 ```
-
-Reglas de parseo:
-- **Status**: busca `## Status`, lee la línea siguiente, extrae valor entre `**...**` o texto limpio
-- **Bloqueadores**: busca `Bloqueado por:` (case-insensitive), extrae `STORY-\d+`
-- **Epic**: busca `## Epic`, lee la línea siguiente, extrae `EPIC-\d+`
-- **Activity Log**: busca `## Activity Log`, lee hasta la siguiente sección `## ...`. Última línea con "rechaz" se usa para prompt de Dev fix.
 
 ---
 
 ## 6. CLI
 
-```
-regista <PROJECT_DIR> [FLAGS]
+### Comandos
 
-FLAGS:
-  --config <FILE>         Ruta al archivo de configuración
-                          [default: <PROJECT_DIR>/.regista.toml]
+| Comando | Descripción |
+|---------|-------------|
+| `regista [DIR]` | Pipeline completo (default) |
+| `regista validate [DIR]` | Chequeo pre-vuelo de integridad |
+| `regista init [DIR]` | Scaffolding de proyecto nuevo |
+| `regista groom <SPEC>` | Generar backlog desde spec |
 
-  --epics <RANGE>         Filtrar por rango de épicas ("EPIC-001..EPIC-003")
-  --epic <ID>             Filtrar por una sola épica
+### Flags principales
 
-  --story <ID>            Procesar solo una historia concreta
-  --once                  Ejecutar una sola iteración y salir
+| Flag | Descripción |
+|------|-------------|
+| `--once` | Una sola iteración |
+| `--json` | Salida JSON a stdout |
+| `--quiet` | Suprimir logs de progreso |
+| `--dry-run` | Simular sin ejecutar agentes |
+| `--resume` | Reanudar desde checkpoint |
+| `--clean-state` | Borrar checkpoint |
+| `--story <ID>` | Filtrar por historia |
+| `--epic <ID>` | Filtrar por épica |
+| `--epics <RANGE>` | Filtrar por rango de épicas |
+| `--config <FILE>` | Configuración alternativa |
+| `--log-file <FILE>` | Archivo de log |
+| `--detach` | Modo daemon |
+| `--follow` | Ver log del daemon |
+| `--status` | Estado del daemon |
+| `--kill` | Detener daemon |
 
-  --detach                Lanzar en segundo plano (modo daemon)
-  --follow                Ver log en vivo de un orquestador corriendo
-  --status                Consultar si el orquestador sigue vivo
-  --kill                  Detener orquestador en segundo plano
+### Exit codes
 
-  --log-file <FILE>       Ruta específica para el archivo de log
-```
+| Código | Significado |
+|--------|-------------|
+| 0 | Pipeline completo, 0 `Failed` |
+| 1 | Error de configuración / entorno |
+| 2 | Pipeline completo, ≥1 `Failed` |
 
 ---
 
-## 7. Plan de implementación
+## 7. Checkpoint / Resume
+
+Tras cada `process_story()` exitoso, el orquestador guarda su estado en
+`<project_dir>/.regista.state.toml`:
+
+```toml
+iteration = 7
+
+[reject_cycles]
+"STORY-013" = 2
+
+[story_iterations]
+"STORY-001" = 4
+
+[story_errors]
+"STORY-015" = "max_reject_cycles alcanzado"
+```
+
+Al reanudar con `--resume`, se restauran los contadores y se continúa desde
+la iteración guardada. El checkpoint se limpia automáticamente al llegar a
+`PipelineComplete`.
+
+---
+
+## 8. Feedback rico de agentes
+
+Cuando `inject_feedback_on_retry = true` (default):
+
+1. En cada intento fallido, se guarda stdout/stderr en
+   `product/decisions/<STORY>-<actor>-<timestamp>.md`.
+2. En el reintento, el prompt se modifica:
+   ```
+   ⚠️ Tu intento anterior falló. Esto fue lo ocurrido:
+     [stderr del intento anterior]
+   Corrige el error e inténtalo de nuevo.
+   ---
+   [prompt original]
+   ```
+3. El `AgentResult` incluye `attempts: Vec<AttemptTrace>` con la traza completa.
+
+---
+
+## 9. Dry-run
+
+`--dry-run` simula el pipeline en memoria sin invocar agentes ni modificar
+archivos. Usa `Story::advance_status_in_memory()` para mutar estados sin
+escribir a disco. Muestra qué transiciones se harían, qué historias se
+desbloquearían, y estima el tiempo total. Compatible con `--json`.
+
+---
+
+## 10. Groom — Generación automática de backlog
+
+`regista groom <spec.md>` invoca al PO para descomponer una spec en historias
+y épicas. Tras generar, ejecuta un **bucle de validación**:
+
+```
+groom → generate → validate dependencias
+  ├── OK → terminar
+  └── errores → feedback al PO → corregir → validate → ...
+```
+
+Máximo de iteraciones configurable: `groom_max_iterations` (default 5).
+
+---
+
+## 11. Plan de implementación (histórico)
 
 | Fase | Qué | Resultado |
 |------|-----|-----------|
-| **F1** | Estructura del crate, `Cargo.toml`, `main.rs` con clap | Binario compila, acepta flags |
-| **F2** | `config.rs` — carga de `.regista.toml` | Lee configuración |
-| **F3** | `state.rs` — Status, Actor, Transition, allowed_transitions | Tipo de la máquina de estados |
-| **F4** | `story.rs` — parseo de .md, set_status() | Lee y escribe historias |
-| **F5** | `dependency_graph.rs` — grafo, ciclo DFS, conteo inverso | Grafo de dependencias |
-| **F6** | `deadlock.rs` — detección y priorización | Decide qué desbloquear |
-| **F7** | `agent.rs` — pi con timeout + retry | Ejecuta agentes |
-| **F8** | `prompts.rs` — prompts por transición | Prompts generados |
-| **F9** | `orchestrator.rs` — loop principal, process_story | Pipeline completo |
-| **F10** | `hooks.rs` + `git.rs` — verificación y rollback | Verificación post-fase |
-| **F11** | Tests: estado, deadlock, parseo, integración | Cobertura de tests |
-| **F12** | Wrapper `scripts/regista.sh` → binario | Reemplazo del .sh |
+| F1–F12 | Crate base, CLI, máquina de estados, pipeline, daemon, tests | 82 tests ✅ |
+| F13 | Salida JSON + CI/CD, dry-run | `--json`, `--dry-run` ✅ |
+| F14 | `regista validate`, `regista init` | Subcomandos ✅ |
+| F15 | `regista groom` | Generación de backlog ✅ |
+| F16 | Checkpoint/resume + feedback rico | `--resume`, feedback en retry ✅ |

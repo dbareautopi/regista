@@ -9,7 +9,8 @@ Incluye arquitectura, convenciones, comandos, y decisiones de diseño.
 
 `regista` es un **orquestador genérico de agentes** para [`pi`](https://github.com/mariozechner/pi-coding-agent).  
 Automatiza un pipeline de desarrollo de software con 4 roles (PO, QA, Dev, Reviewer)  
-gobernado por una **máquina de estados** formal con detección de deadlocks.
+gobernado por una **máquina de estados** formal con detección de deadlocks,
+checkpoint/resume, y salida JSON para CI/CD.
 
 **Filosofía clave**: regista **no sabe nada del proyecto** que orquesta.  
 No importa si el proyecto usa Rust, Python, o cualquier cosa. Solo necesita:
@@ -26,6 +27,7 @@ No importa si el proyecto usa Rust, Python, o cualquier cosa. Solo necesita:
 | Lenguaje | **Rust** (edition 2021) |
 | CLI | **clap** 4 (derive) |
 | Configuración | **TOML** (`serde` + `toml` 0.8) |
+| JSON output | **serde_json** 1 |
 | Logging | **tracing** + `tracing-subscriber` (env-filter) |
 | Error handling | **anyhow** |
 | Regex | **regex** (con `LazyLock`) |
@@ -45,20 +47,37 @@ regista/
 ├── DESIGN.md                  ← diseño completo (máquina de estados, arquitectura)
 ├── HANDOFF.md                 ← handoff de la última sesión (lo implementado y pendiente)
 ├── Cargo.toml                 ← dependencias y metadata del crate
-├── .regista.toml              ← config de ejemplo (no es la config real de este proyecto)
 ├── .gitignore
 ├── src/
-│   ├── main.rs                ← CLI (clap), entry point, setup de tracing
+│   ├── main.rs                ← CLI (clap), subcomandos, JSON output, exit codes
 │   ├── config.rs              ← Config, ProjectConfig, AgentsConfig, LimitsConfig, carga TOML
 │   ├── state.rs               ← Status, Actor, Transition, can_transition_to(), ALL
-│   ├── story.rs               ← Story, parseo de .md, set_status(), extract_section()
+│   ├── story.rs               ← Story, parseo de .md, set_status(), advance_status_in_memory()
 │   ├── dependency_graph.rs    ← DependencyGraph, DFS para ciclos, blocks_count()
 │   ├── deadlock.rs            ← analyze(), DeadlockResolution, priorización
-│   ├── agent.rs               ← invoke_with_retry(), invoke_once(), backoff exponencial
-│   ├── prompts.rs             ← PromptContext, 7 funciones de prompt (po_groom, qa_tests, etc.)
-│   ├── orchestrator.rs        ← run(), process_story(), apply_automatic_transitions()
+│   ├── agent.rs               ← invoke_with_retry(), AgentOptions, feedback rico
+│   ├── prompts.rs             ← PromptContext, 7 funciones de prompt
+│   ├── orchestrator.rs        ← run(), run_real(), run_dry(), process_story(), checkpoint save
+│   ├── checkpoint.rs          ← OrchestratorState: save/load/remove (.regista.state.toml)
+│   ├── validator.rs           ← validate(): chequeo pre-vuelo de proyecto
+│   ├── init.rs                ← init(): scaffolding de proyecto nuevo
+│   ├── groom.rs               ← run(): generación de backlog desde spec con bucle validate
 │   ├── hooks.rs               ← run_hook(), ejecución de comandos shell post-fase
-│   └── git.rs                 ← snapshot(), rollback(), init_git()
+│   ├── git.rs                 ← snapshot(), rollback(), init_git()
+│   └── daemon.rs              ← detach(), status(), kill(), follow(), DaemonState
+├── roadmap/                   ← Documentos de diseño de features futuras
+│   ├── ROADMAP.md             ← Índice con estado de cada feature
+│   ├── 01-paralelismo.md
+│   ├── 02-salida-json-ci-cd.md        ← ✅ IMPLEMENTADO
+│   ├── 03-dry-run.md                  ← ✅ IMPLEMENTADO
+│   ├── 04-workflow-configurable.md
+│   ├── 05-validate.md                 ← ✅ IMPLEMENTADO
+│   ├── 06-init-scaffold.md            ← ✅ IMPLEMENTADO
+│   ├── 07-checkpoint-resume.md        ← ✅ IMPLEMENTADO
+│   ├── 08-feedback-agentes.md         ← ✅ IMPLEMENTADO
+│   ├── 13-groom-generacion-historias.md ← ✅ IMPLEMENTADO
+│   ├── 14-groom-from-dir.md
+│   └── 15-groom-interactive.md
 └── tests/
     └── fixtures/
         ├── story_draft.md
@@ -82,7 +101,8 @@ cargo test
 
 # Ejecutar tests de un módulo específico
 cargo test --lib state
-cargo test --lib deadlock
+cargo test --lib checkpoint
+cargo test --lib groom
 
 # Ejecutar test ignorado (requiere pi instalado)
 cargo test -- --ignored
@@ -138,12 +158,6 @@ Draft ──PO(groom)──→ Ready ──QA(tests)──→ Tests Ready ──
 - `Done` — historia completada exitosamente
 - `Failed` — superó `max_reject_cycles`
 
-### Estados "stuck" (requieren intervención del PO)
-
-- `Draft` — necesita refinamiento
-- `Blocked` con bloqueador en `Draft` — el Draft bloqueante debe avanzar
-- `Blocked` con ciclo de dependencias — PO debe romper el ciclo
-
 ---
 
 ## 📝 Contrato de historia (.md)
@@ -170,7 +184,7 @@ EPIC-XXX
 - Bloqueado por: STORY-XXX, STORY-YYY
 
 ## Activity Log       ← obligatorio
-- 2026-04-30 | PO | Movida de Draft a Ready
+- YYYY-MM-DD | PO | descripción
 ```
 
 ### Reglas de parseo (`story.rs`)
@@ -181,152 +195,165 @@ EPIC-XXX
 | **Bloqueadores** | Busca `Bloqueado por:` (case-insensitive) dentro de `## Dependencias`, extrae `STORY-\d+` |
 | **Epic** | Busca `## Epic`, lee la línea siguiente, extrae `EPIC-\d+` |
 | **Last rejection** | Busca `## Activity Log`, última línea que contiene "rechaz" (case-insensitive) |
+| **Last actor** | Busca `## Activity Log`, última línea, extrae actor entre `|` |
 
 ---
 
 ## 🧩 Descripción de módulos
 
 ### `main.rs` — Entry point
-- Define `Cli` con clap (11 flags)
-- Configura tracing (stderr, env-filter desde `RUST_LOG`)
-- Carga config y llama a `orchestrator::run()`
-- Flags implementados: `--config`, `--once`, `--story`, `--epic`, `--epics`, `--detach`, `--follow`, `--status`, `--kill`, `--log-file`
+- Define `Cli` con clap (16 flags + project_dir posicional)
+- Detecta subcomandos `validate`, `init`, `groom` antes del parseo de clap
+- Configura tracing (stderr, env-filter, respeta `--quiet`)
+- Salida JSON a stdout con `--json`; exit codes 0/1/2
+- Manejo de `--resume` y `--clean-state`
 
 ### `config.rs` — Configuración
 - `Config` con `#[serde(default)]`: todos los campos tienen defaults razonables
 - Carga desde `.regista.toml`; si no existe, usa defaults
+- Nuevos campos: `groom_max_iterations` (default 5), `inject_feedback_on_retry` (default true)
 - `validate()`: verifica que `stories_dir` existe, crea `decisions_dir` y `log_dir`
-- `resolve()`: convierte rutas relativas a absolutas
 
 ### `state.rs` — Máquina de estados
-- `Status` enum: 9 variantes (`Draft`, `Ready`, `TestsReady`, `InProgress`, `InReview`, `BusinessReview`, `Done`, `Blocked`, `Failed`)
+- `Status` enum: 9 variantes
 - `Actor` enum: `ProductOwner`, `QaEngineer`, `Developer`, `Reviewer`, `Orchestrator`
-- `Transition` struct: `from`, `to`, `actor`
-- `Status::ALL` — array canónico de 12 transiciones (const)
-- Métodos: `allowed_from()`, `can_transition_to()`, `is_terminal()`, `is_actionable()`, `is_stuck()`
-- Tests: 23 tests unitarios de transiciones válidas e inválidas
+- `Transition` struct con `Status::ALL` — 14 transiciones canónicas
+- Tests: 23 tests
 
 ### `story.rs` — Parseo de historias
 - `Story` struct: `id`, `path`, `status`, `epic`, `blockers`, `last_rejection`, `raw_content`
 - `load()`: lee archivo .md y parsea todos los campos
-- `set_status()`: reemplaza la línea `**StatusActual**` por `**NuevoStatus**` en el archivo
-  - Hace backup a `.md.bak` antes de escribir
-  - Verifica tras escritura (re-parsea); si falla, restaura backup
-- `blocks_stories()`: retorna IDs de historias que este story bloquea
-- Funciones de parseo: `parse_status()`, `parse_epic()`, `parse_blockers()`, `parse_last_rejection()`
-- `extract_section()`: extrae contenido entre dos `## Headers`
-- Tests: 8 tests de parseo
+- `set_status()`: escribe a disco con backup atómico + verificación
+- `advance_status_in_memory()`: muta estado sin tocar disco (dry-run)
+- `last_actor()`: extrae último actor del Activity Log
+- Tests: 12 tests
 
 ### `dependency_graph.rs` — Grafo de dependencias
-- `DependencyGraph`: `forward` (bloqueador → bloqueados), `reverse` (bloqueado → bloqueadores)
-- `from_stories()`: construye el grafo desde `Vec<Story>`
-- `blocks_count()`: cuántas historias bloquea esta
-- `has_cycle_from()`: DFS con colores (0=no visitado, 1=en pila, 2=procesado)
-- `has_any_cycle()`: detecta si existe algún ciclo
-- `find_cycle_members()`: retorna HashSet de IDs en ciclos
-- Tests: 4 tests (no-ciclo, 2-nodos, 3-nodos, conteo)
+- `DependencyGraph`: `forward`, `reverse`, DFS con colores
+- `blocks_count()`, `has_cycle_from()`, `has_any_cycle()`, `find_cycle_members()`
+- Tests: 4 tests
 
 ### `deadlock.rs` — Detección de bloqueos
-- `DeadlockResolution` enum: `NoDeadlock`, `InvokePoFor {story_id, unblocks, reason}`, `PipelineComplete`
-- `analyze()`: algoritmo de 4 pasos:
-  1. Si hay historias accionables → `NoDeadlock`
-  2. Si todo está terminal → `PipelineComplete`
-  3. Evalúa Draft (necesitan grooming) y Blocked (bloqueador en Draft, ciclo)
-  4. Prioriza por: mayor `unblocks`, luego menor ID numérico
-- Tests: 7 tests (draft, blocked-by-draft, accionable, done, ciclo, in-progress, prioridad)
+- `DeadlockResolution` enum: `NoDeadlock`, `InvokePoFor`, `PipelineComplete`
+- `analyze()`: algoritmo de 4 pasos con priorización
+- Prioriza por: mayor `unblocks`, luego menor ID numérico
+- Tests: 7 tests
 
-### `agent.rs` — Invocación de agentes
-- `invoke_with_retry()`: loop con backoff exponencial (delay ×= 2)
-- `invoke_once()`: `pi -p "<prompt>" --skill <path> --no-session`
-- Timeout y reintentos configurados desde `LimitsConfig`
-- Tests: 1 test (ignorado, requiere pi instalado)
+### `agent.rs` — Invocación de agentes con feedback
+- `invoke_with_retry()`: loop con backoff exponencial, acepta `AgentOptions`
+- `AgentOptions`: `story_id`, `decisions_dir`, `inject_feedback`
+- Feedback rico: guarda stdout/stderr en `decisions/`, inyecta errores en reintentos
+- `AgentResult` incluye `attempt` y `attempts: Vec<AttemptTrace>`
+- Tests: 3 tests + 1 ignorado
 
 ### `prompts.rs` — Generación de prompts
 - `PromptContext`: `story_id`, `stories_dir`, `decisions_dir`, `last_rejection`, `from`, `to`
-- 7 funciones de prompt (una por transición accionable por agentes):
-  - `po_groom()` — Draft → Ready
-  - `po_validate()` — Business Review → Done
-  - `qa_tests()` — Ready → Tests Ready
-  - `qa_fix_tests()` — Tests Ready → Tests Ready
-  - `dev_implement()` — Tests Ready → In Review
-  - `dev_fix()` — In Progress → In Review
-  - `reviewer()` — In Review → Business Review / In Progress
+- 7 funciones de prompt (una por transición accionable por agentes)
 - Todos los prompts terminan con `"NO preguntes. 100% autónomo."`
-- Tests: 4 tests (presencia de story_id, rejection, no-preguntes)
+- Tests: 4 tests
 
 ### `orchestrator.rs` — Loop principal
-- `run()`: itera hasta `max_iterations` o `max_wall_time`:
-  1. Carga historias → `load_all_stories()`
-  2. Aplica transiciones automáticas → `apply_automatic_transitions()`
-  3. Detecta deadlock → `deadlock::analyze()`
-  4. Si deadlock: dispara PO para la historia stuck
-  5. Si no: `pick_next_actionable()` → `process_story()`
-- `process_story()`:
-  1. Determina skill + prompt según status actual
-  2. Snapshot git (si `git.enabled`)
-  3. Invoca agente con retry
-  4. Verifica cambio de estado; incrementa `reject_cycles` si hubo rechazo
-  5. Ejecuta hook post-fase; rollback si falla
-- `pick_next_actionable()`: prioriza por `status_priority()` → `blocks_count()` → ID más bajo
-- `status_priority()`: BusinessReview(6) > InReview(5) > InProgress(4) > TestsReady(3) > Ready(2)
-- `daemon.rs` — `detach()`, `status()`, `kill()`, `follow()`, `PidCleanup`, `DaemonState` | 6 tests |
+- `run()`: dispatch a `run_real()` o `run_dry()` según `options.dry_run`
+- `run_real()`: loop con carga de historias, transiciones automáticas, deadlock, process_story
+  - Acepta `resume_state: Option<OrchestratorState>` para `--resume`
+  - Guarda checkpoint tras cada `process_story()` exitoso
+  - Limpia checkpoint en `PipelineComplete`
+- `run_dry()`: simulación en memoria sin agentes ni escritura a disco
+  - Usa `advance_status_in_memory()` para mutar estados
+  - Muestra desbloqueos y estima tiempo
+- `process_story()`: determina skill + prompt, invoca agente con AgentOptions
+- `filter_stories()`: aplica filtros `--story`, `--epic`, `--epics`
+- Tests: 18 tests
+
+### `checkpoint.rs` — Persistencia del estado
+- `OrchestratorState`: `iteration`, `reject_cycles`, `story_iterations`, `story_errors`
+- `save()` / `load()` / `remove()` sobre `.regista.state.toml`
+- `load()` maneja archivos corruptos (los borra)
+- Tests: 5 tests
+
+### `validator.rs` — Comando `validate`
+- Valida: config, skills, historias (parseo, Activity Log), dependencias (refs rotas, ciclos), git
+- `ValidationResult` con `Vec<Finding>` (severity: Error/Warning, category, message)
+- `--json` para CI, exit codes: 0=OK, 1=errores, 2=warnings
+- Tests: 3 tests
+
+### `init.rs` — Comando `init`
+- Genera `.regista.toml`, 4 `SKILL.md`, estructura `product/...`
+- `--light`: solo config, sin skills
+- `--with-example`: incluye historia y épica de ejemplo
+- No pisa archivos existentes
+- Tests: 5 tests
+
+### `groom.rs` — Comando `groom`
+- `run()`: invoca al PO para generar historias desde spec
+- **Bucle de validación**: groom → validate dependencias → si errores → feedback al PO → repetir
+- Máx iteraciones: `groom_max_iterations` (default 5)
+- `--max-stories` (0 = sin límite), `--merge`/`--replace`
+- Prompts: `groom_prompt_initial()`, `groom_prompt_fix()` con `GroomCtx`
+- Tests: 6 tests
 
 ### `hooks.rs` — Hooks post-fase
 - `run_hook()`: ejecuta `sh -c "<comando>"`, retorna error si exit code ≠ 0
-- Los hooks son comandos shell, no binarios directos
 
 ### `git.rs` — Snapshots y rollback
-- `snapshot()`: `git add -A && git commit -q -m "snapshot: {label}"`, retorna hash
-  - Si no hay repo git, lo inicializa con `user.email regista@pi.local`
+- `snapshot()`: `git add -A && git commit -q -m "snapshot: {label}"`
 - `rollback()`: `git reset --hard <hash>`
-- `current_hash()`: `git rev-parse HEAD`
+- Auto-inicializa repo si `git.enabled = true` y no existe
+
+### `daemon.rs` — Modo daemon
+- `detach()`: spawnea proceso hijo con `--daemon` interno
+- `status()`, `kill()`, `follow()`: gestión del proceso
+- Estado guardado en `.regista.pid` (TOML)
+- Tests: 6 tests
 
 ---
 
 ## 💡 Decisiones de diseño importantes
 
-1. **Agnóstico al proyecto anfitrión**: el orquestador no sabe de Rust, cargo, ni Purist.  
+1. **Agnóstico al proyecto anfitrión**: regista no sabe de Rust, cargo, ni nada.  
    Solo invoca `pi --skill <path>` con prompts genéricos.
 
-2. **Workflow fijo e inmutable**: las 12 transiciones en `Status::ALL` son canónicas.  
+2. **Workflow fijo e inmutable**: las 14 transiciones son canónicas.  
    No se añaden transiciones en runtime **por diseño**.
 
-3. **Shell `true` en hooks**: `hooks.rs` ejecuta con `sh -c`, igual que el wrapper original en bash.
+3. **Subcomandos vía args manual**: `validate`, `init`, `groom` se detectan antes de clap  
+   inspeccionando `std::env::args()`. Evita refactorizar toda la CLI con clap subcommands.
 
-4. **Backoff exponencial**: `agent.rs` duplica el delay entre reintentos (`delay *= 2`).
+4. **Dry-run en memoria**: `advance_status_in_memory()` muta `Story` sin tocar el filesystem.  
+   Permite simular pipelines completos sin gastar créditos de LLM.
 
-5. **`set_status()` con backup atómico**: escribe → re-parsea → si falla, restaura `.bak`.
+5. **Checkpoint TOML**: el estado del orquestador se guarda en `.regista.state.toml`.  
+   Si el pipeline se interrumpe, `--resume` lo reanuda. Se limpia en `PipelineComplete`.
 
-6. **Prioridad de estados en el loop**: `BusinessReview` > `InReview` > `InProgress` > `TestsReady` > `Ready`.  
-   Esto asegura que historias casi terminadas se completen antes de empezar nuevas.
+6. **Feedback rico en reintentos**: cuando un agente falla, su stderr se guarda en  
+   `decisions/` y se inyecta en el prompt del reintento. Truncado a 2000 bytes.
 
-7. **Git opcional pero auto-inicializable**: si `git.enabled = true` y no hay repo, lo crea.
+7. **Groom con bucle validate**: generar historias no basta — hay que validar que las  
+   dependencias son correctas. El PO recibe feedback concreto y corrige en bucle.
 
-8. **Daemon mode vía respawn**: `--detach` spawnea un proceso hijo con `--daemon` interno,  
-   evitando dependencias nativas de `fork()`. El estado se guarda en `.regista.pid` (TOML).
+8. **Salida JSON dual**: `--json` emite JSON a stdout, logs a stderr.  
+   `--quiet` suprime logs. Compatible con `regista --json > report.json`.
 
-9. **Detección de QA fix**: cuando el último actor en el Activity Log es "Dev" estando en  
-   `TestsReady`, el orquestador dispara QA para corregir tests en vez de Dev para implementar.
+9. **Backoff exponencial**: `agent.rs` duplica el delay entre reintentos (`delay *= 2`).
+
+10. **`set_status()` con backup atómico**: escribe → re-parsea → si falla, restaura `.bak`.
 
 ---
 
-## 🚧 Pendiente y roadmap
+## 🚧 Pendiente (roadmap)
 
-### Alta prioridad (completado ✅)
-1. ~~Filtro `--story`~~ — implementado: `RunOptions.story_filter` en `filter_stories()`
-2. ~~Filtro `--epics` / `--epic`~~ — implementado: `RunOptions.epic_filter` y `RunOptions.epics_range`
-3. ~~Flag `--once`~~ — implementado: break al final de la primera iteración
-4. ~~`--log-file`~~ — implementado: redirige tracing a archivo si se especifica
+### Features no implementadas
 
-### Media prioridad (completado ✅)
-4. ~~Daemon mode~~ — implementado: `daemon.rs` con `--detach`, `--follow`, `--status`, `--kill`
-5. ~~`--log-file`~~ — ya estaba implementado en la sesión anterior
-
-### Baja prioridad (completado ✅)
-6. ~~`TestsReady → TestsReady`~~ — implementado: `process_story()` detecta `last_actor() == "Dev"` y dispara QA fix
-7. ~~Limpiar dead code warnings~~ — 0 warnings. Añadidos `#[allow(dead_code)]` en API pública.
-
-### Pendiente real
+| # | Feature | Esfuerzo |
+|---|---------|----------|
+| 01 | Paralelismo | Alto |
+| 04 | Workflow configurable | Medio |
+| 09 | Prompts agnósticos al stack | Bajo |
+| 10 | Cross-story context | Medio |
+| 11 | TUI / dashboard | Medio |
+| 12 | Cost tracking | Medio |
+| 14 | Groom `--from-dir` | Bajo |
+| 15 | Groom `--interactive` | Medio |
 
 ---
 
@@ -335,32 +362,33 @@ EPIC-XXX
 - **Tests unitarios**: cada módulo tiene `#[cfg(test)] mod tests` con fixtures inline
 - **Fixtures**: `tests/fixtures/` contiene archivos .md de ejemplo para pruebas de parseo
 - **Test ignorado**: `agent::tests::invoke_with_retry_fails_when_pi_not_installed` (requiere `pi` en PATH)
-- **Total**: 71 tests pasando, 0 fallos, 1 ignorado (al momento del handoff)
+- **Total**: 104 tests pasando, 0 fallos, 1 ignorado
 
 Para añadir tests:
-- Usa `make_story()` helper (definido en varios módulos) para crear Stories sintéticas
+- Usa `make_story()` o `story_fixture()` helpers para crear Stories sintéticas
 - No dependas de archivos reales salvo en tests de `story.rs` (que usan fixtures)
-- Para nuevos tests de parseo, añade fixtures en `tests/fixtures/`
+- Para tests de nuevos módulos, usa `tempfile::tempdir()` para aislar el filesystem
 
 ---
 
 ## ⚠️ Errores comunes y anti-patrones
 
 - ❌ **Añadir transiciones a `Status::ALL`**: rompe la inmutabilidad del workflow.  
-  Las 12 transiciones son el contrato fijo.
+  Las 14 transiciones son el contrato fijo.
 
-- ❌ **Parsear historias sin usar `extract_section()`**: reinventar el parseo de secciones  
-  markdown lleva a bugs. Usa las funciones existentes en `story.rs`.
+- ❌ **Parsear historias sin usar `extract_section()`**: usa las funciones existentes en `story.rs`.
 
-- ❌ **Modificar `raw_content` sin actualizar `status`**: si cambias el contenido en crudo,  
-  asegúrate de que `self.status` y `self.raw_content` estén sincronizados.
+- ❌ **Modificar `raw_content` sin actualizar `status`**: deben estar siempre sincronizados.
 
-- ❌ **Ejecutar hooks sin `sh -c`**: los hooks son comandos shell. Si los ejecutas como  
-  binario directo, fallarán para pipelines y redirects.
+- ❌ **Ejecutar hooks sin `sh -c`**: los hooks son comandos shell.
 
-- ❌ **Asumir que todos los bloqueadores existen**: una historia puede referenciar un  
-  STORY-XXX que no está en el filesystem. `dependency_graph.rs` lo maneja, pero  
-  `deadlock.rs` debe filtrar con `status_map.get()`.
+- ❌ **Asumir que todos los bloqueadores existen**: filtrar siempre con `status_map.get()`.
+
+- ❌ **Usar `..ctx` (struct update) sin clonar**: `PromptContext` contiene Strings, el update  
+  syntax los mueve. Si necesitas reutilizar `ctx`, clona los campos explícitamente.
+
+- ❌ **Llamar a `invoke_with_retry` sin `AgentOptions`**: la firma cambió, ahora requiere  
+  el 4º argumento. Usa `&AgentOptions::default()` si no necesitas feedback.
 
 ---
 
@@ -372,5 +400,6 @@ Para añadir tests:
 - **Errores**: `anyhow::Result<T>` y `anyhow::bail!()` (nunca `unwrap()` en lógica de negocio)
 - **Logging**: `tracing::info!()` / `warn!()` / `error!()` / `debug!()` (nunca `println!`)
 - **Regex estáticos**: usa `LazyLock<Regex>` para compilar una sola vez
-- **Defaults de serde**: `#[serde(default)]` + funciones `default_xxx()` (no `Default::default()` en attributes)
-- **Tests**: usa `assert!()` / `assert_eq!()` con mensajes descriptivos; evita `unwrap()` en tests
+- **Defaults de serde**: `#[serde(default)]` + funciones `default_xxx()`
+- **Tests**: usa `assert!()` / `assert_eq!()` con mensajes descriptivos
+- **Nuevos módulos**: siguen el patrón `pub fn run(...) -> anyhow::Result<...>` para su entry point
