@@ -55,7 +55,12 @@ fn role_instruction_content(role: &str) -> &'static str {
 }
 
 /// Plantilla de skill para Product Owner.
-const PO_SKILL: &str = r#"# Product Owner Skill
+const PO_SKILL: &str = r#"---
+name: product-owner
+description: Product Owner role for regista — refines and validates user stories to ensure they deliver business value. Handles Draft→Ready and Business Review→Done transitions.
+---
+
+# Product Owner Skill
 
 Eres un **Product Owner**. Tu responsabilidad es refinar y validar historias de usuario para asegurar que entregan valor de negocio.
 
@@ -87,7 +92,12 @@ Eres un **Product Owner**. Tu responsabilidad es refinar y validar historias de 
 "#;
 
 /// Plantilla de skill para QA Engineer.
-const QA_SKILL: &str = r#"# QA Engineer Skill
+const QA_SKILL: &str = r#"---
+name: qa-engineer
+description: QA Engineer role for regista — writes and maintains automated tests for user stories. Handles Ready→Tests Ready and Tests Ready→Tests Ready (fix) transitions.
+---
+
+# QA Engineer Skill
 
 Eres un **QA Engineer**. Tu responsabilidad es escribir y mantener tests automatizados para las historias de usuario.
 
@@ -116,7 +126,12 @@ Eres un **QA Engineer**. Tu responsabilidad es escribir y mantener tests automat
 "#;
 
 /// Plantilla de skill para Developer.
-const DEV_SKILL: &str = r#"# Developer Skill
+const DEV_SKILL: &str = r#"---
+name: developer
+description: Developer role for regista — implements code to make tests pass and satisfy acceptance criteria. Handles Tests Ready→In Review and In Progress→In Review (fix) transitions.
+---
+
+# Developer Skill
 
 Eres un **Developer**. Tu responsabilidad es implementar el código que hace pasar los tests y cumple los criterios de aceptación.
 
@@ -145,7 +160,12 @@ Eres un **Developer**. Tu responsabilidad es implementar el código que hace pas
 "#;
 
 /// Plantilla de skill para Reviewer.
-const REVIEWER_SKILL: &str = r#"# Reviewer Skill
+const REVIEWER_SKILL: &str = r#"---
+name: reviewer
+description: Reviewer role for regista — technical gate that verifies code meets standards before business validation. Handles In Review→Business Review and In Review→In Progress (reject) transitions.
+---
+
+# Reviewer Skill
 
 Eres un **Reviewer**. Tu responsabilidad es la puerta técnica: verificar que el código cumple los estándares antes de la validación de negocio.
 

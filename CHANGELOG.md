@@ -7,6 +7,14 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.3.4] — 2026-05-01
+
+### Fixed
+- **Compatibilidad con pi**: los SKILL.md generados por `regista init` ahora incluyen frontmatter YAML con `name` y `description`, requeridos por pi.
+- **Nombres de skill**: corregidos nombres de skill con underscores (`product_owner`, `qa_engineer`) que pi rechazaba. Ahora usan hyphens (`product-owner`, `qa-engineer`).
+
+---
+
 ## [0.3.3] — 2026-05-01
 
 ### Fixed
@@ -62,6 +70,8 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 - Dry-run, salida JSON, feedback rico en reintentos
 - Hooks post-fase y snapshots git
 
+[0.3.3]: https://github.com/dbareautopi/regista/compare/v0.3.2...v0.3.3
+[0.3.4]: https://github.com/dbareautopi/regista/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/dbareautopi/regista/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/dbareautopi/regista/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/dbareautopi/regista/compare/v0.3.0...v0.3.1
