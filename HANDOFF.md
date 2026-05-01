@@ -1,7 +1,7 @@
 # 🧠 regista — Session Handoff
 
 > **Fecha**: 2026-05-01
-> **Sesión**: Multi-provider (#20) — pi, Claude Code, Codex, OpenCode. Integración completa con config, orquestador, agent, init, validator y CLI
+> **Sesión**: Definición de roadmap #09 (prompts agnósticos) y #10 (cross-story context) + análisis de colisiones con paralelismo
 > **Versión**: v0.3.0
 > **Estado**: 128 tests pasando, 0 fallos, 1 ignorado, 0 warnings.
 
@@ -46,6 +46,8 @@
 │   ├── 06-init-scaffold.md            ← ✅ IMPLEMENTADO
 │   ├── 07-checkpoint-resume.md        ← ✅ IMPLEMENTADO
 │   ├── 08-feedback-agentes.md         ← ✅ IMPLEMENTADO
+│   ├── 09-prompts-agnosticos.md       ← ✍️  Diseño definido (Fase 3)
+│   ├── 10-cross-story-context.md      ← ✍️  Diseño definido (Fase 5)
 │   ├── 13-groom-generacion-historias.md ← ✅ IMPLEMENTADO
 │   ├── 14-groom-from-dir.md           ← Pendiente (variante)
 │   ├── 15-groom-interactive.md        ← Pendiente (variante)
@@ -214,11 +216,11 @@ EPIC-XXX
 
 ### Alta/media prioridad
 - **01 - Paralelismo**: ejecutar historias independientes simultáneamente (Fase 2)
-- **09 - Prompts agnósticos al stack**: desacoplar referencias a cargo/npm (Fase 3)
+- **09 - Prompts agnósticos al stack**: desacoplar referencias a cargo/npm (Fase 3, ✍️ diseño definido)
 - **04 - Workflow configurable**: transiciones definibles en `.regista/config.toml` (Fase 6)
 
 ### Media prioridad
-- **10 - Cross-story context**: agentes reciben contexto de historias relacionadas (Fase 5)
+- **10 - Cross-story context**: agentes reciben contexto de historias relacionadas (Fase 5, ✍️ diseño definido)
 - **11 - TUI / dashboard**: visualización en vivo del progreso (Fase 7)
 - **12 - Cost tracking**: límite de gasto en llamadas LLM (Fase 7)
 

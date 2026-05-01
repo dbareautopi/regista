@@ -347,7 +347,11 @@ fn main() {
 
 /// Ejecuta el subcomando `validate`.
 fn run_validate(args: &[String]) {
-    let project_dir = args.first().map(|s| s.as_str()).unwrap_or(".");
+    let project_dir = if args.first().map(|s| s.starts_with('-')).unwrap_or(true) {
+        "."
+    } else {
+        args[0].as_str()
+    };
     let json = args.iter().any(|a| a == "--json");
     let config = args
         .iter()
@@ -405,7 +409,11 @@ fn run_validate(args: &[String]) {
 
 /// Ejecuta el subcomando `init`.
 fn run_init(args: &[String]) {
-    let project_dir = args.first().map(|s| s.as_str()).unwrap_or(".");
+    let project_dir = if args.first().map(|s| s.starts_with('-')).unwrap_or(true) {
+        "."
+    } else {
+        args[0].as_str()
+    };
     let light = args.iter().any(|a| a == "--light");
     let with_example = args.iter().any(|a| a == "--with-example");
     let provider = args

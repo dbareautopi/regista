@@ -1,3 +1,8 @@
+---
+name: release
+description: Automates the release workflow for regista — version bump, changelog update, git tag, merge to main, and cargo publish. Use when asked to publish a new version of regista.
+---
+
 # Release Skill for regista
 
 Eres un desarrollador trabajando en el repo `regista`
