@@ -13,8 +13,8 @@ y notas de implementación.
 | # | Funcionalidad | Doc | Esfuerzo |
 |---|---|---|---|
 | 1 | **Paralelismo**: ejecutar múltiples historias independientes simultáneamente | [`01-paralelismo.md`](./01-paralelismo.md) | Alto |
-| 2 | **Salida JSON + CI/CD**: reportes estructurados, exit codes, integración con pipelines | [`02-salida-json-ci-cd.md`](./02-salida-json-ci-cd.md) | Bajo |
-| 3 | **Dry-run**: simular qué haría el orquestador sin ejecutar agentes | [`03-dry-run.md`](./03-dry-run.md) | Bajo |
+| 2 | **Salida JSON + CI/CD**: reportes estructurados, exit codes, integración con pipelines | [`02-salida-json-ci-cd.md`](./02-salida-json-ci-cd.md) | ✅ Implementado |
+| 3 | **Dry-run**: simular qué haría el orquestador sin ejecutar agentes | [`03-dry-run.md`](./03-dry-run.md) | ✅ Implementado |
 | 4 | **Workflow configurable**: estados y transiciones definibles en `.regista.toml` | [`04-workflow-configurable.md`](./04-workflow-configurable.md) | Medio |
 
 ---
@@ -23,8 +23,8 @@ y notas de implementación.
 
 | # | Funcionalidad | Doc | Esfuerzo |
 |---|---|---|---|
-| 5 | **`regista validate`**: chequeo pre-vuelo de historias, skills, dependencias | [`05-validate.md`](./05-validate.md) | Bajo |
-| 6 | **`regista init`**: scaffolding de proyecto nuevo (config + skills + historia ejemplo) | [`06-init-scaffold.md`](./06-init-scaffold.md) | Bajo-Medio |
+| 5 | **`regista validate`**: chequeo pre-vuelo de historias, skills, dependencias | [`05-validate.md`](./05-validate.md) | ✅ Implementado |
+| 6 | **`regista init`**: scaffolding de proyecto nuevo (config + skills + historia ejemplo) | [`06-init-scaffold.md`](./06-init-scaffold.md) | ✅ Implementado |
 | 7 | **Checkpoint / resume**: reanudar pipeline interrumpido sin reprocesar todo | [`07-checkpoint-resume.md`](./07-checkpoint-resume.md) ✅ | Medio |
 | 8 | **Feedback rico de agentes**: capturar y usar stdout/stderr de agentes fallidos | [`08-feedback-agentes.md`](./08-feedback-agentes.md) ✅ | Bajo |
 
@@ -43,9 +43,18 @@ y notas de implementación.
 
 | # | Funcionalidad | Doc | Esfuerzo |
 |---|---|---|---|
-| 13 | **`regista groom`**: generar historias desde un documento de requisitos, con bucle de validación de dependencias | [`13-groom-generacion-historias.md`](./13-groom-generacion-historias.md) | Medio |
+| 13 | **`regista groom`**: generar historias desde un documento de requisitos, con bucle de validación de dependencias | [`13-groom-generacion-historias.md`](./13-groom-generacion-historias.md) | ✅ Implementado |
 | 14 | **`groom --from-dir`**: generar desde un directorio de specs por feature | [`14-groom-from-dir.md`](./14-groom-from-dir.md) | Bajo |
 | 15 | **`groom --interactive`**: el PO entrevista al usuario para extraer requisitos | [`15-groom-interactive.md`](./15-groom-interactive.md) | Medio |
+
+## 🔵 v0.2.0 — Calidad de vida (implementado)
+
+| # | Funcionalidad | Doc | Esfuerzo |
+|---|---|---|---|
+| 16 | **Migración a `.regista/`**: todos los paths bajo `.regista/` en vez de dispersos | — | ✅ Implementado |
+| 17 | **Comando `help`**: `regista help` lista todos los comandos y flags | — | ✅ Implementado |
+| 18 | **Auto-escalado `max_iterations`**: `max(10, stories × 6)` cuando se deja en 0 | — | ✅ Implementado |
+| 19 | **Exit code 3 + `stop_reason`**: diferenciar pipeline completo de parada temprana | — | ✅ Implementado |
 
 ---
 

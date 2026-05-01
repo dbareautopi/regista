@@ -7,19 +7,19 @@ de Rust, ni de qué construyen los agentes. Solo sabe tres cosas:
 2. **Qué skills de `pi` invocar** para cada rol del workflow
 3. **La máquina de estados fija** que gobierna las transiciones
 
-El proyecto anfitrión se configura mediante un archivo `.regista.toml` en su raíz.
+El proyecto anfitrión se configura mediante un archivo `.regista/config.toml` en su raíz.
 
 ---
 
-## 1. Configuración (`.regista.toml`)
+## 1. Configuración (`.regista/config.toml`)
 
 ```toml
 [project]
-stories_dir    = "product/stories"
+stories_dir    = ".regista/stories"
 story_pattern  = "STORY-*.md"
-epics_dir      = "product/epics"
-decisions_dir  = "product/decisions"
-log_dir        = "product/logs"
+epics_dir      = ".regista/epics"
+decisions_dir  = ".regista/decisions"
+log_dir        = ".regista/logs"
 
 [agents]
 product_owner = ".pi/skills/product-owner/SKILL.md"
@@ -28,7 +28,7 @@ developer     = ".pi/skills/developer/SKILL.md"
 reviewer      = ".pi/skills/reviewer/SKILL.md"
 
 [limits]
-max_iterations            = 10
+max_iterations            = 0   # 0 = auto: nº historias × 6 (mín 10)
 max_retries_per_step      = 5
 max_reject_cycles         = 3
 agent_timeout_seconds     = 1800
@@ -177,7 +177,7 @@ regista/
 │   ├── agent.rs               ← invoke_with_retry(), AgentOptions, feedback rico
 │   ├── prompts.rs             ← PromptContext, 7 funciones de prompt
 │   ├── orchestrator.rs        ← run(), run_real(), run_dry(), process_story()
-│   ├── checkpoint.rs          ← OrchestratorState: save/load/remove (.regista.state.toml)
+│   ├── checkpoint.rs          ← OrchestratorState: save/load/remove (.regista/state.toml)
 │   ├── validator.rs           ← validate(): chequeo pre-vuelo de proyecto
 │   ├── init.rs                ← init(): scaffolding de proyecto nuevo
 │   ├── groom.rs               ← run(): generación de backlog desde spec
@@ -227,6 +227,7 @@ EPIC-XXX
 | `regista validate [DIR]` | Chequeo pre-vuelo de integridad |
 | `regista init [DIR]` | Scaffolding de proyecto nuevo |
 | `regista groom <SPEC>` | Generar backlog desde spec |
+| `regista help` | Mostrar todos los comandos y flags |
 
 ### Flags principales
 
@@ -253,15 +254,15 @@ EPIC-XXX
 | Código | Significado |
 |--------|-------------|
 | 0 | Pipeline completo, 0 `Failed` |
-| 1 | Error de configuración / entorno |
 | 2 | Pipeline completo, ≥1 `Failed` |
+| 3 | Parada temprana por límite (`max_iterations` o `max_wall_time`) |
 
 ---
 
 ## 7. Checkpoint / Resume
 
 Tras cada `process_story()` exitoso, el orquestador guarda su estado en
-`<project_dir>/.regista.state.toml`:
+`<project_dir>/.regista/state.toml`:
 
 ```toml
 iteration = 7
@@ -287,7 +288,7 @@ la iteración guardada. El checkpoint se limpia automáticamente al llegar a
 Cuando `inject_feedback_on_retry = true` (default):
 
 1. En cada intento fallido, se guarda stdout/stderr en
-   `product/decisions/<STORY>-<actor>-<timestamp>.md`.
+   `.regista/decisions/<STORY>-<actor>-<timestamp>.md`.
 2. En el reintento, el prompt se modifica:
    ```
    ⚠️ Tu intento anterior falló. Esto fue lo ocurrido:

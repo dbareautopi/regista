@@ -203,9 +203,9 @@ EPIC-XXX
 
 ### `main.rs` — Entry point
 - Define `Cli` con clap (16 flags + project_dir posicional)
-- Detecta subcomandos `validate`, `init`, `groom` antes del parseo de clap
+- Detecta subcomandos `validate`, `init`, `groom`, `help` antes del parseo de clap
 - Configura tracing (stderr, env-filter, respeta `--quiet`)
-- Salida JSON a stdout con `--json`; exit codes 0/1/2
+- Salida JSON a stdout con `--json`; exit codes 0/2/3
 - Manejo de `--resume` y `--clean-state`
 
 ### `config.rs` — Configuración

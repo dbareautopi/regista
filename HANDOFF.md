@@ -1,8 +1,9 @@
 # 🧠 regista — Session Handoff
 
-> **Fecha**: 2026-04-30  
-> **Sesión**: Implementación de features del roadmap: JSON/CI-CD, dry-run, validate, init, groom, checkpoint/resume, feedback agentes  
-> **Estado**: 104 tests pasando, 0 warnings, 0 clippy issues. Release build limpio.
+> **Fecha**: 2026-05-01
+> **Sesión**: Migración a `.regista/`, comando `help`, auto-escalado de `max_iterations`, exit codes diferenciados, README refinado
+> **Versión**: v0.2.0
+> **Estado**: 104 tests pasando, 0 warnings, 0 clippy issues.
 
 ---
 
@@ -18,7 +19,7 @@
 ├── HANDOFF.md                  ← Este documento
 ├── .gitignore
 ├── src/
-│   ├── main.rs                 ← CLI, 5 subcomandos (run/validate/init/groom + flags), JSON output
+│   ├── main.rs                 ← CLI, 6 subcomandos (run/validate/init/groom/help + flags), JSON output
 │   ├── config.rs               ← Config, carga TOML, defaults, nuevos campos
 │   ├── state.rs                ← Status (9), Actor (5), Transition, can_transition_to()
 │   ├── story.rs                ← Story, parseo .md, set_status(), advance_status_in_memory()
@@ -27,7 +28,7 @@
 │   ├── agent.rs                ← invoke_with_retry(), AgentOptions, feedback rico, guardado decisiones
 │   ├── prompts.rs              ← PromptContext, 7 funciones de prompt (po_groom, qa_tests, etc.)
 │   ├── orchestrator.rs         ← run(), run_real(), run_dry(), process_story(), checkpoint save
-│   ├── checkpoint.rs           ← OrchestratorState: save/load/remove (.regista.state.toml)
+│   ├── checkpoint.rs           ← OrchestratorState: save/load/remove (.regista/state.toml)
 │   ├── validator.rs            ← validate(): chequeo pre-vuelo de proyecto
 │   ├── init.rs                 ← init(): scaffolding de proyecto nuevo
 │   ├── groom.rs                ← run(): generación de backlog desde spec con bucle validate
@@ -69,8 +70,9 @@
 |---------|--------|---------|
 | `regista [dir]` | `orchestrator.rs` | Pipeline completo |
 | `regista validate [dir]` | `validator.rs` | Chequeo pre-vuelo (config, historias, skills, dependencias, git) |
-| `regista init [dir]` | `init.rs` | Scaffolding: .regista.toml + 4 skills + estructura dirs |
+| `regista init [dir]` | `init.rs` | Scaffolding: .regista/config.toml + 4 skills + estructura dirs |
 | `regista groom <spec>` | `groom.rs` | Generar backlog desde spec con bucle de validación |
+| `regista help` | `main.rs` | Mostrar todos los comandos y flags |
 
 ### Flags nuevos
 
@@ -83,13 +85,14 @@
 | `--clean-state` | Borrar checkpoint |
 | `--max-stories N` | (groom) Límite de historias, 0 = sin límite |
 | `--replace` | (groom) Regenerar desde cero |
-| `--light` | (init) Solo .regista.toml |
+| `--light` | (init) Solo .regista/config.toml |
 | `--with-example` | (init) Incluir historia de ejemplo |
 
 ### JSON / CI-CD (`02`)
 - `RunReport` con `Serialize`, incluye `StoryRecord` por historia
-- Exit codes: 0 = OK, 1 = error config, 2 = tiene Failed
+- Exit codes: 0 = OK, 2 = tiene Failed, 3 = parada temprana (límite)
 - `regista --json > report.json` para GitHub Actions/GitLab CI
+- Nuevo en v0.2.0: campos `stopped_early` y `stop_reason` en JSON
 
 ### Dry-run (`03`)
 - `run_dry()`: simula iteraciones en memoria, sin `pi` ni escritura a disco
@@ -102,10 +105,11 @@
 - `--json` para CI, exit codes: 0=OK, 1=errores, 2=warnings
 
 ### Init (`06`)
-- Genera `.regista.toml` con todos los defaults documentados
+- Genera `.regista/config.toml` con todos los defaults documentados
 - 4 `SKILL.md` (PO, QA, Dev, Reviewer) con responsabilidades y formato Activity Log
-- `product/stories/`, `product/epics/`, `product/decisions/`, `product/logs/`
+- `.regista/stories/`, `.regista/epics/`, `.regista/decisions/`, `.regista/logs/`
 - No pisa archivos existentes
+- `max_iterations = 0` por defecto (auto-escalado)
 
 ### Groom (`13`)
 - `regista groom <spec.md>`: PO descompone spec en historias y épicas
@@ -113,17 +117,29 @@
 - `--max-stories` (0 = sin límite), `--merge` (default) / `--replace`
 
 ### Checkpoint / Resume (`07`)
-- `checkpoint.rs`: `OrchestratorState` guardado en `.regista.state.toml` tras cada iteración
+- `checkpoint.rs`: `OrchestratorState` guardado en `.regista/state.toml` tras cada iteración
+- Auto-crea el directorio `.regista/` si no existe
 - `--resume`: restaura `iteration`, `reject_cycles`, `story_iterations`, `story_errors`
 - Se limpia automáticamente en `PipelineComplete`
 - `--clean-state` para borrado manual
 
 ### Feedback rico (`08`)
 - `AgentOptions` con `inject_feedback`, `decisions_dir`, `story_id`
-- Fallos: guarda `product/decisions/<STORY>-<actor>-<ts>.md` con stdout/stderr
+- Fallos: guarda `.regista/decisions/<STORY>-<actor>-<ts>.md` con stdout/stderr
 - Reintentos: prompt aumentado con «Tu intento anterior falló: [error]. Corrígelo.»
 - `AgentResult` incluye `attempts: Vec<AttemptTrace>`
 - Configurable: `inject_feedback_on_retry` (default true)
+
+### v0.2.0 — Migración a `.regista/` y calidad de vida
+- **Comando `help`**: `regista help` lista todos los comandos y flags
+- **Migración a `.regista/`**: todos los paths viven bajo `.regista/`:
+  `config.toml`, `stories/`, `epics/`, `decisions/`, `logs/`,
+  `state.toml` (checkpoint), `daemon.pid`, `daemon.log`
+- **Auto-escalado de `max_iterations`**: cuando es 0, calcula `max(10, stories × 6)`
+- **Exit code 3**: parada temprana por límite de iteraciones o wall time
+- **`stop_reason`**: `RunReport` incluye razón de parada (`None` = completado)
+- **README refinado**: quick start, badges, ejemplos JSON, estructura de proyecto
+- Sin retrocompatibilidad con rutas antiguas
 
 ---
 
@@ -170,18 +186,18 @@ EPIC-XXX
 ## 🚧 Pendiente (roadmap)
 
 ### Alta/media prioridad
-- **01 — Paralelismo**: ejecutar historias independientes simultáneamente
-- **04 — Workflow configurable**: transiciones definibles en `.regista.toml`
+- **01 - Paralelismo**: ejecutar historias independientes simultáneamente
+- **04 - Workflow configurable**: transiciones definibles en `.regista.toml`
 
 ### Variantes de groom
-- **14 — `groom --from-dir`**: múltiples documentos fuente
-- **15 — `groom --interactive`**: PO entrevista al usuario
+- **14 - `groom --from-dir`**: múltiples documentos fuente
+- **15 - `groom --interactive`**: PO entrevista al usuario
 
 ### No implementados (sin doc aún)
-- **09 — Prompts agnósticos al stack**: desacoplar referencias a cargo/npm
-- **10 — Cross-story context**: agentes reciben contexto de historias relacionadas
-- **11 — TUI / dashboard**: visualización en vivo del progreso
-- **12 — Cost tracking**: límite de gasto en llamadas LLM
+- **09 - Prompts agnósticos al stack**: desacoplar referencias a cargo/npm
+- **10 - Cross-story context**: agentes reciben contexto de historias relacionadas
+- **11 - TUI / dashboard**: visualización en vivo del progreso
+- **12 - Cost tracking**: límite de gasto en llamadas LLM
 
 ---
 
@@ -212,3 +228,6 @@ EPIC-XXX
 
 10. **Feedback truncado a 2000 bytes**: para no desbordar la ventana de contexto
     del LLM en reintentos.
+
+11. **`max_iterations = 0` por defecto**: el orquestador escala automáticamente
+    el límite según `nº de historias × 6`, con un mínimo de 10.
