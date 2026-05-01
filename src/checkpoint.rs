@@ -1,7 +1,7 @@
 //! Checkpoint del orquestador: guarda el estado tras cada iteración para
 //! poder reanudar la ejecución si se interrumpe (crash, timeout, Ctrl+C).
 //!
-//! Archivo: `<project_dir>/.regista.state.toml`
+//! Archivo: `<project_dir>/.regista/state.toml`
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -19,13 +19,17 @@ pub struct OrchestratorState {
 impl OrchestratorState {
     /// Ruta al archivo de checkpoint.
     fn path(project_root: &Path) -> PathBuf {
-        project_root.join(".regista.state.toml")
+        project_root.join(".regista/state.toml")
     }
 
     /// Guarda el estado a disco.
     pub fn save(&self, project_root: &Path) -> anyhow::Result<()> {
+        let path = Self::path(project_root);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let content = toml::to_string_pretty(self)?;
-        std::fs::write(Self::path(project_root), content)?;
+        std::fs::write(&path, content)?;
         tracing::debug!("💾 checkpoint guardado (iteración {})", self.iteration);
         Ok(())
     }
@@ -117,10 +121,11 @@ mod tests {
     #[test]
     fn load_returns_none_when_corrupt() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join(".regista.state.toml"), "esto no es toml{{{").unwrap();
+        std::fs::create_dir_all(tmp.path().join(".regista")).unwrap();
+        std::fs::write(tmp.path().join(".regista/state.toml"), "esto no es toml{{{").unwrap();
         assert!(OrchestratorState::load(tmp.path()).is_none());
         // Debe haber borrado el archivo corrupto
-        assert!(!tmp.path().join(".regista.state.toml").exists());
+        assert!(!tmp.path().join(".regista/state.toml").exists());
     }
 
     #[test]
@@ -128,9 +133,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let state = OrchestratorState::fresh();
         state.save(tmp.path()).unwrap();
-        assert!(tmp.path().join(".regista.state.toml").exists());
+        assert!(tmp.path().join(".regista/state.toml").exists());
         OrchestratorState::remove(tmp.path());
-        assert!(!tmp.path().join(".regista.state.toml").exists());
+        assert!(!tmp.path().join(".regista/state.toml").exists());
     }
 
     #[test]

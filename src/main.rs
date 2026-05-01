@@ -113,6 +113,7 @@ fn main() {
             "validate" => return run_validate(&raw_args[2..]),
             "init" => return run_init(&raw_args[2..]),
             "groom" => return run_groom(&raw_args[2..]),
+            "help" => return run_help(),
             _ => {}
         }
     }
@@ -164,7 +165,10 @@ fn main() {
         match daemon::detach(project_root, log_file_override) {
             Ok(pid) => {
                 println!("Daemon lanzado con PID: {pid}");
-                println!("Log: {}", cli.log_file.as_deref().unwrap_or(".regista.log"));
+                println!(
+                    "Log: {}",
+                    cli.log_file.as_deref().unwrap_or(".regista/daemon.log")
+                );
                 println!(
                     "Usa --status para consultar, --follow para ver el log, --kill para detener."
                 );
@@ -496,6 +500,51 @@ fn run_groom(args: &[String]) {
             std::process::exit(1);
         }
     }
+}
+
+/// Muestra la ayuda de regista.
+fn run_help() {
+    println!(
+        "regista v{} — 🎬 AI agent director para pi",
+        env!("CARGO_PKG_VERSION")
+    );
+    println!();
+    println!("COMANDOS:");
+    println!("  regista [DIR]             Ejecutar el pipeline completo");
+    println!("  regista validate [DIR]    Validar proyecto (config, historias, dependencias)");
+    println!("  regista init [DIR]        Crear estructura inicial del proyecto");
+    println!("  regista groom <SPEC.md>   Generar historias desde especificación");
+    println!("  regista help              Mostrar esta ayuda");
+    println!();
+    println!("FLAGS DEL PIPELINE:");
+    println!("  --config <PATH>      Ruta al archivo .regista/config.toml");
+    println!("  --story <ID>         Procesar solo una historia (STORY-001)");
+    println!("  --epic <ID>          Filtrar por épica (EPIC-001)");
+    println!("  --epics <RANGO>      Filtrar por rango (EPIC-001..EPIC-003)");
+    println!("  --once               Una sola iteración y salir");
+    println!("  --dry-run            Simular sin ejecutar agentes (sin coste)");
+    println!("  --json               Salida JSON a stdout para CI/CD");
+    println!("  --quiet              Suprimir logs, solo errores");
+    println!("  --resume             Reanudar desde el último checkpoint");
+    println!("  --clean-state        Borrar el checkpoint");
+    println!();
+    println!("FLAGS DEL DAEMON:");
+    println!("  --detach             Lanzar en segundo plano");
+    println!("  --log-file <PATH>    Archivo de log (default: .regista/daemon.log)");
+    println!("  --follow             Ver log en vivo");
+    println!("  --status             Consultar si el daemon sigue corriendo");
+    println!("  --kill               Detener el daemon");
+    println!();
+    println!("ESTRUCTURA DEL PROYECTO (todo bajo .regista/):");
+    println!("  .regista/config.toml   Configuración del pipeline");
+    println!("  .regista/stories/      Historias de usuario (*.md)");
+    println!("  .regista/epics/        Épicas");
+    println!("  .regista/decisions/    Decisiones documentadas por los agentes");
+    println!("  .regista/logs/         Logs del orquestador");
+    println!("  .regista/state.toml    Checkpoint para --resume");
+    println!("  .pi/skills/            Skills de pi (PO, QA, Dev, Reviewer)");
+    println!();
+    println!("Para empezar: regista init --with-example && regista --dry-run");
 }
 
 /// Vuelca el reporte en JSON a stdout.

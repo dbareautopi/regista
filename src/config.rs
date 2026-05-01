@@ -133,19 +133,19 @@ pub struct GitConfig {
 // ── defaults ─────────────────────────────────────────────────────────────
 
 fn default_stories_dir() -> String {
-    "product/stories".into()
+    ".regista/stories".into()
 }
 fn default_story_pattern() -> String {
     "STORY-*.md".into()
 }
 fn default_epics_dir() -> String {
-    "product/epics".into()
+    ".regista/epics".into()
 }
 fn default_decisions_dir() -> String {
-    "product/decisions".into()
+    ".regista/decisions".into()
 }
 fn default_log_dir() -> String {
-    "product/logs".into()
+    ".regista/logs".into()
 }
 fn default_po_skill() -> String {
     ".pi/skills/product-owner/SKILL.md".into()
@@ -240,11 +240,10 @@ impl Default for GitConfig {
 impl Config {
     /// Carga la configuración desde un proyecto.
     ///
-    /// Busca `config_path` dentro de `project_root`. Si `config_path` es `None`,
-    /// usa `project_root/.regista.toml`. Si el archivo no existe, devuelve
-    /// la configuración por defecto (todos los paths relativos a `project_root`).
+    /// Busca `<project_root>/.regista/config.toml`. Si el archivo no existe,
+    /// devuelve la configuración por defecto con paths bajo `.regista/`.
     pub fn load(project_root: &Path, config_path: Option<&Path>) -> anyhow::Result<Self> {
-        let default_config_path = project_root.join(".regista.toml");
+        let default_config_path = project_root.join(".regista/config.toml");
         let config_path = config_path.unwrap_or(&default_config_path);
 
         let config = if config_path.exists() {
@@ -302,7 +301,7 @@ mod tests {
     #[test]
     fn default_config_is_valid() {
         let cfg = Config::default();
-        assert_eq!(cfg.project.stories_dir, "product/stories");
+        assert_eq!(cfg.project.stories_dir, ".regista/stories");
         assert_eq!(cfg.project.story_pattern, "STORY-*.md");
         assert_eq!(
             cfg.agents.product_owner,
@@ -331,7 +330,7 @@ reviewer = "skills/rev.md"
         assert_eq!(cfg.agents.developer, "skills/dev.md");
         assert_eq!(cfg.agents.reviewer, "skills/rev.md");
         // El resto debe tener valores por defecto
-        assert_eq!(cfg.project.stories_dir, "product/stories");
+        assert_eq!(cfg.project.stories_dir, ".regista/stories");
         assert_eq!(cfg.limits.max_iterations, 0);
     }
 

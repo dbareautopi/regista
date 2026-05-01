@@ -5,16 +5,16 @@
 
 use std::path::Path;
 
-/// Contenido del archivo `.regista.toml` generado por `init`.
+/// Contenido del archivo `.regista/config.toml` generado por `init`.
 const DEFAULT_CONFIG_TOML: &str = r#"# regista — AI agent director configuration
 # Todos los campos son opcionales (se usan los defaults mostrados aquí).
 
 [project]
-stories_dir = "product/stories"
+stories_dir = ".regista/stories"
 story_pattern = "STORY-*.md"
-epics_dir = "product/epics"
-decisions_dir = "product/decisions"
-log_dir = "product/logs"
+epics_dir = ".regista/epics"
+decisions_dir = ".regista/decisions"
+log_dir = ".regista/logs"
 
 [agents]
 product_owner = ".pi/skills/product-owner/SKILL.md"
@@ -23,7 +23,7 @@ developer = ".pi/skills/developer/SKILL.md"
 reviewer = ".pi/skills/reviewer/SKILL.md"
 
 [limits]
-max_iterations = 10
+max_iterations = 0  # 0 = auto: nº de historias × 6
 max_retries_per_step = 5
 max_reject_cycles = 3
 agent_timeout_seconds = 1800
@@ -210,21 +210,27 @@ pub fn init(project_dir: &Path, light: bool, with_example: bool) -> anyhow::Resu
     // Crear directorio del proyecto si no existe
     std::fs::create_dir_all(project_dir)?;
 
-    // ── .regista.toml ──────────────────────────────────────────────
-    let config_path = project_dir.join(".regista.toml");
+    // ── .regista/config.toml ────────────────────────────────────
+    let config_path = project_dir.join(".regista/config.toml");
     if config_path.exists() {
-        result.skipped.push(".regista.toml (ya existe)".into());
+        result
+            .skipped
+            .push(".regista/config.toml (ya existe)".into());
     } else {
+        // Asegurar que el directorio .regista existe
+        if let Some(parent) = config_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         std::fs::write(&config_path, DEFAULT_CONFIG_TOML)?;
-        result.created.push(".regista.toml".into());
+        result.created.push(".regista/config.toml".into());
     }
 
     // ── Directorios ────────────────────────────────────────────────
     let dirs = [
-        "product/stories",
-        "product/epics",
-        "product/decisions",
-        "product/logs",
+        ".regista/stories",
+        ".regista/epics",
+        ".regista/decisions",
+        ".regista/logs",
     ];
     for dir in &dirs {
         let path = project_dir.join(dir);
@@ -258,24 +264,24 @@ pub fn init(project_dir: &Path, light: bool, with_example: bool) -> anyhow::Resu
 
     // ── Historia de ejemplo ────────────────────────────────────────
     if with_example {
-        let story_path = project_dir.join("product/stories/STORY-001.md");
+        let story_path = project_dir.join(".regista/stories/STORY-001.md");
         if story_path.exists() {
             result
                 .skipped
-                .push("product/stories/STORY-001.md (ya existe)".into());
+                .push(".regista/stories/STORY-001.md (ya existe)".into());
         } else {
             std::fs::write(&story_path, EXAMPLE_STORY)?;
-            result.created.push("product/stories/STORY-001.md".into());
+            result.created.push(".regista/stories/STORY-001.md".into());
         }
 
-        let epic_path = project_dir.join("product/epics/EPIC-001.md");
+        let epic_path = project_dir.join(".regista/epics/EPIC-001.md");
         if epic_path.exists() {
             result
                 .skipped
-                .push("product/epics/EPIC-001.md (ya existe)".into());
+                .push(".regista/epics/EPIC-001.md (ya existe)".into());
         } else {
             std::fs::write(&epic_path, EXAMPLE_EPIC)?;
-            result.created.push("product/epics/EPIC-001.md".into());
+            result.created.push(".regista/epics/EPIC-001.md".into());
         }
     }
 
@@ -290,9 +296,9 @@ mod tests {
     fn init_creates_config_in_temp_dir() {
         let tmp = tempfile::tempdir().unwrap();
         let result = init(tmp.path(), false, false).unwrap();
-        assert!(result.created.iter().any(|p| p == ".regista.toml"));
-        assert!(tmp.path().join(".regista.toml").exists());
-        assert!(tmp.path().join("product/stories").is_dir());
+        assert!(result.created.iter().any(|p| p == ".regista/config.toml"));
+        assert!(tmp.path().join(".regista/config.toml").exists());
+        assert!(tmp.path().join(".regista/stories").is_dir());
     }
 
     #[test]
@@ -311,17 +317,21 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let result = init(tmp.path(), false, true).unwrap();
         assert!(result.created.iter().any(|p| p.contains("STORY-001.md")));
-        assert!(tmp.path().join("product/stories/STORY-001.md").exists());
-        assert!(tmp.path().join("product/epics/EPIC-001.md").exists());
+        assert!(tmp.path().join(".regista/stories/STORY-001.md").exists());
+        assert!(tmp.path().join(".regista/epics/EPIC-001.md").exists());
     }
 
     #[test]
     fn init_skips_existing_config() {
         let tmp = tempfile::tempdir().unwrap();
-        // Crear config primero
-        std::fs::write(tmp.path().join(".regista.toml"), "# ya existe").unwrap();
+        // Crear directorio y config primero
+        std::fs::create_dir_all(tmp.path().join(".regista")).unwrap();
+        std::fs::write(tmp.path().join(".regista/config.toml"), "# ya existe").unwrap();
         let result = init(tmp.path(), false, false).unwrap();
-        assert!(result.skipped.iter().any(|p| p.contains(".regista.toml")));
+        assert!(result
+            .skipped
+            .iter()
+            .any(|p| p.contains(".regista/config.toml")));
     }
 
     #[test]
@@ -329,7 +339,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let result = init(tmp.path(), false, true).unwrap();
         assert!(result.created.len() >= 6); // config + 4 skills + story + epic
-        assert!(tmp.path().join("product/decisions").is_dir());
-        assert!(tmp.path().join("product/logs").is_dir());
+        assert!(tmp.path().join(".regista/decisions").is_dir());
+        assert!(tmp.path().join(".regista/logs").is_dir());
     }
 }

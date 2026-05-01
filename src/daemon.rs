@@ -5,7 +5,7 @@
 //! y detenerlo (`--kill`).
 //!
 //! El estado del daemon (PID, archivo de log, directorio del proyecto)
-//! se guarda en un archivo TOML: `<project_dir>/.regista.pid`.
+//! se guarda en un archivo TOML: `<project_dir>/.regista/daemon.pid`.
 
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
@@ -24,7 +24,7 @@ pub struct DaemonState {
 impl DaemonState {
     /// Ruta al archivo de estado del daemon dentro del proyecto.
     pub fn pid_file(project_dir: &Path) -> PathBuf {
-        project_dir.join(".regista.pid")
+        project_dir.join(".regista/daemon.pid")
     }
 
     /// Carga el estado desde el archivo PID, si existe.
@@ -37,6 +37,9 @@ impl DaemonState {
     /// Guarda el estado en el archivo PID.
     pub fn save(&self, project_dir: &Path) -> anyhow::Result<()> {
         let path = Self::pid_file(project_dir);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let content = toml::to_string_pretty(self)?;
         fs::write(&path, content)?;
         Ok(())
@@ -73,7 +76,7 @@ pub fn detach(project_dir: &Path, log_file_override: Option<&Path>) -> anyhow::R
     // Determinar el archivo de log
     let log_file = match log_file_override {
         Some(p) => p.to_path_buf(),
-        None => canonical_project.join(".regista.log"),
+        None => canonical_project.join(".regista/daemon.log"),
     };
 
     // Crear directorio padre del log si es necesario
@@ -313,7 +316,7 @@ mod tests {
     #[test]
     fn pid_file_path_ends_with_correct_name() {
         let path = DaemonState::pid_file(Path::new("/tmp/myproject"));
-        assert_eq!(path.file_name().unwrap(), ".regista.pid");
+        assert_eq!(path.file_name().unwrap(), "daemon.pid");
     }
 
     #[test]
