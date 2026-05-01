@@ -60,7 +60,9 @@ impl AgentProvider for PiProvider {
     }
 
     fn instruction_dir(&self, role: &str) -> String {
-        format!(".pi/skills/{role}/SKILL.md")
+        // pi requires skill names to be lowercase a-z, 0-9, hyphens only.
+        let dir_name = role.replace('_', "-");
+        format!(".pi/skills/{dir_name}/SKILL.md")
     }
 
     fn build_args(&self, instruction: &Path, prompt: &str) -> Vec<String> {
@@ -288,9 +290,19 @@ mod tests {
     #[test]
     fn pi_instruction_dir() {
         let p = PiProvider;
+        // Underscores are converted to hyphens for pi compatibility
         assert_eq!(
             p.instruction_dir("product_owner"),
-            ".pi/skills/product_owner/SKILL.md"
+            ".pi/skills/product-owner/SKILL.md"
+        );
+        assert_eq!(
+            p.instruction_dir("qa_engineer"),
+            ".pi/skills/qa-engineer/SKILL.md"
+        );
+        // developer and reviewer have no underscores, unchanged
+        assert_eq!(
+            p.instruction_dir("developer"),
+            ".pi/skills/developer/SKILL.md"
         );
     }
 

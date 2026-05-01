@@ -380,9 +380,14 @@ mod tests {
     fn default_skill_for_role_uses_pi_convention() {
         let cfg = Config::default();
         // Por defecto, el provider es pi → usa .pi/skills/<rol>/SKILL.md
+        // Roles con underscore se convierten a hyphens (requisito de pi)
         assert_eq!(
             cfg.agents.skill_for_role("product_owner"),
-            ".pi/skills/product_owner/SKILL.md"
+            ".pi/skills/product-owner/SKILL.md"
+        );
+        assert_eq!(
+            cfg.agents.skill_for_role("qa_engineer"),
+            ".pi/skills/qa-engineer/SKILL.md"
         );
         assert_eq!(
             cfg.agents.skill_for_role("developer"),
