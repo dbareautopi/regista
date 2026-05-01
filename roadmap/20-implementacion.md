@@ -174,25 +174,26 @@ impl AgentProvider for CodexProvider {
     }
 
     fn instruction_dir(&self, role: &str) -> String {
-        format!(".codex/skills/{role}.md")
+        // Codex usa el open agent skills standard.
+        // Las skills viven en .agents/skills/ (¡mismo estándar que pi!)
+        format!(".agents/skills/{role}/SKILL.md")
     }
 
     fn build_args(&self, _instruction: &Path, prompt: &str) -> Vec<String> {
-        // Codex usa subcomando "exec", no flag -p.
-        // El prompt va como argumento posicional después de las flags.
-        // Para v1, las instrucciones de rol no se pasan explícitamente;
-        // Codex leerá AGENTS.md del proyecto automáticamente.
+        // codex exec usa subcomando, no flag -p.
+        // El prompt va como argumento posicional.
+        // Las skills se auto-descubren de .agents/skills/ — no necesitan flag.
+        // AGENTS.md del proyecto también se lee automáticamente.
         vec![
-            "exec".to_string(),
-            "--sandbox".to_string(),
-            "workspace-write".to_string(),
-            prompt.to_string(),
+            "exec".into(),
+            "--sandbox".into(), "workspace-write".into(),
+            prompt.into(),
         ]
     }
 }
 ```
 
-**Nota**: Codex CLI usa `codex exec "<tarea>"` (subcomando, no flag). Las instrucciones de rol para v1 se gestionan vía `AGENTS.md` en la raíz del proyecto, que Codex lee automáticamente. En v2 se puede explorar `--settings` o `--config` para pasar config adicional.
+**Nota**: Codex tiene soporte nativo para el **open agent skills standard**: skills en `.agents/skills/` con `SKILL.md`. También lee `AGENTS.md` y `AGENTS.override.md` del proyecto y `~/.codex/`. Las skills se auto-descubren sin flag explícito.
 
 ### 3.4 OpenCodeProvider
 
@@ -209,24 +210,24 @@ impl AgentProvider for OpenCodeProvider {
     }
 
     fn instruction_name(&self) -> &str {
-        "instruction"
+        "command"
     }
 
     fn instruction_dir(&self, role: &str) -> String {
-        format!(".opencode/instructions/{role}.md")
+        // OpenCode usa custom commands como archivos .md
+        format!(".opencode/commands/{role}.md")
     }
 
     fn build_args(&self, _instruction: &Path, prompt: &str) -> Vec<String> {
         vec![
-            "-p".to_string(),
-            prompt.to_string(),
-            "-q".to_string(), // sin spinner, más limpio en logs
+            "-p".into(), prompt.into(),
+            "-q".into(), // sin spinner, más limpio en logs
         ]
     }
 }
 ```
 
-**Nota**: OpenCode no tiene un mecanismo nativo de "system prompt file" como Claude o "skill" como pi. Para v1, las instrucciones de rol se pueden precargar en la config de OpenCode (custom commands) o simplemente documentarse como referencia. La flag `-q` suprime el spinner, ideal para ejecución automatizada.
+**Nota**: OpenCode tiene **custom commands** (`.md` en `.opencode/commands/`) y sección `"agents"` en su config JSON. Las instrucciones de rol se almacenan como custom commands. La flag `-q` suprime el spinner.
 
 ### 3.5 Factory
 
@@ -524,13 +525,13 @@ mi-proyecto/
 │   ├── developer.md
 │   └── reviewer.md
 │
-├── .codex/skills/            ← si se usa provider=codex
-│   ├── product_owner.md
-│   ├── qa_engineer.md
-│   ├── developer.md
-│   └── reviewer.md
+├── .agents/skills/            ← Codex (open agent skills standard)
+│   ├── product-owner/SKILL.md
+│   ├── qa-engineer/SKILL.md
+│   ├── developer/SKILL.md
+│   └── reviewer/SKILL.md
 │
-└── .opencode/instructions/   ← si se usa provider=opencode
+└── .opencode/commands/        ← OpenCode
     ├── product_owner.md
     ├── qa_engineer.md
     ├── developer.md
