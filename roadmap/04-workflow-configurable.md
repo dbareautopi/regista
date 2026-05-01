@@ -3,8 +3,15 @@
 ## 🎯 Objetivo
 
 Permitir que los equipos definan sus propios estados, transiciones y
-asignaciones de agentes en `.regista.toml`, en lugar de usar el workflow
+asignaciones de agentes en `.regista/config.toml`, en lugar de usar el workflow
 fijo de 9 estados y 14 transiciones.
+
+## 📍 Posición en el roadmap
+
+**Fase 6** — la última feature estructural. Se implementa cuando providers (#20),
+paralelismo (#01), prompts agnósticos (#09) y cross-story context (#10) ya están
+en producción. Esto permite que el workflow configurable herede todas esas
+capacidades sin tener que reimplementarlas.
 
 ## ❓ Problema actual
 
@@ -100,7 +107,13 @@ condition = "max_reject_cycles_exceeded"
 
 ## 🔗 Relacionado con
 
-- [`09-prompts-agnosticos.md`](./09-prompts-agnosticos.md) — necesario como
-  prerequisito para workflows custom.
+- [`20-multi-provider.md`](./20-multi-provider.md) — **prerrequisito**. Cada rol
+  en el workflow custom se asigna a un provider (pi, claude, etc.).
+- [`01-paralelismo.md`](./01-paralelismo.md) — **prerrequisito**. Las oleadas
+  paralelas deben adaptarse a workflows con distinto número de estados.
+- [`09-prompts-agnosticos.md`](./09-prompts-agnosticos.md) — **prerrequisito**.
+  Los prompts genéricos permiten que cualquier workflow funcione sin reescribir prompts.
+- [`10-cross-story-context.md`](./10-cross-story-context.md) — **prerrequisito**.
+  Los agentes necesitan contexto de dependencias incluso con workflows custom.
 - [`05-validate.md`](./05-validate.md) — validación del workflow definido por
-  el usuario.
+  el usuario (sin ciclos, estados huérfanos, etc.).
