@@ -29,12 +29,14 @@ pub trait AgentProvider {
 
     /// Cómo se llama el concepto de "rol/personalidad" en este provider.
     /// pi → "skill", claude → "agent", codex → "skill", opencode → "command".
+    #[allow(dead_code)]
     fn instruction_name(&self) -> &str;
 
     /// Directorio por convención donde se guardan las instrucciones de un rol.
     fn instruction_dir(&self, role: &str) -> String;
 
     /// Extensión de los archivos de instrucción.
+    #[allow(dead_code)]
     fn instruction_extension(&self) -> &str {
         "md"
     }
@@ -191,6 +193,7 @@ pub fn from_name(name: &str) -> Box<dyn AgentProvider> {
 }
 
 /// Lista de nombres canónicos de providers soportados.
+#[allow(dead_code)]
 pub fn supported_providers() -> Vec<&'static str> {
     vec!["pi", "claude", "codex", "opencode"]
 }
