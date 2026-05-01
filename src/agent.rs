@@ -2,6 +2,7 @@
 //! y feedback rico (captura de stdout/stderr para trazabilidad y reintentos).
 
 use crate::config::LimitsConfig;
+use crate::providers::AgentProvider;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::time::Duration;
@@ -53,7 +54,8 @@ pub struct AgentOptions {
 /// Si `opts.decisions_dir` está presente, se guarda una traza completa de
 /// cada intento en `<decisions_dir>/<story_id>-<actor>-<timestamp>.md`.
 pub fn invoke_with_retry(
-    skill_path: &Path,
+    provider: &dyn AgentProvider,
+    instruction_path: &Path,
     prompt: &str,
     limits: &LimitsConfig,
     opts: &AgentOptions,
@@ -67,11 +69,12 @@ pub fn invoke_with_retry(
 
     loop {
         tracing::info!(
-            "  [{attempt}/{max_retries}] invocando pi --skill {}",
-            skill_path.display()
+            "  [{attempt}/{max_retries}] invocando {} ({})",
+            provider.display_name(),
+            instruction_path.display()
         );
 
-        match invoke_once(skill_path, &current_prompt, timeout) {
+        match invoke_once(provider, instruction_path, &current_prompt, timeout) {
             Ok(output) if output.status.success() => {
                 tracing::info!("  ✓ agente completado (intento {attempt})");
 
@@ -79,7 +82,7 @@ pub fn invoke_with_retry(
                 attempts.push(trace);
 
                 // Guardar decisión de éxito
-                save_agent_decision(opts, skill_path, &attempts, true);
+                save_agent_decision(opts, instruction_path, &attempts, true);
 
                 return Ok(AgentResult {
                     exit_code: output.status.code().unwrap_or(0),
@@ -108,7 +111,7 @@ pub fn invoke_with_retry(
                 attempts.push(trace.clone());
 
                 // Guardar decisión de fallo parcial
-                save_agent_decision(opts, skill_path, &attempts, false);
+                save_agent_decision(opts, instruction_path, &attempts, false);
 
                 // Inyectar feedback en el prompt para el siguiente intento
                 if opts.inject_feedback && attempt < max_retries {
@@ -129,7 +132,7 @@ pub fn invoke_with_retry(
                 };
                 attempts.push(trace.clone());
 
-                save_agent_decision(opts, skill_path, &attempts, false);
+                save_agent_decision(opts, instruction_path, &attempts, false);
 
                 if opts.inject_feedback && attempt < max_retries {
                     current_prompt = build_feedback_prompt(prompt, &trace);
@@ -139,8 +142,9 @@ pub fn invoke_with_retry(
 
         if attempt >= max_retries {
             anyhow::bail!(
-                "agotados {max_retries} reintentos invocando pi --skill {}",
-                skill_path.display()
+                "agotados {max_retries} reintentos invocando {} ({})",
+                provider.display_name(),
+                instruction_path.display()
             );
         }
 
@@ -189,7 +193,7 @@ fn build_feedback_prompt(original_prompt: &str, trace: &AttemptTrace) -> String 
 /// Guarda la traza de intentos en el directorio de decisiones.
 fn save_agent_decision(
     opts: &AgentOptions,
-    skill_path: &Path,
+    instruction_path: &Path,
     attempts: &[AttemptTrace],
     success: bool,
 ) {
@@ -202,7 +206,10 @@ fn save_agent_decision(
 
     let _ = std::fs::create_dir_all(decisions_dir);
 
-    let actor = skill_path
+    // Derivar el nombre del actor desde el path de instrucciones:
+    // .pi/skills/product-owner/SKILL.md → "product-owner"
+    // .claude/agents/product_owner.md → "product_owner"
+    let actor = instruction_path
         .parent()
         .and_then(|p| p.file_name())
         .and_then(|n| n.to_str())
@@ -239,20 +246,25 @@ fn save_agent_decision(
     }
 }
 
-/// Invoca `pi` una sola vez, con timeout.
-fn invoke_once(skill_path: &Path, prompt: &str, _timeout: Duration) -> anyhow::Result<Output> {
-    let result = std::process::Command::new("pi")
-        .arg("-p")
-        .arg(prompt)
-        .arg("--skill")
-        .arg(skill_path)
-        .arg("--no-session")
+/// Invoca un agente una sola vez, con timeout.
+fn invoke_once(
+    provider: &dyn AgentProvider,
+    instruction: &Path,
+    prompt: &str,
+    _timeout: Duration,
+) -> anyhow::Result<Output> {
+    let args = provider.build_args(instruction, prompt);
+    let result = std::process::Command::new(provider.binary())
+        .args(&args)
         .output();
 
     match result {
         Ok(output) => Ok(output),
         Err(e) => {
-            anyhow::bail!("no se pudo ejecutar 'pi': {e}. ¿Está instalado?");
+            anyhow::bail!(
+                "no se pudo ejecutar '{}': {e}. ¿Está instalado?",
+                provider.binary()
+            );
         }
     }
 }
@@ -269,6 +281,7 @@ fn trace_from_output(attempt: u32, output: &Output) -> AttemptTrace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::PiProvider;
 
     #[test]
     fn build_feedback_prompt_includes_error() {
@@ -308,7 +321,7 @@ mod tests {
 
     #[test]
     #[ignore = "requiere pi instalado"]
-    fn invoke_with_retry_fails_when_pi_not_installed() {
+    fn invoke_with_retry_fails_when_agent_not_installed() {
         let limits = LimitsConfig {
             max_retries_per_step: 1,
             retry_delay_base_seconds: 0,
@@ -316,7 +329,14 @@ mod tests {
             ..Default::default()
         };
         let opts = AgentOptions::default();
-        let result = invoke_with_retry(Path::new("/nonexistent/skill.md"), "test", &limits, &opts);
+        let provider = PiProvider;
+        let result = invoke_with_retry(
+            &provider,
+            Path::new("/nonexistent/skill.md"),
+            "test",
+            &limits,
+            &opts,
+        );
         assert!(result.is_err());
     }
 }

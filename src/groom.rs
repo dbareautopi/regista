@@ -8,6 +8,7 @@
 
 use crate::agent::{self, AgentOptions};
 use crate::config::Config;
+use crate::providers;
 use crate::validator;
 use std::path::Path;
 
@@ -76,7 +77,10 @@ pub fn run(
     };
 
     // ── 4. Bucle groom → validate ──────────────────────────────────
-    let skill_path = project_root.join(&cfg.agents.product_owner);
+    let provider_name = cfg.agents.provider_for_role("product_owner");
+    let provider = providers::from_name(&provider_name);
+    let skill_path_str = cfg.agents.skill_for_role("product_owner");
+    let skill_path = project_root.join(&skill_path_str);
     let max_loop = cfg.limits.groom_max_iterations.max(1);
 
     let spec_content = std::fs::read_to_string(spec_path)?;
@@ -147,8 +151,13 @@ pub fn run(
 
         tracing::info!("🤖 Invocando PO para generar/corregir historias...");
 
-        match agent::invoke_with_retry(&skill_path, &prompt, &cfg.limits, &AgentOptions::default())
-        {
+        match agent::invoke_with_retry(
+            provider.as_ref(),
+            &skill_path,
+            &prompt,
+            &cfg.limits,
+            &AgentOptions::default(),
+        ) {
             Ok(_) => {
                 stories_count = count_files(&stories_dir, &cfg.project.story_pattern);
                 epics_count = count_files(&epics_dir, "EPIC-*.md");

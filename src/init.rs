@@ -3,10 +3,15 @@
 //! Crea la estructura mínima necesaria para usar regista:
 //! `.regista.toml`, skills de `pi`, e historias de ejemplo.
 
+use crate::config::AgentsConfig;
+use crate::providers;
 use std::path::Path;
 
 /// Contenido del archivo `.regista/config.toml` generado por `init`.
-const DEFAULT_CONFIG_TOML: &str = r#"# regista — AI agent director configuration
+/// Construye el contenido de `.regista/config.toml` para un provider dado.
+fn build_config_toml(provider_name: &str) -> String {
+    format!(
+        r#"# regista — AI agent director configuration
 # Todos los campos son opcionales (se usan los defaults mostrados aquí).
 
 [project]
@@ -17,10 +22,7 @@ decisions_dir = ".regista/decisions"
 log_dir = ".regista/logs"
 
 [agents]
-product_owner = ".pi/skills/product-owner/SKILL.md"
-qa_engineer = ".pi/skills/qa-engineer/SKILL.md"
-developer = ".pi/skills/developer/SKILL.md"
-reviewer = ".pi/skills/reviewer/SKILL.md"
+provider = "{provider_name}"
 
 [limits]
 max_iterations = 0  # 0 = auto: nº de historias × 6
@@ -37,7 +39,20 @@ retry_delay_base_seconds = 10
 
 [git]
 enabled = true
-"#;
+"#
+    )
+}
+
+/// Devuelve el contenido del archivo de instrucciones para un rol dado.
+fn role_instruction_content(role: &str) -> &'static str {
+    match role {
+        "product_owner" => PO_SKILL,
+        "qa_engineer" => QA_SKILL,
+        "developer" => DEV_SKILL,
+        "reviewer" => REVIEWER_SKILL,
+        _ => "# Unknown role\n",
+    }
+}
 
 /// Plantilla de skill para Product Owner.
 const PO_SKILL: &str = r#"# Product Owner Skill
@@ -199,8 +214,17 @@ pub struct InitResult {
 
 /// Genera la estructura de un proyecto regista.
 ///
+/// `provider_name` determina qué agente usar y dónde guardar las
+/// instrucciones de rol. Por defecto "pi".
+///
 /// No sobrescribe archivos existentes (los salta con advertencia).
-pub fn init(project_dir: &Path, light: bool, with_example: bool) -> anyhow::Result<InitResult> {
+pub fn init(
+    project_dir: &Path,
+    light: bool,
+    with_example: bool,
+    provider_name: &str,
+) -> anyhow::Result<InitResult> {
+    let provider = providers::from_name(provider_name);
     let mut result = InitResult {
         created: vec![],
         skipped: vec![],
@@ -217,11 +241,11 @@ pub fn init(project_dir: &Path, light: bool, with_example: bool) -> anyhow::Resu
             .skipped
             .push(".regista/config.toml (ya existe)".into());
     } else {
-        // Asegurar que el directorio .regista existe
         if let Some(parent) = config_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&config_path, DEFAULT_CONFIG_TOML)?;
+        let config_content = build_config_toml(provider_name);
+        std::fs::write(&config_path, config_content)?;
         result.created.push(".regista/config.toml".into());
     }
 
@@ -238,26 +262,24 @@ pub fn init(project_dir: &Path, light: bool, with_example: bool) -> anyhow::Resu
     }
 
     if !light {
-        // ── Skills ─────────────────────────────────────────────────
-        let skills: &[(&str, &str)] = &[
-            ("product-owner", PO_SKILL),
-            ("qa-engineer", QA_SKILL),
-            ("developer", DEV_SKILL),
-            ("reviewer", REVIEWER_SKILL),
-        ];
+        // ── Instrucciones de rol ──────────────────────────────────
+        let roles = AgentsConfig::all_roles();
+        for role in &roles {
+            let instruction_path_str = provider.instruction_dir(role);
+            let instruction_path = project_dir.join(&instruction_path_str);
 
-        for (name, content) in skills {
-            let skill_dir = project_dir.join(".pi/skills").join(name);
-            std::fs::create_dir_all(&skill_dir)?;
-            let skill_path = skill_dir.join("SKILL.md");
+            if let Some(parent) = instruction_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
 
-            if skill_path.exists() {
+            if instruction_path.exists() {
                 result
                     .skipped
-                    .push(format!(".pi/skills/{name}/SKILL.md (ya existe)"));
+                    .push(format!("{instruction_path_str} (ya existe)"));
             } else {
-                std::fs::write(&skill_path, *content)?;
-                result.created.push(format!(".pi/skills/{name}/SKILL.md"));
+                let content = role_instruction_content(role);
+                std::fs::write(&instruction_path, content)?;
+                result.created.push(instruction_path_str);
             }
         }
     }
@@ -295,7 +317,7 @@ mod tests {
     #[test]
     fn init_creates_config_in_temp_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        let result = init(tmp.path(), false, false).unwrap();
+        let result = init(tmp.path(), false, false, "pi").unwrap();
         assert!(result.created.iter().any(|p| p == ".regista/config.toml"));
         assert!(tmp.path().join(".regista/config.toml").exists());
         assert!(tmp.path().join(".regista/stories").is_dir());
@@ -304,7 +326,7 @@ mod tests {
     #[test]
     fn init_light_skips_skills() {
         let tmp = tempfile::tempdir().unwrap();
-        let result = init(tmp.path(), true, false).unwrap();
+        let result = init(tmp.path(), true, false, "pi").unwrap();
         assert!(!tmp
             .path()
             .join(".pi/skills/product-owner/SKILL.md")
@@ -315,7 +337,7 @@ mod tests {
     #[test]
     fn init_with_example_creates_story() {
         let tmp = tempfile::tempdir().unwrap();
-        let result = init(tmp.path(), false, true).unwrap();
+        let result = init(tmp.path(), false, true, "pi").unwrap();
         assert!(result.created.iter().any(|p| p.contains("STORY-001.md")));
         assert!(tmp.path().join(".regista/stories/STORY-001.md").exists());
         assert!(tmp.path().join(".regista/epics/EPIC-001.md").exists());
@@ -324,10 +346,9 @@ mod tests {
     #[test]
     fn init_skips_existing_config() {
         let tmp = tempfile::tempdir().unwrap();
-        // Crear directorio y config primero
         std::fs::create_dir_all(tmp.path().join(".regista")).unwrap();
         std::fs::write(tmp.path().join(".regista/config.toml"), "# ya existe").unwrap();
-        let result = init(tmp.path(), false, false).unwrap();
+        let result = init(tmp.path(), false, false, "pi").unwrap();
         assert!(result
             .skipped
             .iter()
@@ -337,9 +358,33 @@ mod tests {
     #[test]
     fn init_creates_full_structure() {
         let tmp = tempfile::tempdir().unwrap();
-        let result = init(tmp.path(), false, true).unwrap();
+        let result = init(tmp.path(), false, true, "pi").unwrap();
         assert!(result.created.len() >= 6); // config + 4 skills + story + epic
         assert!(tmp.path().join(".regista/decisions").is_dir());
         assert!(tmp.path().join(".regista/logs").is_dir());
+    }
+
+    #[test]
+    fn init_with_claude_creates_agent_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = init(tmp.path(), false, false, "claude").unwrap();
+        assert!(result
+            .created
+            .iter()
+            .any(|p| p.contains(".claude/agents/product_owner.md")));
+        assert!(tmp
+            .path()
+            .join(".claude/agents/product_owner.md")
+            .exists());
+    }
+
+    #[test]
+    fn init_with_codex_creates_skill_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = init(tmp.path(), false, false, "codex").unwrap();
+        assert!(result
+            .created
+            .iter()
+            .any(|p| p.contains(".agents/skills/developer/SKILL.md")));
     }
 }

@@ -3,7 +3,7 @@
 //! Verifica configuración, historias, skills, dependencias y git
 //! sin ejecutar agentes. Ideal como paso previo en CI/CD.
 
-use crate::config::Config;
+use crate::config::{AgentsConfig, Config};
 use crate::dependency_graph::DependencyGraph;
 use crate::state::Status;
 use crate::story::Story;
@@ -175,29 +175,27 @@ fn validate_config(
 }
 
 fn validate_skills(project_root: &Path, cfg: &Config, result: &mut ValidationResult) {
-    let skills = [
-        ("PO", &cfg.agents.product_owner),
-        ("QA", &cfg.agents.qa_engineer),
-        ("Dev", &cfg.agents.developer),
-        ("Reviewer", &cfg.agents.reviewer),
-    ];
+    let roles = AgentsConfig::all_roles();
+    let role_names = ["PO", "QA", "Dev", "Reviewer"];
 
     let mut found = 0;
-    for (role, path_str) in &skills {
-        let path = project_root.join(path_str);
+    for (i, role) in roles.iter().enumerate() {
+        let path_str = cfg.agents.skill_for_role(role);
+        let path = project_root.join(&path_str);
+        let label = role_names[i];
         if path.exists() && path.is_file() {
             found += 1;
         } else {
             result.add(
                 Severity::Error,
                 "skills",
-                format!("Skill de {role} no encontrado: {}", path.display()),
+                format!("Skill de {label} no encontrado: {}", path.display()),
                 None,
             );
         }
     }
 
-    if found == skills.len() {
+    if found == roles.len() {
         // All good - counted in final ok
     }
 }

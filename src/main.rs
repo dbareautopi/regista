@@ -19,6 +19,7 @@ mod hooks;
 mod init;
 mod orchestrator;
 mod prompts;
+mod providers;
 mod state;
 mod story;
 mod validator;
@@ -95,6 +96,11 @@ pub struct Cli {
     /// Detener el orquestador en segundo plano.
     #[arg(long, conflicts_with_all = ["detach", "follow", "status", "once", "epics", "epic", "story", "config"])]
     pub kill: bool,
+
+    /// Provider de agente a usar (pi, claude, codex, opencode).
+    /// Sobreescribe el provider definido en .regista/config.toml.
+    #[arg(long)]
+    pub provider: Option<String>,
 
     /// Ruta específica para el archivo de log.
     #[arg(long)]
@@ -224,7 +230,7 @@ fn main() {
 
     let config_path = cli.config.as_ref().map(|p| Path::new(p.as_str()));
 
-    let cfg = match config::Config::load(project_root, config_path) {
+    let mut cfg = match config::Config::load(project_root, config_path) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!("Error al cargar configuración: {e}");
@@ -235,13 +241,20 @@ fn main() {
         }
     };
 
+    // Sobreescribir provider si se pasó --provider
+    if let Some(ref provider) = cli.provider {
+        cfg.agents.provider = provider.clone();
+        tracing::info!("Provider override: {provider}");
+    }
+
     tracing::info!(
-        "Configuración cargada: stories_dir={}, agents={{ PO={}, QA={}, Dev={}, Reviewer={} }}",
+        "Configuración cargada: stories_dir={}, agents={{ provider={}, PO={}, QA={}, Dev={}, Reviewer={} }}",
         cfg.project.stories_dir,
-        cfg.agents.product_owner,
-        cfg.agents.qa_engineer,
-        cfg.agents.developer,
-        cfg.agents.reviewer
+        cfg.agents.provider,
+        cfg.agents.skill_for_role("product_owner"),
+        cfg.agents.skill_for_role("qa_engineer"),
+        cfg.agents.skill_for_role("developer"),
+        cfg.agents.skill_for_role("reviewer")
     );
 
     // ── Opciones de ejecución ───────────────────────────────────────────
@@ -341,6 +354,11 @@ fn run_validate(args: &[String]) {
         .position(|a| a == "--config")
         .and_then(|i| args.get(i + 1))
         .map(|s| s.as_str());
+    let provider_override = args
+        .iter()
+        .position(|a| a == "--provider")
+        .and_then(|i| args.get(i + 1))
+        .map(|s| s.to_lowercase());
 
     let project_root = Path::new(project_dir);
     let config_path = config.map(Path::new);
@@ -390,10 +408,16 @@ fn run_init(args: &[String]) {
     let project_dir = args.first().map(|s| s.as_str()).unwrap_or(".");
     let light = args.iter().any(|a| a == "--light");
     let with_example = args.iter().any(|a| a == "--with-example");
+    let provider = args
+        .iter()
+        .position(|a| a == "--provider")
+        .and_then(|i| args.get(i + 1))
+        .map(|s| s.as_str())
+        .unwrap_or("pi");
 
     let project_root = Path::new(project_dir);
 
-    match init::init(project_root, light, with_example) {
+    match init::init(project_root, light, with_example, provider) {
         Ok(result) => {
             if !result.created.is_empty() {
                 println!("Creados:");
@@ -433,7 +457,7 @@ fn run_init(args: &[String]) {
 /// Ejecuta el subcomando `groom`.
 fn run_groom(args: &[String]) {
     if args.is_empty() || args[0].starts_with('-') {
-        eprintln!("Uso: regista groom <SPEC.md> [--max-stories N] [--merge|--replace]");
+        eprintln!("Uso: regista groom <SPEC.md> [--max-stories N] [--merge|--replace] [--provider pi|claude|codex|opencode]");
         std::process::exit(1);
     }
 
@@ -450,6 +474,11 @@ fn run_groom(args: &[String]) {
         .position(|a| a == "--config")
         .and_then(|i| args.get(i + 1))
         .map(|s| s.as_str());
+    let provider_override = args
+        .iter()
+        .position(|a| a == "--provider")
+        .and_then(|i| args.get(i + 1))
+        .map(|s| s.to_lowercase());
 
     let spec_path = Path::new(spec_path_str);
     // El directorio del proyecto es el dir padre del spec, o el actual
