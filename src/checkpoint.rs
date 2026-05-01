@@ -91,9 +91,7 @@ mod tests {
         let mut state = OrchestratorState::fresh();
         state.iteration = 7;
         state.reject_cycles.insert("STORY-001".into(), 2);
-        state
-            .story_iterations
-            .insert("STORY-001".into(), 3);
+        state.story_iterations.insert("STORY-001".into(), 3);
         state
             .story_errors
             .insert("STORY-002".into(), "timeout".into());
@@ -119,8 +117,7 @@ mod tests {
     #[test]
     fn load_returns_none_when_corrupt() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join(".regista.state.toml"), "esto no es toml{{{")
-            .unwrap();
+        std::fs::write(tmp.path().join(".regista.state.toml"), "esto no es toml{{{").unwrap();
         assert!(OrchestratorState::load(tmp.path()).is_none());
         // Debe haber borrado el archivo corrupto
         assert!(!tmp.path().join(".regista.state.toml").exists());

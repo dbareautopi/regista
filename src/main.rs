@@ -292,9 +292,16 @@ fn main() {
             if cli.json {
                 output_json_report(&report, &cli.project_dir);
             } else {
-                tracing::info!("╔══════════════════════════════════╗");
-                tracing::info!("║     🏁 Pipeline completado      ║");
-                tracing::info!("╠══════════════════════════════════╣");
+                if let Some(ref reason) = report.stop_reason {
+                    tracing::info!("╔══════════════════════════════════╗");
+                    tracing::info!("║  ⚠️  Pipeline detenido (límite)  ║");
+                    tracing::info!("╠══════════════════════════════════╣");
+                    tracing::info!("║ Razón: {:<23} ║", reason);
+                } else {
+                    tracing::info!("╔══════════════════════════════════╗");
+                    tracing::info!("║     🏁 Pipeline completado      ║");
+                    tracing::info!("╠══════════════════════════════════╣");
+                }
                 tracing::info!("║ Historias totales:   {:>4}       ║", report.total);
                 tracing::info!("║ Done:                {:>4}       ║", report.done);
                 tracing::info!("║ Failed:              {:>4}       ║", report.failed);
@@ -442,9 +449,7 @@ fn run_groom(args: &[String]) {
 
     let spec_path = Path::new(spec_path_str);
     // El directorio del proyecto es el dir padre del spec, o el actual
-    let project_root = spec_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
+    let project_root = spec_path.parent().unwrap_or_else(|| Path::new("."));
 
     let config_path = config.map(Path::new);
 
@@ -500,6 +505,8 @@ fn output_json_report(report: &orchestrator::RunReport, project_dir: &str) {
         "project_dir": project_dir,
         "result": if report.failed > 0 { "completed_with_failures" } else { "completed" },
         "exit_code": exit_code_from_report(report),
+        "stopped_early": report.stop_reason.is_some(),
+        "stop_reason": report.stop_reason,
         "summary": {
             "total": report.total,
             "done": report.done,
@@ -536,9 +543,11 @@ fn output_json_error(error: &str) {
 ///
 /// 0 = pipeline completo, 0 historias Failed
 /// 2 = pipeline completo, ≥1 historias Failed
-/// 3 = timeout (max_wall_time o max_iterations)
+/// 3 = parada temprana (max_iterations o max_wall_time)
 fn exit_code_from_report(report: &orchestrator::RunReport) -> i32 {
-    if report.failed > 0 {
+    if report.stop_reason.is_some() {
+        3
+    } else if report.failed > 0 {
         2
     } else {
         0

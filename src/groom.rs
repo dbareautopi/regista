@@ -114,8 +114,7 @@ pub fn run(
                 .findings
                 .iter()
                 .filter(|f| {
-                    f.severity == validator::Severity::Error
-                        && f.category == "dependencies"
+                    f.severity == validator::Severity::Error && f.category == "dependencies"
                 })
                 .map(|f| f.message.clone())
                 .collect();
@@ -148,13 +147,12 @@ pub fn run(
 
         tracing::info!("🤖 Invocando PO para generar/corregir historias...");
 
-        match agent::invoke_with_retry(&skill_path, &prompt, &cfg.limits, &AgentOptions::default()) {
+        match agent::invoke_with_retry(&skill_path, &prompt, &cfg.limits, &AgentOptions::default())
+        {
             Ok(_) => {
                 stories_count = count_files(&stories_dir, &cfg.project.story_pattern);
                 epics_count = count_files(&epics_dir, "EPIC-*.md");
-                tracing::info!(
-                    "  📊 Generadas: {stories_count} historias, {epics_count} épicas"
-                );
+                tracing::info!("  📊 Generadas: {stories_count} historias, {epics_count} épicas");
 
                 if stories_count == 0 && loop_iteration == 1 {
                     tracing::warn!(
@@ -196,7 +194,10 @@ struct GroomCtx<'a> {
 /// Prompt para la primera generación de historias.
 fn groom_prompt_initial(ctx: &GroomCtx) -> String {
     let limit_line = if ctx.max_stories > 0 {
-        format!("\nGenera como **máximo {} historias** en total.\n", ctx.max_stories)
+        format!(
+            "\nGenera como **máximo {} historias** en total.\n",
+            ctx.max_stories
+        )
     } else {
         String::new()
     };

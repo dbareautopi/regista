@@ -161,7 +161,11 @@ fn build_feedback_prompt(original_prompt: &str, trace: &AttemptTrace) -> String 
 
     // Limitar el feedback para no desbordar la ventana de contexto
     let truncated: String = if feedback.len() > 2000 {
-        format!("{}...\n[output truncado, {} bytes totales]", &feedback[..2000], feedback.len())
+        format!(
+            "{}...\n[output truncado, {} bytes totales]",
+            &feedback[..2000],
+            feedback.len()
+        )
     } else {
         feedback.clone()
     };
@@ -178,9 +182,7 @@ fn build_feedback_prompt(original_prompt: &str, trace: &AttemptTrace) -> String 
          ---\n\
          \n\
          {}",
-        trace.attempt,
-        truncated,
-        original_prompt
+        trace.attempt, truncated, original_prompt
     )
 }
 
@@ -210,10 +212,12 @@ fn save_agent_decision(
     let filename = format!("{story_id}-{actor}-{ts}.md");
     let path = decisions_dir.join(&filename);
 
-    let status = if success { "✅ Éxito" } else { "❌ Fallo parcial" };
-    let mut content = format!(
-        "# {story_id} — {actor} — {ts}\n\n## Resultado\n{status}\n\n"
-    );
+    let status = if success {
+        "✅ Éxito"
+    } else {
+        "❌ Fallo parcial"
+    };
+    let mut content = format!("# {story_id} — {actor} — {ts}\n\n## Resultado\n{status}\n\n");
 
     for trace in attempts {
         content.push_str(&format!(

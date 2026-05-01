@@ -99,26 +99,33 @@ fn run_real(
                 state.iteration,
             )
         } else {
-            (
-                HashMap::new(),
-                HashMap::new(),
-                HashMap::new(),
-                0u32,
-            )
+            (HashMap::new(), HashMap::new(), HashMap::new(), 0u32)
         };
 
     let mut iteration: u32 = start_iteration;
+    let mut stop_reason: Option<String> = None;
+
+    // Calcular límite efectivo de iteraciones una sola vez al inicio.
+    // Si el usuario no lo configuró (0), se escala con el nº de historias.
+    let initial_stories = load_all_stories(project_root, cfg)?;
+    let effective_max = effective_max_iterations(cfg.limits.max_iterations, initial_stories.len());
+    if effective_max != cfg.limits.max_iterations {
+        tracing::info!(
+            "max_iterations auto: {} ({} historias × 6)",
+            effective_max,
+            initial_stories.len()
+        );
+    }
 
     loop {
         iteration += 1;
-        if iteration > cfg.limits.max_iterations {
-            tracing::warn!(
-                "Alcanzado el máximo de {} iteraciones",
-                cfg.limits.max_iterations
-            );
+        if iteration > effective_max {
+            stop_reason = Some(format!("max_iterations ({})", effective_max));
+            tracing::warn!("Alcanzado el máximo de {} iteraciones", effective_max);
             break;
         }
         if start.elapsed() >= max_wall {
+            stop_reason = Some(format!("max_wall_time ({}s)", max_wall.as_secs()));
             tracing::warn!("Límite de tiempo total alcanzado ({}s)", max_wall.as_secs());
             break;
         }
@@ -228,6 +235,7 @@ fn run_real(
         &story_iterations,
         &reject_cycles,
         &story_errors,
+        stop_reason,
     )
 }
 
@@ -249,6 +257,7 @@ fn run_dry(project_root: &Path, cfg: &Config, options: &RunOptions) -> anyhow::R
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
+            None,
         );
     }
 
@@ -257,9 +266,19 @@ fn run_dry(project_root: &Path, cfg: &Config, options: &RunOptions) -> anyhow::R
     let story_errors: HashMap<String, String> = HashMap::new();
     let mut iteration: u32 = 0;
 
+    // Calcular límite efectivo de iteraciones
+    let effective_max = effective_max_iterations(cfg.limits.max_iterations, stories.len());
+    if effective_max != cfg.limits.max_iterations {
+        tracing::info!(
+            "max_iterations auto: {} ({} historias × 6)",
+            effective_max,
+            stories.len()
+        );
+    }
+
     loop {
         iteration += 1;
-        if iteration > cfg.limits.max_iterations {
+        if iteration > effective_max {
             break;
         }
 
@@ -379,6 +398,7 @@ fn run_dry(project_root: &Path, cfg: &Config, options: &RunOptions) -> anyhow::R
         &story_iterations,
         &reject_cycles,
         &story_errors,
+        None, // dry-run no tiene stop_reason relevante
     )
 }
 
@@ -390,6 +410,7 @@ fn build_report(
     story_iterations: &HashMap<String, u32>,
     reject_cycles: &HashMap<String, u32>,
     story_errors: &HashMap<String, String>,
+    stop_reason: Option<String>,
 ) -> anyhow::Result<RunReport> {
     let done = stories.iter().filter(|s| s.status == Status::Done).count();
     let failed = stories
@@ -430,6 +451,7 @@ fn build_report(
         elapsed,
         elapsed_seconds: elapsed.as_secs(),
         stories: story_records,
+        stop_reason,
     })
 }
 
@@ -446,6 +468,9 @@ pub struct RunReport {
     pub elapsed: std::time::Duration,
     pub elapsed_seconds: u64,
     pub stories: Vec<StoryRecord>,
+    /// Razón de parada temprana (None = pipeline terminó naturalmente).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
 }
 
 /// Registro individual de una historia para el reporte JSON.
@@ -796,6 +821,20 @@ fn extract_numeric(id: &str) -> u32 {
         .collect::<String>()
         .parse()
         .unwrap_or(0)
+}
+
+/// Calcula el número máximo efectivo de iteraciones.
+///
+/// Si el usuario configuró un valor explícito (>0), se respeta.
+/// Si es 0 (default), se calcula como `max(10, story_count * 6)`
+/// para escalar automáticamente con el tamaño del proyecto.
+fn effective_max_iterations(cfg_max: u32, story_count: usize) -> u32 {
+    if cfg_max > 0 {
+        cfg_max
+    } else {
+        let computed = story_count as u32 * 6;
+        computed.max(10)
+    }
 }
 
 /// Construye AgentOptions con los valores de configuración actuales.

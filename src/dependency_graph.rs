@@ -75,9 +75,7 @@ impl DependencyGraph {
         let mut color: HashMap<&str, u8> = self.forward.keys().map(|k| (k.as_str(), 0u8)).collect();
 
         for node in self.forward.keys() {
-            if color.get(node.as_str()) == Some(&0)
-                && self.dfs_has_cycle(node, &mut color)
-            {
+            if color.get(node.as_str()) == Some(&0) && self.dfs_has_cycle(node, &mut color) {
                 return true;
             }
         }
@@ -93,9 +91,7 @@ impl DependencyGraph {
                 if neighbor_color == 1 {
                     return true; // ciclo detectado
                 }
-                if neighbor_color == 0
-                    && self.dfs_has_cycle(neighbor, color)
-                {
+                if neighbor_color == 0 && self.dfs_has_cycle(neighbor, color) {
                     return true;
                 }
             }
