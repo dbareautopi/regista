@@ -237,7 +237,11 @@ mod tests {
     fn from_name_aliases_claude() {
         for alias in &["claude-code", "claude_code"] {
             let p = from_name(alias);
-            assert_eq!(p.binary(), "claude", "alias '{alias}' debería resolver a claude");
+            assert_eq!(
+                p.binary(),
+                "claude",
+                "alias '{alias}' debería resolver a claude"
+            );
         }
     }
 
@@ -259,7 +263,11 @@ mod tests {
     fn from_name_aliases_opencode() {
         for alias in &["open-code", "open_code"] {
             let p = from_name(alias);
-            assert_eq!(p.binary(), "opencode", "alias '{alias}' debería resolver a opencode");
+            assert_eq!(
+                p.binary(),
+                "opencode",
+                "alias '{alias}' debería resolver a opencode"
+            );
         }
     }
 
@@ -354,7 +362,10 @@ mod tests {
     #[test]
     fn opencode_build_args_uses_run_with_agent() {
         let p = OpenCodeProvider;
-        let args = p.build_args(Path::new(".opencode/agents/product_owner.md"), "refina esta historia");
+        let args = p.build_args(
+            Path::new(".opencode/agents/product_owner.md"),
+            "refina esta historia",
+        );
         assert_eq!(args[0], "run");
         assert!(args.contains(&"--agent".to_string()));
         assert!(args.contains(&"product_owner".to_string()));

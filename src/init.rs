@@ -372,10 +372,7 @@ mod tests {
             .created
             .iter()
             .any(|p| p.contains(".claude/agents/product_owner.md")));
-        assert!(tmp
-            .path()
-            .join(".claude/agents/product_owner.md")
-            .exists());
+        assert!(tmp.path().join(".claude/agents/product_owner.md").exists());
     }
 
     #[test]

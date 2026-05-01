@@ -7,6 +7,13 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.3.3] — 2026-05-01
+
+### Fixed
+- **Subcomandos `init` y `validate`**: corregido bug donde flags (`--light`, `--json`, etc.) se interpretaban erróneamente como directorio del proyecto. Ahora detectan correctamente si el primer argumento es un flag y usan `.` como directorio por defecto.
+
+---
+
 ## [0.3.2] — 2026-05-01
 
 ### Fixed
@@ -55,6 +62,7 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 - Dry-run, salida JSON, feedback rico en reintentos
 - Hooks post-fase y snapshots git
 
+[0.3.3]: https://github.com/dbareautopi/regista/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/dbareautopi/regista/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/dbareautopi/regista/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/dbareautopi/regista/compare/v0.2.0...v0.3.0

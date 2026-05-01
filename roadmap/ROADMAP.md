@@ -35,8 +35,8 @@ y notas de implementación.
 
 | # | Funcionalidad | Doc | Esfuerzo |
 |---|---|---|---|
-| 9 | **Prompts agnósticos al stack**: desacoplar referencias a herramientas (cargo, npm) | [`09-prompts-agnosticos.md`](./09-prompts-agnosticos.md) | Bajo |
-| 10 | **Conciencia cross-story**: agentes reciben contexto de historias relacionadas | [`10-cross-story-context.md`](./10-cross-story-context.md) | Medio |
+| 9 | **Prompts agnósticos al stack**: desacoplar referencias a herramientas (cargo, npm) | [`09-prompts-agnosticos.md`](./09-prompts-agnosticos.md) ✍️ | Bajo |
+| 10 | **Conciencia cross-story**: agentes reciben contexto de historias relacionadas | [`10-cross-story-context.md`](./10-cross-story-context.md) ✍️ | Medio |
 | 11 | **TUI / dashboard**: visualización en vivo del progreso del pipeline | [`11-tui-dashboard.md`](./11-tui-dashboard.md) | Medio |
 | 12 | **Cost tracking**: estimación y límite de gasto en llamadas LLM | [`12-cost-tracking.md`](./12-cost-tracking.md) | Medio |
 
@@ -161,10 +161,20 @@ Fase 7 (experiencia) ────────────── #11 TUI, #12 cos
    - Establece el modelo de shared state (`Arc<Mutex<>>`) que todo lo demás usará
 
 3. **#09 después** porque:
-   - Con providers + async ya funcionando, los templates de prompt pueden adaptarse a cada stack/provider
+   - Con providers + async ya funcionando, los templates de prompt pueden adaptarse a cada stack/provider.
+   - Define el placeholder `{cross_story_context}` que #10 usará para inyectar contexto.
+   - Prepara los prompts genéricos por rol que #04 (workflow configurable) necesita.
 
-4. **#14 y #10** son independientes entre sí, ambos se benefician de tener providers + paralelismo ya estables
+4. **#14 antes que #10** porque:
+   - Es un quick win (~50 líneas) que no depende de nada más.
+   - #10 se beneficia de tener el ecosistema de groom completo antes de añadir contexto.
 
-5. **#04 al final** porque:
-   - Es el cambio más disruptivo (Status de enum a string, prompts genéricos)
-   - Conviene tener providers, paralelismo, prompts agnósticos y cross-story context estables antes de meterle mano a la máquina de estados
+5. **#10 después de #09 y #14** porque:
+   - Usa el placeholder `{cross_story_context}` definido en #09 para inyectar contexto.
+   - Con paralelismo ya estable, sabe exactamente cuándo construir contexto (entre oleadas).
+   - Los resúmenes de historias Done se cachean en `decisions/`, sin llamadas额外 al LLM.
+
+6. **#04 al final** porque:
+   - Es el cambio más disruptivo (Status de enum a string, prompts genéricos).
+   - Conviene tener providers, paralelismo, prompts agnósticos y cross-story context estables antes de meterle mano a la máquina de estados.
+   - Para entonces, los prompts ya son genéricos por rol y aceptan contexto dinámico.
