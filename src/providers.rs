@@ -158,18 +158,31 @@ impl AgentProvider for OpenCodeProvider {
     }
 
     fn instruction_name(&self) -> &str {
-        "command"
+        "agent"
     }
 
     fn instruction_dir(&self, role: &str) -> String {
-        format!(".opencode/commands/{role}.md")
+        // OpenCode lee agentes desde .opencode/agents/*.md.
+        // El contenido del .md se usa como system prompt del agente.
+        format!(".opencode/agents/{role}.md")
     }
 
-    fn build_args(&self, _instruction: &Path, prompt: &str) -> Vec<String> {
+    fn build_args(&self, instruction: &Path, prompt: &str) -> Vec<String> {
+        // opencode usa subcomando "run" con mensaje posicional.
+        // El nombre del agente se deriva del nombre del archivo de
+        // instrucción (sin extensión): product_owner.md → product_owner.
+        // --dangerously-skip-permissions: modo no-interactivo.
+        let agent_name = instruction
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("build");
+
         vec![
-            "-p".to_string(),
+            "run".to_string(),
+            "--agent".to_string(),
+            agent_name.to_string(),
+            "--dangerously-skip-permissions".to_string(),
             prompt.to_string(),
-            "-q".to_string(), // sin spinner, más limpio en logs
         ]
     }
 }
@@ -334,16 +347,23 @@ mod tests {
         let p = OpenCodeProvider;
         assert_eq!(
             p.instruction_dir("reviewer"),
-            ".opencode/commands/reviewer.md"
+            ".opencode/agents/reviewer.md"
         );
     }
 
     #[test]
-    fn opencode_build_args_includes_quiet_flag() {
+    fn opencode_build_args_uses_run_with_agent() {
         let p = OpenCodeProvider;
-        let args = p.build_args(Path::new("ignored"), "explica esto");
-        assert!(args.contains(&"-q".to_string()));
-        assert!(args.contains(&"-p".to_string()));
+        let args = p.build_args(Path::new(".opencode/agents/product_owner.md"), "refina esta historia");
+        assert_eq!(args[0], "run");
+        assert!(args.contains(&"--agent".to_string()));
+        assert!(args.contains(&"product_owner".to_string()));
+        assert!(args.contains(&"--dangerously-skip-permissions".to_string()));
+        assert!(args.contains(&"refina esta historia".to_string()));
+        // No debe contener -p ni -q ni -f (eran del API anterior)
+        assert!(!args.contains(&"-p".to_string()));
+        assert!(!args.contains(&"-q".to_string()));
+        assert!(!args.contains(&"-f".to_string()));
     }
 
     // ── supported_providers ──────────────────────────────────────────

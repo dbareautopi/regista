@@ -3,10 +3,10 @@
 > AI agent director — orquestación multi-provider del ciclo completo de
 > desarrollo: **PO → QA → Dev → Reviewer → Done.**
 >
-> Compatible con [`pi`](https://github.com/mariozechner/pi-coding-agent),
+> Compatible con [`pi`](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent),
 > [Claude Code](https://github.com/anthropics/claude-code),
 > [Codex CLI](https://github.com/openai/codex), y
-> [OpenCode](https://github.com/opencode-ai/opencode).
+> [OpenCode](https://github.com/anomalyco/opencode).
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -118,7 +118,7 @@ mi-proyecto/
 │   ├── developer/SKILL.md
 │   └── reviewer/SKILL.md
 │
-├── .opencode/commands/     ← si usas provider=opencode
+├── .opencode/agents/       ← si usas provider=opencode
 │   ├── product_owner.md
 │   ├── qa_engineer.md
 │   ├── developer.md
@@ -194,7 +194,7 @@ los defaults mostrados arriba.
 | `pi` | `pi` | `.pi/skills/<rol>/SKILL.md` | `-p "..." --skill <path>` |
 | `claude` | `claude` | `.claude/agents/<rol>.md` | `-p "..." --append-system-prompt-file <path>` |
 | `codex` | `codex` | `.agents/skills/<rol>/SKILL.md` | `exec --sandbox workspace-write "..."` |
-| `opencode` | `opencode` | `.opencode/commands/<rol>.md` | `-p "..." -q` |
+| `opencode` | `opencode` | `.opencode/agents/<rol>.md` | `run --agent <rol> --dangerously-skip-permissions "..."` |
 
 Usa `--provider` en la CLI para sobreescribir el provider global del TOML:
 
