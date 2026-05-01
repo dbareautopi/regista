@@ -354,7 +354,7 @@ fn run_validate(args: &[String]) {
         .position(|a| a == "--config")
         .and_then(|i| args.get(i + 1))
         .map(|s| s.as_str());
-    let provider_override = args
+    let _provider_override = args
         .iter()
         .position(|a| a == "--provider")
         .and_then(|i| args.get(i + 1))
@@ -474,7 +474,7 @@ fn run_groom(args: &[String]) {
         .position(|a| a == "--config")
         .and_then(|i| args.get(i + 1))
         .map(|s| s.as_str());
-    let provider_override = args
+    let _provider_override = args
         .iter()
         .position(|a| a == "--provider")
         .and_then(|i| args.get(i + 1))
