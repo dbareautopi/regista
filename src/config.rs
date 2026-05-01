@@ -1,10 +1,11 @@
 //! Carga y validación de la configuración de regista.
 //!
-//! La configuración se lee de un archivo TOML (por defecto `.regista.toml`
+//! La configuración se lee de un archivo TOML (por defecto `.regista/config.toml`
 //! en la raíz del proyecto). Todos los campos tienen valores por defecto razonables
 //! para que un proyecto mínimo solo necesite indicar dónde están las historias
-//! y qué skills usar.
+//! y qué provider usar.
 
+use crate::providers;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -45,25 +46,94 @@ pub struct ProjectConfig {
     pub log_dir: String,
 }
 
-/// Rutas a los skills de `pi` para cada rol del workflow.
+/// Configuración de un rol específico del workflow.
+///
+/// Cada rol puede especificar opcionalmente un provider distinto al global
+/// y un path explícito de instrucciones. Si no se especifican, heredan del
+/// provider global y usan la convención de directorio del provider.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct AgentRoleConfig {
+    /// Nombre del provider para este rol ("pi", "claude", "codex", "opencode").
+    /// Si es `None`, hereda el provider global de `AgentsConfig::provider`.
+    pub provider: Option<String>,
+
+    /// Ruta explícita al archivo de instrucciones (skill, agent, command).
+    /// Si es `None`, se usa la convención de directorio del provider.
+    pub skill: Option<String>,
+}
+
+/// Configuración de agentes: providers y skills para cada rol.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct AgentsConfig {
-    /// Skill que actúa como Product Owner (groom + validate).
-    #[serde(default = "default_po_skill")]
-    pub product_owner: String,
+    /// Provider por defecto para todos los roles.
+    /// Si no se especifica, se usa "pi".
+    #[serde(default = "default_provider")]
+    pub provider: String,
 
-    /// Skill que actúa como QA Engineer (escribe tests).
-    #[serde(default = "default_qa_skill")]
-    pub qa_engineer: String,
+    /// Configuración del Product Owner.
+    #[serde(default)]
+    pub product_owner: AgentRoleConfig,
 
-    /// Skill que actúa como Developer (implementa código).
-    #[serde(default = "default_dev_skill")]
-    pub developer: String,
+    /// Configuración del QA Engineer.
+    #[serde(default)]
+    pub qa_engineer: AgentRoleConfig,
 
-    /// Skill que actúa como Reviewer (puerta técnica).
-    #[serde(default = "default_reviewer_skill")]
-    pub reviewer: String,
+    /// Configuración del Developer.
+    #[serde(default)]
+    pub developer: AgentRoleConfig,
+
+    /// Configuración del Reviewer.
+    #[serde(default)]
+    pub reviewer: AgentRoleConfig,
+}
+
+impl AgentsConfig {
+    /// Resuelve el nombre del provider para un rol dado.
+    ///
+    /// Si el rol tiene `provider` explícito, lo usa.
+    /// Si no, hereda del provider global.
+    pub fn provider_for_role(&self, role: &str) -> String {
+        let config = match role {
+            "product_owner" => &self.product_owner,
+            "qa_engineer" => &self.qa_engineer,
+            "developer" => &self.developer,
+            "reviewer" => &self.reviewer,
+            _ => return self.provider.clone(),
+        };
+        config
+            .provider
+            .clone()
+            .unwrap_or_else(|| self.provider.clone())
+    }
+
+    /// Resuelve la ruta al archivo de instrucciones para un rol dado.
+    ///
+    /// Si el rol tiene `skill` explícito, lo usa.
+    /// Si no, usa la convención de directorio del provider.
+    pub fn skill_for_role(&self, role: &str) -> String {
+        let config = match role {
+            "product_owner" => &self.product_owner,
+            "qa_engineer" => &self.qa_engineer,
+            "developer" => &self.developer,
+            "reviewer" => &self.reviewer,
+            _ => return String::new(),
+        };
+
+        if let Some(ref skill) = config.skill {
+            return skill.clone();
+        }
+
+        let provider_name = self.provider_for_role(role);
+        let provider = providers::from_name(&provider_name);
+        provider.instruction_dir(role)
+    }
+
+    /// Itera sobre los 4 roles con su nombre canónico.
+    pub fn all_roles() -> [&'static str; 4] {
+        ["product_owner", "qa_engineer", "developer", "reviewer"]
+    }
 }
 
 /// Límites operacionales para evitar bucles infinitos o bloqueos.
@@ -82,7 +152,7 @@ pub struct LimitsConfig {
     #[serde(default = "default_max_reject_cycles")]
     pub max_reject_cycles: u32,
 
-    /// Timeout en segundos para cada invocación de `pi`.
+    /// Timeout en segundos para cada invocación del agente.
     #[serde(default = "default_agent_timeout")]
     pub agent_timeout_seconds: u64,
 
@@ -147,17 +217,8 @@ fn default_decisions_dir() -> String {
 fn default_log_dir() -> String {
     ".regista/logs".into()
 }
-fn default_po_skill() -> String {
-    ".pi/skills/product-owner/SKILL.md".into()
-}
-fn default_qa_skill() -> String {
-    ".pi/skills/qa-engineer/SKILL.md".into()
-}
-fn default_dev_skill() -> String {
-    ".pi/skills/developer/SKILL.md".into()
-}
-fn default_reviewer_skill() -> String {
-    ".pi/skills/reviewer/SKILL.md".into()
+fn default_provider() -> String {
+    "pi".into()
 }
 fn default_max_iterations() -> u32 {
     0
@@ -204,10 +265,11 @@ impl Default for ProjectConfig {
 impl Default for AgentsConfig {
     fn default() -> Self {
         Self {
-            product_owner: default_po_skill(),
-            qa_engineer: default_qa_skill(),
-            developer: default_dev_skill(),
-            reviewer: default_reviewer_skill(),
+            provider: default_provider(),
+            product_owner: AgentRoleConfig::default(),
+            qa_engineer: AgentRoleConfig::default(),
+            developer: AgentRoleConfig::default(),
+            reviewer: AgentRoleConfig::default(),
         }
     }
 }
@@ -298,15 +360,14 @@ impl Config {
 mod tests {
     use super::*;
 
+    // ── Defaults ───────────────────────────────────────────────────────
+
     #[test]
     fn default_config_is_valid() {
         let cfg = Config::default();
         assert_eq!(cfg.project.stories_dir, ".regista/stories");
         assert_eq!(cfg.project.story_pattern, "STORY-*.md");
-        assert_eq!(
-            cfg.agents.product_owner,
-            ".pi/skills/product-owner/SKILL.md"
-        );
+        assert_eq!(cfg.agents.provider, "pi");
         assert_eq!(cfg.limits.max_iterations, 0);
         assert_eq!(cfg.limits.max_retries_per_step, 5);
         assert_eq!(cfg.limits.max_reject_cycles, 3);
@@ -316,22 +377,109 @@ mod tests {
     }
 
     #[test]
-    fn parse_minimal_config() {
+    fn default_skill_for_role_uses_pi_convention() {
+        let cfg = Config::default();
+        // Por defecto, el provider es pi → usa .pi/skills/<rol>/SKILL.md
+        assert_eq!(
+            cfg.agents.skill_for_role("product_owner"),
+            ".pi/skills/product_owner/SKILL.md"
+        );
+        assert_eq!(
+            cfg.agents.skill_for_role("developer"),
+            ".pi/skills/developer/SKILL.md"
+        );
+    }
+
+    #[test]
+    fn default_provider_for_role_is_pi() {
+        let cfg = Config::default();
+        for role in AgentsConfig::all_roles() {
+            assert_eq!(cfg.agents.provider_for_role(role), "pi");
+        }
+    }
+
+    // ── Parseo ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_minimal_config_just_provider() {
         let toml = r#"
 [agents]
-product_owner = "skills/po.md"
-qa_engineer = "skills/qa.md"
-developer = "skills/dev.md"
-reviewer = "skills/rev.md"
+provider = "claude"
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
-        assert_eq!(cfg.agents.product_owner, "skills/po.md");
-        assert_eq!(cfg.agents.qa_engineer, "skills/qa.md");
-        assert_eq!(cfg.agents.developer, "skills/dev.md");
-        assert_eq!(cfg.agents.reviewer, "skills/rev.md");
-        // El resto debe tener valores por defecto
-        assert_eq!(cfg.project.stories_dir, ".regista/stories");
-        assert_eq!(cfg.limits.max_iterations, 0);
+        assert_eq!(cfg.agents.provider, "claude");
+        // Los roles heredan el provider global
+        assert_eq!(cfg.agents.provider_for_role("product_owner"), "claude");
+        assert_eq!(cfg.agents.provider_for_role("developer"), "claude");
+    }
+
+    #[test]
+    fn parse_role_specific_provider() {
+        let toml = r#"
+[agents]
+provider = "claude"
+
+[agents.developer]
+provider = "pi"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        // PO hereda claude del global
+        assert_eq!(cfg.agents.provider_for_role("product_owner"), "claude");
+        // Dev tiene su propio provider
+        assert_eq!(cfg.agents.provider_for_role("developer"), "pi");
+    }
+
+    #[test]
+    fn parse_explicit_skill_path() {
+        let toml = r#"
+[agents]
+provider = "pi"
+
+[agents.reviewer]
+skill = ".pi/skills/senior-reviewer/SKILL.md"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(
+            cfg.agents.skill_for_role("reviewer"),
+            ".pi/skills/senior-reviewer/SKILL.md"
+        );
+        // Los demás usan la convención
+        assert_eq!(
+            cfg.agents.skill_for_role("developer"),
+            ".pi/skills/developer/SKILL.md"
+        );
+    }
+
+    #[test]
+    fn parse_mixed_providers_with_explicit_skills() {
+        let toml = r#"
+[agents]
+provider = "pi"
+
+[agents.product_owner]
+provider = "claude"
+skill = ".claude/agents/po-custom.md"
+
+[agents.developer]
+provider = "codex"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+
+        assert_eq!(cfg.agents.provider_for_role("product_owner"), "claude");
+        assert_eq!(
+            cfg.agents.skill_for_role("product_owner"),
+            ".claude/agents/po-custom.md"
+        );
+
+        assert_eq!(cfg.agents.provider_for_role("developer"), "codex");
+        assert_eq!(
+            cfg.agents.skill_for_role("developer"),
+            ".agents/skills/developer/SKILL.md"
+        );
+
+        // QA y Reviewer heredan pi
+        assert_eq!(cfg.agents.provider_for_role("qa_engineer"), "pi");
+        assert_eq!(cfg.agents.provider_for_role("reviewer"), "pi");
     }
 
     #[test]
@@ -340,37 +488,25 @@ reviewer = "skills/rev.md"
 [project]
 stories_dir = "docs/stories"
 story_pattern = "*.md"
-epics_dir = "docs/epics"
-decisions_dir = "docs/decisions"
-log_dir = "docs/logs"
 
 [agents]
-product_owner = "a.md"
-qa_engineer = "b.md"
-developer = "c.md"
-reviewer = "d.md"
+provider = "claude"
 
 [limits]
 max_iterations = 5
 max_retries_per_step = 3
-max_reject_cycles = 2
-agent_timeout_seconds = 600
-max_wall_time_seconds = 3600
-retry_delay_base_seconds = 5
 
 [hooks]
-post_qa = "echo qa"
-post_dev = "echo dev"
-post_reviewer = "echo rev"
+post_dev = "cargo test"
 
 [git]
 enabled = false
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
         assert_eq!(cfg.project.stories_dir, "docs/stories");
-        assert_eq!(cfg.project.story_pattern, "*.md");
+        assert_eq!(cfg.agents.provider, "claude");
         assert_eq!(cfg.limits.max_iterations, 5);
-        assert_eq!(cfg.hooks.post_qa.as_deref(), Some("echo qa"));
+        assert_eq!(cfg.hooks.post_dev.as_deref(), Some("cargo test"));
         assert!(!cfg.git.enabled);
     }
 }

@@ -9,6 +9,7 @@ use crate::config::Config;
 use crate::deadlock::{self, DeadlockResolution};
 use crate::dependency_graph::DependencyGraph;
 use crate::prompts::PromptContext;
+use crate::providers;
 use crate::state::Status;
 use crate::story::Story;
 use serde::Serialize;
@@ -339,7 +340,15 @@ fn run_dry(project_root: &Path, cfg: &Config, options: &RunOptions) -> anyhow::R
                 } {
                     if let Some(story) = stories.iter_mut().find(|s| s.id == id) {
                         let next = next_status(story.status);
-                        let label = actor_label(story.status);
+                        let label = match story.status {
+                            Status::Draft => "PO (groom)",
+                            Status::Ready => "QA (tests)",
+                            Status::TestsReady => "Dev (implement)",
+                            Status::InProgress => "Dev (fix)",
+                            Status::InReview => "Reviewer",
+                            Status::BusinessReview => "PO (validate)",
+                            _ => "?",
+                        };
                         let iter = story_iterations.entry(story.id.clone()).or_insert(0);
                         *iter += 1;
                         tracing::info!(
@@ -671,18 +680,18 @@ fn process_story(
         to: next_status(story.status),
     };
 
-    let (skill_path, prompt, label) = match story.status {
-        Status::Draft => {
-            let skill = project_root.join(&cfg.agents.product_owner);
-            (skill, ctx.po_groom(), "PO (groom)")
-        }
-        Status::Ready => {
-            let skill = project_root.join(&cfg.agents.qa_engineer);
-            (skill, ctx.qa_tests(), "QA (tests)")
-        }
+    // Determinar el rol, provider, y path de instrucciones
+    let role = map_status_to_role(story.status);
+    let provider_name = cfg.agents.provider_for_role(role);
+    let provider = providers::from_name(&provider_name);
+    let skill_path_str = cfg.agents.skill_for_role(role);
+    let instruction_path = project_root.join(&skill_path_str);
+
+    // Prompt según el estado (sin cambios)
+    let (prompt, label) = match story.status {
+        Status::Draft => (ctx.po_groom(), "PO (groom)"),
+        Status::Ready => (ctx.qa_tests(), "QA (tests)"),
         Status::TestsReady => {
-            // Si el último actor es Dev, significa que reportó problemas con los tests.
-            // QA debe corregirlos (TestsReady → TestsReady) en vez de Dev implementar.
             if story.last_actor().as_deref() == Some("Dev") {
                 let qa_ctx = PromptContext {
                     to: Status::TestsReady,
@@ -692,25 +701,14 @@ fn process_story(
                     last_rejection: ctx.last_rejection.clone(),
                     from: ctx.from,
                 };
-                let skill = project_root.join(&cfg.agents.qa_engineer);
-                (skill, qa_ctx.qa_fix_tests(), "QA (fix tests)")
+                (qa_ctx.qa_fix_tests(), "QA (fix tests)")
             } else {
-                let skill = project_root.join(&cfg.agents.developer);
-                (skill, ctx.dev_implement(), "Dev (implement)")
+                (ctx.dev_implement(), "Dev (implement)")
             }
         }
-        Status::InProgress => {
-            let skill = project_root.join(&cfg.agents.developer);
-            (skill, ctx.dev_fix(), "Dev (fix)")
-        }
-        Status::InReview => {
-            let skill = project_root.join(&cfg.agents.reviewer);
-            (skill, ctx.reviewer(), "Reviewer")
-        }
-        Status::BusinessReview => {
-            let skill = project_root.join(&cfg.agents.product_owner);
-            (skill, ctx.po_validate(), "PO (validate)")
-        }
+        Status::InProgress => (ctx.dev_fix(), "Dev (fix)"),
+        Status::InReview => (ctx.reviewer(), "Reviewer"),
+        Status::BusinessReview => (ctx.po_validate(), "PO (validate)"),
         _ => {
             tracing::warn!("{}: estado {} no procesable", story.id, story.status);
             return Ok(());
@@ -718,7 +716,8 @@ fn process_story(
     };
 
     tracing::info!(
-        "  🎯 {label} | {} ({} → {})",
+        "  🎯 {label} ({}) | {} ({} → {})",
+        provider.display_name(),
         story.id,
         story.status,
         ctx.to
@@ -731,7 +730,13 @@ fn process_story(
         None
     };
 
-    let result = agent::invoke_with_retry(&skill_path, &prompt, &cfg.limits, agent_opts);
+    let result = agent::invoke_with_retry(
+        provider.as_ref(),
+        &instruction_path,
+        &prompt,
+        &cfg.limits,
+        agent_opts,
+    );
 
     match result {
         Ok(_) => {
@@ -801,16 +806,14 @@ fn next_status(current: Status) -> Status {
     }
 }
 
-/// Etiqueta legible del actor para un estado dado.
-fn actor_label(status: Status) -> &'static str {
+/// Mapea un estado del workflow al rol canónico que lo procesa.
+fn map_status_to_role(status: Status) -> &'static str {
     match status {
-        Status::Draft => "PO (groom)",
-        Status::Ready => "QA (tests)",
-        Status::TestsReady => "Dev (implement)",
-        Status::InProgress => "Dev (fix)",
-        Status::InReview => "Reviewer",
-        Status::BusinessReview => "PO (validate)",
-        _ => "?",
+        Status::Draft | Status::BusinessReview => "product_owner",
+        Status::Ready => "qa_engineer",
+        Status::TestsReady | Status::InProgress => "developer",
+        Status::InReview => "reviewer",
+        _ => "product_owner", // fallback seguro
     }
 }
 

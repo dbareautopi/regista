@@ -1,10 +1,13 @@
 # regista 🎬
 
-> AI agent director for [`pi`](https://github.com/mariozechner/pi-coding-agent).  
-> Orquestación autónoma del ciclo completo de desarrollo:  
-> **PO → QA → Dev → Reviewer → Done.**
+> AI agent director — orquestación multi-provider del ciclo completo de
+> desarrollo: **PO → QA → Dev → Reviewer → Done.**
+>
+> Compatible con [`pi`](https://github.com/mariozechner/pi-coding-agent),
+> [Claude Code](https://github.com/anthropics/claude-code),
+> [Codex CLI](https://github.com/openai/codex), y
+> [OpenCode](https://github.com/opencode-ai/opencode).
 
-[![Crates.io](https://img.shields.io/crates/v/regista)](https://crates.io/crates/regista)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ---
@@ -13,7 +16,7 @@
 
 `regista` toma un backlog de historias de usuario (archivos `.md`) y ejecuta
 el pipeline completo de desarrollo de forma **autónoma**, disparando agentes
-de `pi` según una máquina de estados formal:
+de codificación según una máquina de estados formal:
 
 ```
 Draft ──PO──→ Ready ──QA──→ Tests Ready ──Dev──→ In Review ──Reviewer──→ Business Review ──PO──→ Done
@@ -23,6 +26,7 @@ Draft ──PO──→ Ready ──QA──→ Tests Ready ──Dev──→ I
                               Con detección de deadlocks y desbloqueo automático
 ```
 
+- **Multi-provider**: elige entre `pi`, `claude`, `codex` u `opencode` — o mezcla por rol
 - **Deadlock detection**: si el grafo se estanca, prioriza la historia que más dependencias desbloquea
 - **Checkpoint/resume**: guarda progreso tras cada iteración. Si algo interrumpe → `--resume`
 - **Dry-run**: simula el pipeline completo sin gastar créditos de LLM
@@ -34,10 +38,11 @@ Regista **no sabe nada de tu proyecto**. No le importa si usas Rust, Python
 o lo que sea. Solo necesita tres cosas:
 
 1. **Dónde están tus historias** (archivos `.md`)
-2. **Qué skills de `pi`** actúan como PO, QA, Dev, Reviewer
+2. **Qué provider y qué instrucciones de rol** usar para PO, QA, Dev, Reviewer
 3. **La máquina de estados fija** que gobierna las transiciones
 
-Todo lo demás —código, tests, builds— lo manejan los agentes a través de las skills.
+Todo lo demás —código, tests, builds— lo manejan los agentes a través de sus
+instrucciones de rol (skills, agents, commands).
 
 ---
 
@@ -47,9 +52,9 @@ Todo lo demás —código, tests, builds— lo manejan los agentes a través de 
 # 1. Instalar
 cargo install regista
 
-# 2. Crear un proyecto nuevo
+# 2. Crear un proyecto nuevo (elige tu provider)
 cd mi-proyecto
-regista init --with-example
+regista init --provider claude --with-example    # o --provider pi, codex, opencode
 
 # 3. Simular antes de ejecutar
 regista --dry-run
@@ -78,7 +83,8 @@ El binario queda en `~/.cargo/bin/regista` (añadido al PATH automáticamente po
 
 ## Estructura del proyecto
 
-Todo lo que genera y gestiona `regista` vive bajo `.regista/` en la raíz:
+Todo lo que genera y gestiona `regista` vive bajo `.regista/` en la raíz.
+Las instrucciones de rol se guardan en el directorio del provider elegido:
 
 ```
 mi-proyecto/
@@ -93,12 +99,31 @@ mi-proyecto/
 │   ├── state.toml          ← checkpoint para --resume
 │   ├── daemon.pid          ← PID del proceso daemon
 │   └── daemon.log          ← log del daemon
-├── .pi/
-│   └── skills/             ← skills de pi (PO, QA, Dev, Reviewer)
-│       ├── product-owner/SKILL.md
-│       ├── qa-engineer/SKILL.md
-│       ├── developer/SKILL.md
-│       └── reviewer/SKILL.md
+│
+├── .pi/skills/             ← si usas provider=pi
+│   ├── product-owner/SKILL.md
+│   ├── qa-engineer/SKILL.md
+│   ├── developer/SKILL.md
+│   └── reviewer/SKILL.md
+│
+├── .claude/agents/         ← si usas provider=claude
+│   ├── product_owner.md
+│   ├── qa_engineer.md
+│   ├── developer.md
+│   └── reviewer.md
+│
+├── .agents/skills/         ← si usas provider=codex
+│   ├── product-owner/SKILL.md
+│   ├── qa-engineer/SKILL.md
+│   ├── developer/SKILL.md
+│   └── reviewer/SKILL.md
+│
+├── .opencode/commands/     ← si usas provider=opencode
+│   ├── product_owner.md
+│   ├── qa_engineer.md
+│   ├── developer.md
+│   └── reviewer.md
+│
 └── src/                    ← tu código
 ```
 
@@ -109,9 +134,12 @@ mi-proyecto/
 Genera la estructura inicial con:
 
 ```bash
-regista init                     # estructura completa (config + skills + carpetas)
-regista init --light             # solo .regista/config.toml
-regista init --with-example      # incluye historia y épica de ejemplo
+regista init --provider pi              # estructura completa (config + skills + carpetas)
+regista init --provider claude          # estructura para Claude Code
+regista init --provider codex           # estructura para Codex
+regista init --provider opencode        # estructura para OpenCode
+regista init --light                    # solo .regista/config.toml
+regista init --with-example             # incluye historia y épica de ejemplo
 ```
 
 ### `.regista/config.toml` de referencia
@@ -125,10 +153,15 @@ decisions_dir  = ".regista/decisions"    # decisiones de los agentes
 log_dir        = ".regista/logs"         # logs del orquestador
 
 [agents]
-product_owner = ".pi/skills/product-owner/SKILL.md"
-qa_engineer   = ".pi/skills/qa-engineer/SKILL.md"
-developer     = ".pi/skills/developer/SKILL.md"
-reviewer      = ".pi/skills/reviewer/SKILL.md"
+provider = "pi"                          # provider global (pi, claude, codex, opencode)
+
+# Opcional: sobreescribir provider y/o skill por rol
+[agents.product_owner]
+# provider = "claude"                    # este rol usa Claude Code
+# skill = ".claude/agents/po-custom.md"  # path explícito de instrucciones
+
+[agents.developer]
+# provider = "pi"                        # dev usa pi aunque el global sea otro
 
 [limits]
 max_iterations            = 0   # 0 = auto: nº historias × 6 (mín 10)
@@ -153,6 +186,22 @@ enabled = true   # snapshots + rollback automáticos
 
 Todos los campos son opcionales. Si no existe `.regista/config.toml`, se usan
 los defaults mostrados arriba.
+
+### Providers soportados
+
+| Provider | Binario | Directorio de instrucciones | Flag no-interactivo |
+|----------|---------|----------------------------|---------------------|
+| `pi` | `pi` | `.pi/skills/<rol>/SKILL.md` | `-p "..." --skill <path>` |
+| `claude` | `claude` | `.claude/agents/<rol>.md` | `-p "..." --append-system-prompt-file <path>` |
+| `codex` | `codex` | `.agents/skills/<rol>/SKILL.md` | `exec --sandbox workspace-write "..."` |
+| `opencode` | `opencode` | `.opencode/commands/<rol>.md` | `-p "..." -q` |
+
+Usa `--provider` en la CLI para sobreescribir el provider global del TOML:
+
+```bash
+regista --provider claude
+regista --provider codex --dry-run
+```
 
 ### `max_iterations = 0` — auto-escalado
 
@@ -233,6 +282,9 @@ regista groom product/spec.md --max-stories 8
 
 # Regenerar desde cero
 regista groom product/spec.md --replace
+
+# Con un provider específico
+regista groom product/spec.md --provider claude
 ```
 
 `groom` invoca al PO, escribe los `.md` y ejecuta un **bucle de validación**
@@ -249,7 +301,7 @@ regista validate
 regista validate --json
 ```
 
-Verifica: configuración, existencia de skills, parseo de historias,
+Verifica: configuración, existencia de instrucciones de rol, parseo de historias,
 Activity Log, referencias a dependencias, ciclos, y estado de git.
 
 ### Pipeline completo
@@ -257,6 +309,9 @@ Activity Log, referencias a dependencias, ciclos, y estado de git.
 ```bash
 # Procesar todo el backlog
 regista
+
+# Con un provider concreto
+regista --provider claude
 
 # Una sola iteración (procesa una historia y sale)
 regista --once
@@ -311,7 +366,7 @@ Ejemplo de salida JSON:
 
 ```json
 {
-  "regista_version": "0.2.0",
+  "regista_version": "0.3.0",
   "project_dir": ".",
   "result": "completed",
   "exit_code": 0,
@@ -445,6 +500,7 @@ regista groom <SPEC.md>              Generar historias desde spec
 regista help                         Mostrar esta ayuda
 
 Flags del pipeline:
+  --provider <NAME>      Provider a usar (pi, claude, codex, opencode)
   --config <FILE>        Archivo de configuración alternativo
   --story <ID>           Procesar solo una historia (STORY-001)
   --epic <ID>            Filtrar por épica (EPIC-001)
@@ -464,15 +520,18 @@ Flags del daemon:
   --kill                 Detener el daemon
 
 Flags de groom:
+  --provider <NAME>      Provider para el PO (default: el del config)
   --max-stories <N>      Máximo de historias (0 = sin límite)
   --replace              Regenerar desde cero
   --config <FILE>        Archivo de configuración alternativo
 
 Flags de init:
-  --light                Solo config, sin skills
+  --provider <NAME>      Provider para generar instrucciones (default: pi)
+  --light                Solo config, sin instrucciones de rol
   --with-example         Incluir historia y épica de ejemplo
 
 Flags de validate:
+  --provider <NAME>      Provider para validar skills (default: el del config)
   --json                 Salida JSON estructurada
   --config <FILE>        Archivo de configuración alternativo
 ```
@@ -484,17 +543,18 @@ Flags de validate:
 ```
 src/
 ├── main.rs                ← CLI (clap), subcomandos, JSON, exit codes
-├── config.rs              ← Config, carga TOML, defaults
+├── config.rs              ← Config, carga TOML, AgentsConfig + AgentRoleConfig
 ├── state.rs               ← Status, Actor, Transition (14 transiciones canónicas)
 ├── story.rs               ← Story, parseo .md, set_status() con backup atómico
 ├── dependency_graph.rs    ← Grafo de dependencias, DFS para ciclos
 ├── deadlock.rs            ← Detección de bloqueos + algoritmo de priorización
+├── providers.rs           ← trait AgentProvider + Pi/ClaudeCode/Codex/OpenCode
 ├── agent.rs               ← invoke_with_retry(), backoff exponencial, feedback
 ├── prompts.rs             ← 7 funciones de prompt (una por transición)
 ├── orchestrator.rs        ← Loop principal, dry-run, auto-escalado de iteraciones
 ├── checkpoint.rs          ← Save/load/remove de .regista/state.toml
 ├── validator.rs           ← Comando validate (pre-vuelo)
-├── init.rs                ← Comando init (scaffolding)
+├── init.rs                ← Comando init (scaffolding multi-provider)
 ├── groom.rs               ← Comando groom (backlog con bucle validate)
 ├── hooks.rs               ← Ejecución de hooks post-fase
 ├── git.rs                 ← Snapshots + rollback con git
@@ -506,7 +566,7 @@ src/
 ## Tests
 
 ```bash
-cargo test    # 104 tests, 0 fallos
+cargo test    # 128 tests, 0 fallos
 cargo clippy  # 0 warnings
 ```
 

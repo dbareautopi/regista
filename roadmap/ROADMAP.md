@@ -15,7 +15,8 @@ y notas de implementación.
 | 1 | **Paralelismo**: ejecutar múltiples historias independientes simultáneamente | [`01-paralelismo.md`](./01-paralelismo.md) | Alto |
 | 2 | **Salida JSON + CI/CD**: reportes estructurados, exit codes, integración con pipelines | [`02-salida-json-ci-cd.md`](./02-salida-json-ci-cd.md) | ✅ Implementado |
 | 3 | **Dry-run**: simular qué haría el orquestador sin ejecutar agentes | [`03-dry-run.md`](./03-dry-run.md) | ✅ Implementado |
-| 4 | **Workflow configurable**: estados y transiciones definibles en `.regista.toml` | [`04-workflow-configurable.md`](./04-workflow-configurable.md) | Medio |
+| 4 | **Workflow configurable**: estados y transiciones definibles en `.regista/config.toml` | [`04-workflow-configurable.md`](./04-workflow-configurable.md) | Medio |
+| 20 | **🆕 Multi-provider**: pi, Claude Code, Codex, OpenCode | [`20-multi-provider.md`](./20-multi-provider.md) | ✅ Implementado |
 
 ---
 
@@ -69,11 +70,101 @@ Las entradas marcadas como críticas son las que *impiden* que un equipo use
 
 ---
 
-## 🗓️ Orden sugerido de implementación
+## 🗓️ Orden de implementación (mayo 2026)
 
 ```
-Fase 1 (bajo esfuerzo, alto impacto) ─── dry-run + JSON/CI-CD + validate
-Fase 2 (calidad de vida) ─────────────── init + feedback agentes + prompts agnósticos
-Fase 3 (diferenciación) ──────────────── workflow configurable + checkpoint + cross-story
-Fase 4 (experiencia) ─────────────────── paralelismo + TUI + cost tracking
+Fase 1 (abstracción fundacional) ── 🆕 #20 multi-provider (Claude Code, Aider…)
+                                     ├── Trait AgentProvider (devuelve Vec<String>, agnóstico a sync/async)
+                                     ├── PiProvider, ClaudeCodeProvider, AiderProvider
+                                     └── Esfuerzo: medio (~215 líneas)
+
+Fase 2 (escalabilidad) ──────────── #01 paralelismo con tokio async
+                                     ├── Tokio runtime, oleadas independientes, Arc<Mutex<>>
+                                     ├── Se construye LIMPIAMENTE sobre el trait AgentProvider
+                                     └── Esfuerzo: alto (~430 líneas)
+
+Fase 3 (prerrequisito natural) ──── #09 prompts agnósticos al stack
+                                     ├── Templates de prompt con vars de stack
+                                     └── Esfuerzo: bajo (~80 líneas)
+
+Fase 4 (quick win) ──────────────── #14 groom --from-dir
+                                     ├── Iterar specs en directorio
+                                     └── Esfuerzo: bajo (~50 líneas)
+
+Fase 5 (calidad de agentes) ─────── #10 cross-story context
+                                     ├── Inyectar resúmenes de dependencias Done
+                                     └── Esfuerzo: medio (~120 líneas)
+
+Fase 6 (diferenciación) ─────────── #04 workflow configurable
+                                     ├── Status dinámico, transiciones desde TOML
+                                     └── Esfuerzo: medio-alto (~300 líneas)
+
+Fase 7 (experiencia) ────────────── #11 TUI, #12 cost tracking, #15 interactive
+                                     └── Nice to have, no bloquean adopción
 ```
+
+### 📊 Diagrama de dependencias entre features
+
+```
+┌──────────────────────┐
+│ 🆕 #20 Multi-provider│────── Fundación: define el trait AgentProvider
+└────────┬─────────────┘        (devuelve Vec<String>, agnóstico a sync/async)
+         │
+         │  #01 se construye sobre el trait.
+         │  Sin el trait, el código concurrente tendría "pi" hardcodeado.
+         ▼
+┌──────────────────────┐
+│  #01 Paralelismo     │────── Tokio async + oleadas independientes
+└────────┬─────────────┘        Arc<Mutex<>> para shared state
+         │
+         │  #09 necesita providers + async ya funcionando
+         │  para saber qué variables de stack usar
+         ▼
+┌──────────────────────────┐
+│ #09 Prompts agnósticos   │
+└────────┬─────────────────┘
+         │
+         ▼
+┌────────────────────┐      ┌──────────────────────────┐
+│ #14 groom --from-dir│      │ #10 Cross-story context   │
+└────────────────────┘      └────────┬─────────────────┘
+         │                           │
+         │  #04 necesita prompts     │  #04 necesita contexto
+         │  genéricos + cross-story  │  de dependencias
+         │  ya funcionando           │
+         └───────────┬───────────────┘
+                     ▼
+         ┌──────────────────────────┐
+         │ #04 Workflow configurable│
+         └──────────────────────────┘
+```
+
+> ⚠️ Las features #11 (TUI), #12 (cost tracking), y #15 (groom interactive) son
+> ortogonales al resto y se pueden implementar en cualquier orden.
+
+---
+
+## 📝 Notas sobre el orden
+
+1. **#20 Multi-provider primero** porque:
+   - Define la **interfaz fundacional** del sistema: el trait `AgentProvider`
+   - El trait devuelve `Vec<String>` (args), no `Command` → compatible con sync y async
+   - Es la feature con mayor impacto en adopción que NO estaba en el roadmap original
+   - Elimina la dependencia dura de `pi` (vendor lock-in)
+   - Una vez que `agent.rs` usa providers, añadir Claude Code, Aider o cualquier otro es trivial
+
+2. **#01 Paralelismo justo después** porque:
+   - Se construye LIMPIAMENTE sobre el trait `AgentProvider` (sin hardcodeos a `pi`)
+   - El trait ya está diseñado para ser async-compatible (devuelve args, no `Command`)
+   - Si se hiciera antes, el código concurrente tendría `Command::new("pi")` hardcodeado
+   - Usa `tokio` async (no threads crudos) para timeouts, cancelación y rate limiting
+   - Establece el modelo de shared state (`Arc<Mutex<>>`) que todo lo demás usará
+
+3. **#09 después** porque:
+   - Con providers + async ya funcionando, los templates de prompt pueden adaptarse a cada stack/provider
+
+4. **#14 y #10** son independientes entre sí, ambos se benefician de tener providers + paralelismo ya estables
+
+5. **#04 al final** porque:
+   - Es el cambio más disruptivo (Status de enum a string, prompts genéricos)
+   - Conviene tener providers, paralelismo, prompts agnósticos y cross-story context estables antes de meterle mano a la máquina de estados
