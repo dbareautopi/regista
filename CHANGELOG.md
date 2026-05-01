@@ -7,6 +7,13 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.3.2] — 2026-05-01
+
+### Fixed
+- **Links en README**: corregidos links al repo de `pi` (`badlogic/pi-mono`) y `opencode` (`anomalyco/opencode`)
+- **Integración con OpenCode**: la invocación usaba flags incorrectos (`-p`/`-q`). Ahora usa `run --agent <role> --dangerously-skip-permissions`, que es el API real de OpenCode
+- **OpenCode `instruction_dir`**: cambiado de `.opencode/commands/` a `.opencode/agents/`. OpenCode lee agentes desde `.opencode/agents/*.md` y usa el contenido del archivo como system prompt del agente
+
 ## [0.3.1] — 2026-05-01
 
 ### Fixed
@@ -48,6 +55,7 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 - Dry-run, salida JSON, feedback rico en reintentos
 - Hooks post-fase y snapshots git
 
+[0.3.2]: https://github.com/dbareautopi/regista/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/dbareautopi/regista/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/dbareautopi/regista/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/dbareautopi/regista/compare/v0.1.1...v0.2.0
