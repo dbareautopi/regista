@@ -1,9 +1,9 @@
 # 🧠 regista — Session Handoff
 
 > **Fecha**: 2026-05-01
-> **Sesión**: Migración a `.regista/`, comando `help`, auto-escalado de `max_iterations`, exit codes diferenciados, README refinado
-> **Versión**: v0.2.0
-> **Estado**: 104 tests pasando, 0 warnings, 0 clippy issues.
+> **Sesión**: Multi-provider (#20) — pi, Claude Code, Codex, OpenCode. Integración completa con config, orquestador, agent, init, validator y CLI
+> **Versión**: v0.3.0
+> **Estado**: 128 tests pasando, 0 fallos, 1 ignorado, 0 warnings.
 
 ---
 
@@ -19,35 +19,38 @@
 ├── HANDOFF.md                  ← Este documento
 ├── .gitignore
 ├── src/
-│   ├── main.rs                 ← CLI, 6 subcomandos (run/validate/init/groom/help + flags), JSON output
-│   ├── config.rs               ← Config, carga TOML, defaults, nuevos campos
+│   ├── main.rs                 ← CLI, 6 subcomandos (run/validate/init/groom/help + flags), JSON output, --provider
+│   ├── config.rs               ← Config, AgentsConfig + AgentRoleConfig, provider_for_role(), skill_for_role(), carga TOML
 │   ├── state.rs                ← Status (9), Actor (5), Transition, can_transition_to()
 │   ├── story.rs                ← Story, parseo .md, set_status(), advance_status_in_memory()
 │   ├── dependency_graph.rs     ← Grafo, ciclo DFS, has_any_cycle(), blocks_count()
 │   ├── deadlock.rs             ← analyze(), DeadlockResolution, priorización
-│   ├── agent.rs                ← invoke_with_retry(), AgentOptions, feedback rico, guardado decisiones
+│   ├── providers.rs            ← trait AgentProvider + PiProvider/ClaudeCodeProvider/CodexProvider/OpenCodeProvider + factory from_name()
+│   ├── agent.rs                ← invoke_with_retry(provider: &dyn AgentProvider, …), AgentOptions, feedback rico, guardado decisiones
 │   ├── prompts.rs              ← PromptContext, 7 funciones de prompt (po_groom, qa_tests, etc.)
-│   ├── orchestrator.rs         ← run(), run_real(), run_dry(), process_story(), checkpoint save
+│   ├── orchestrator.rs         ← run(), run_real(), run_dry(), process_story() con resolución de provider por rol
 │   ├── checkpoint.rs           ← OrchestratorState: save/load/remove (.regista/state.toml)
-│   ├── validator.rs            ← validate(): chequeo pre-vuelo de proyecto
-│   ├── init.rs                 ← init(): scaffolding de proyecto nuevo
+│   ├── validator.rs            ← validate(): chequeo pre-vuelo multi-provider (config, skills, historias, dependencias, git)
+│   ├── init.rs                 ← init(): scaffolding multi-provider (pi, claude, codex, opencode)
 │   ├── groom.rs                ← run(): generación de backlog desde spec con bucle validate
 │   ├── hooks.rs                ← run_hook(): comandos post-fase
 │   ├── git.rs                  ← snapshot(), rollback()
 │   └── daemon.rs               ← detach(), status(), kill(), follow()
 ├── roadmap/
-│   ├── ROADMAP.md              ← Índice general con estado de cada feature
-│   ├── 01-paralelismo.md
+│   ├── ROADMAP.md              ← Índice general con estado de cada feature y orden de implementación
+│   ├── 01-paralelismo.md       ← Diseño detallado (Fase 2, pendiente)
 │   ├── 02-salida-json-ci-cd.md        ← ✅ IMPLEMENTADO
 │   ├── 03-dry-run.md                  ← ✅ IMPLEMENTADO
-│   ├── 04-workflow-configurable.md
+│   ├── 04-workflow-configurable.md    ← Diseño detallado (Fase 6, pendiente)
 │   ├── 05-validate.md                 ← ✅ IMPLEMENTADO
 │   ├── 06-init-scaffold.md            ← ✅ IMPLEMENTADO
 │   ├── 07-checkpoint-resume.md        ← ✅ IMPLEMENTADO
 │   ├── 08-feedback-agentes.md         ← ✅ IMPLEMENTADO
 │   ├── 13-groom-generacion-historias.md ← ✅ IMPLEMENTADO
 │   ├── 14-groom-from-dir.md           ← Pendiente (variante)
-│   └── 15-groom-interactive.md        ← Pendiente (variante)
+│   ├── 15-groom-interactive.md        ← Pendiente (variante)
+│   ├── 20-multi-provider.md           ← ✅ IMPLEMENTADO
+│   └── 20-implementacion.md           ← Detalle técnico de la implementación
 └── tests/fixtures/
     ├── story_draft.md
     ├── story_blocked.md
@@ -68,16 +71,17 @@
 
 | Comando | Módulo | Función |
 |---------|--------|---------|
-| `regista [dir]` | `orchestrator.rs` | Pipeline completo |
-| `regista validate [dir]` | `validator.rs` | Chequeo pre-vuelo (config, historias, skills, dependencias, git) |
-| `regista init [dir]` | `init.rs` | Scaffolding: .regista/config.toml + 4 skills + estructura dirs |
+| `regista [dir]` | `orchestrator.rs` | Pipeline completo multi-provider |
+| `regista validate [dir]` | `validator.rs` | Chequeo pre-vuelo (config, instrucciones de rol, historias, dependencias, git) |
+| `regista init [dir]` | `init.rs` | Scaffolding multi-provider: .regista/config.toml + instrucciones de rol + estructura dirs |
 | `regista groom <spec>` | `groom.rs` | Generar backlog desde spec con bucle de validación |
 | `regista help` | `main.rs` | Mostrar todos los comandos y flags |
 
-### Flags nuevos
+### Flags
 
 | Flag | Feature |
 |------|---------|
+| `--provider <NAME>` | Seleccionar provider (pi, claude, codex, opencode) — aplica a pipeline y groom |
 | `--json` | Salida JSON estructurada a stdout (CI/CD) |
 | `--quiet` | Suprimir logs de progreso |
 | `--dry-run` | Simular pipeline en memoria sin agentes |
@@ -104,11 +108,18 @@
 - Valida: config parseable, stories_dir existe, skills existen, historias parseables, dependencias sin referencias rotas ni ciclos, git repo
 - `--json` para CI, exit codes: 0=OK, 1=errores, 2=warnings
 
-### Init (`06`)
-- Genera `.regista/config.toml` con todos los defaults documentados
-- 4 `SKILL.md` (PO, QA, Dev, Reviewer) con responsabilidades y formato Activity Log
+### Init (`06`) — multi-provider
+- Genera `.regista/config.toml` con el provider especificado
+- 4 instrucciones de rol en el directorio del provider:
+  - `pi` → `.pi/skills/<rol>/SKILL.md`
+  - `claude` → `.claude/agents/<rol>.md`
+  - `codex` → `.agents/skills/<rol>/SKILL.md`
+  - `opencode` → `.opencode/commands/<rol>.md`
 - `.regista/stories/`, `.regista/epics/`, `.regista/decisions/`, `.regista/logs/`
 - No pisa archivos existentes
+- `--provider` flag (default: pi)
+- `--light`: solo config, sin instrucciones de rol
+- `--with-example`: incluye historia y épica de ejemplo
 - `max_iterations = 0` por defecto (auto-escalado)
 
 ### Groom (`13`)
@@ -130,7 +141,7 @@
 - `AgentResult` incluye `attempts: Vec<AttemptTrace>`
 - Configurable: `inject_feedback_on_retry` (default true)
 
-### v0.2.0 — Migración a `.regista/` y calidad de vida
+### v0.2.0 — Migración a `.regista/`, calidad de vida y multi-provider
 - **Comando `help`**: `regista help` lista todos los comandos y flags
 - **Migración a `.regista/`**: todos los paths viven bajo `.regista/`:
   `config.toml`, `stories/`, `epics/`, `decisions/`, `logs/`,
@@ -141,6 +152,22 @@
 - **README refinado**: quick start, badges, ejemplos JSON, estructura de proyecto
 - Sin retrocompatibilidad con rutas antiguas
 
+#### Multi-provider (#20)
+- **Nuevo módulo `providers.rs`**: trait `AgentProvider` + 4 implementaciones
+- **PiProvider**: `pi -p "..." --skill <path> --no-session`
+- **ClaudeCodeProvider**: `claude -p "..." --append-system-prompt-file <path> --permission-mode bypassPermissions`
+- **CodexProvider**: `codex exec --sandbox workspace-write "..."` (auto-descubre `.agents/skills/`)
+- **OpenCodeProvider**: `opencode -p "..." -q`
+- **Config**: `AgentsConfig.provider` global + `AgentRoleConfig` por rol (provider + skill)
+- **Resolución**: `provider_for_role()` y `skill_for_role()` en `AgentsConfig`
+- **Factory**: `providers::from_name("claude")` con alias (claude-code, open-code, etc.)
+- **Agent**: `invoke_with_retry` recibe `&dyn AgentProvider` en vez de hardcodear `pi`
+- **Orquestador**: `process_story` resuelve provider e instrucciones por rol vía config
+- **Init**: genera instrucciones en directorio del provider (`--provider`)
+- **Validator**: chequea instrucciones de rol multi-provider
+- **CLI**: flag `--provider` para sobreescribir provider global
+- **Breaking changes: NINGUNO** — si no se especifica provider, default `"pi"`
+
 ---
 
 ## 🔨 Comandos esenciales
@@ -148,7 +175,7 @@
 ```bash
 cargo build              # Debug
 cargo build --release    # Release
-cargo test               # 104 tests, 0 fallos, 1 ignorado
+cargo test               # 128 tests, 0 fallos, 1 ignorado
 cargo check              # Verificar warnings
 cargo fmt                # Formatear
 cargo clippy -- -D warnings  # 0 issues
@@ -186,48 +213,55 @@ EPIC-XXX
 ## 🚧 Pendiente (roadmap)
 
 ### Alta/media prioridad
-- **01 - Paralelismo**: ejecutar historias independientes simultáneamente
-- **04 - Workflow configurable**: transiciones definibles en `.regista.toml`
+- **01 - Paralelismo**: ejecutar historias independientes simultáneamente (Fase 2)
+- **09 - Prompts agnósticos al stack**: desacoplar referencias a cargo/npm (Fase 3)
+- **04 - Workflow configurable**: transiciones definibles en `.regista/config.toml` (Fase 6)
+
+### Media prioridad
+- **10 - Cross-story context**: agentes reciben contexto de historias relacionadas (Fase 5)
+- **11 - TUI / dashboard**: visualización en vivo del progreso (Fase 7)
+- **12 - Cost tracking**: límite de gasto en llamadas LLM (Fase 7)
 
 ### Variantes de groom
-- **14 - `groom --from-dir`**: múltiples documentos fuente
-- **15 - `groom --interactive`**: PO entrevista al usuario
-
-### No implementados (sin doc aún)
-- **09 - Prompts agnósticos al stack**: desacoplar referencias a cargo/npm
-- **10 - Cross-story context**: agentes reciben contexto de historias relacionadas
-- **11 - TUI / dashboard**: visualización en vivo del progreso
-- **12 - Cost tracking**: límite de gasto en llamadas LLM
+- **14 - `groom --from-dir`**: múltiples documentos fuente (Fase 4)
+- **15 - `groom --interactive`**: PO entrevista al usuario (Fase 7)
 
 ---
 
 ## 🔑 Decisiones de diseño
 
 1. **Agnóstico al proyecto**: regista no sabe de Rust, cargo, ni nada.
-   Solo invoca `pi --skill <path>` con prompts genéricos.
+   Solo invoca el provider configurado con prompts genéricos.
 
 2. **Workflow fijo**: las 14 transiciones son canónicas e inmutables.
 
-3. **Shell `true` en hooks**: `hooks.rs` ejecuta con `sh -c`.
+3. **Trait `AgentProvider` devuelve `Vec<String>`**: no `Command`, para ser
+   compatible con ejecución síncrona y asíncrona (paralelismo #01).
 
-4. **Backoff exponencial**: `agent.rs` duplica el delay entre reintentos.
+4. **Shell `true` en hooks**: `hooks.rs` ejecuta con `sh -c`.
 
-5. **`set_status()` con backup atómico**: escribe → re-parsea → si falla, restaura `.bak`.
+5. **Backoff exponencial**: `agent.rs` duplica el delay entre reintentos.
 
-6. **Subcomandos vía args manual**: en vez de refactorizar todo clap, se detectan
+6. **`set_status()` con backup atómico**: escribe → re-parsea → si falla, restaura `.bak`.
+
+7. **Subcomandos vía args manual**: en vez de refactorizar todo clap, se detectan
    `validate`, `init`, `groom` al inicio de `main()` inspeccionando `std::env::args()`.
 
-7. **Dry-run en memoria**: `advance_status_in_memory()` muta `Story.status` y
+8. **Dry-run en memoria**: `advance_status_in_memory()` muta `Story.status` y
    `raw_content` sin tocar el filesystem.
 
-8. **Groom con bucle validate**: el PO recibe feedback concreto de errores de
+9. **Groom con bucle validate**: el PO recibe feedback concreto de errores de
    dependencias y corrige hasta que el grafo está limpio.
 
-9. **Checkpoint TOML**: mismo formato que el resto del proyecto, legible y
-   editable manualmente si es necesario.
+10. **Checkpoint TOML**: mismo formato que el resto del proyecto, legible y
+    editable manualmente si es necesario.
 
-10. **Feedback truncado a 2000 bytes**: para no desbordar la ventana de contexto
+11. **Feedback truncado a 2000 bytes**: para no desbordar la ventana de contexto
     del LLM en reintentos.
 
-11. **`max_iterations = 0` por defecto**: el orquestador escala automáticamente
+12. **`max_iterations = 0` por defecto**: el orquestador escala automáticamente
     el límite según `nº de historias × 6`, con un mínimo de 10.
+
+13. **Provider por defecto `"pi"`**: retrocompatibilidad total. Si no se
+    especifica provider en config ni CLI, se usa pi. Projects existentes
+    siguen funcionando sin cambios.

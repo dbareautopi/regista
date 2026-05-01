@@ -1,17 +1,59 @@
 # 🏗️ regista — Diseño
 
-🎬 AI agent director para `pi`. Independiente del proyecto: no sabe nada
+🎬 AI agent director multi-provider. Independiente del proyecto: no sabe nada
 de Rust, ni de qué construyen los agentes. Solo sabe tres cosas:
 
 1. **Dónde están las historias** y cómo leer su estado
-2. **Qué skills de `pi` invocar** para cada rol del workflow
+2. **Qué provider y qué instrucciones de rol** usar para cada rol del workflow
 3. **La máquina de estados fija** que gobierna las transiciones
 
 El proyecto anfitrión se configura mediante un archivo `.regista/config.toml` en su raíz.
+El provider se puede elegir vía config (`agents.provider`) o flag CLI (`--provider`).
 
 ---
 
-## 1. Configuración (`.regista/config.toml`)
+## 1. Sistema de providers
+
+### 1.1 Trait `AgentProvider`
+
+```rust
+pub trait AgentProvider {
+    fn binary(&self) -> &str;                                      // "pi", "claude", "codex", "opencode"
+    fn build_args(&self, instruction_path: &Path, prompt: &str) -> Vec<String>;
+    fn display_name(&self) -> &str;                                // "pi", "Claude Code", "Codex", "OpenCode"
+    fn instruction_name(&self) -> &str;                            // "skill", "agent", "command"
+    fn instruction_dir(&self, role: &str) -> String;               // ".pi/skills/po/SKILL.md"
+}
+```
+
+El trait devuelve `Vec<String>` (args de CLI), no un `Command`, para ser
+compatible con ejecución síncrona y asíncrona (paralelismo #01).
+
+### 1.2 Providers implementados
+
+| Provider | Binario | Argumentos no-interactivo | Directorio de instrucciones |
+|----------|---------|--------------------------|----------------------------|
+| `PiProvider` | `pi` | `-p "..." --skill <path> --no-session` | `.pi/skills/<rol>/SKILL.md` |
+| `ClaudeCodeProvider` | `claude` | `-p "..." --append-system-prompt-file <path> --permission-mode bypassPermissions` | `.claude/agents/<rol>.md` |
+| `CodexProvider` | `codex` | `exec --sandbox workspace-write "..."` | `.agents/skills/<rol>/SKILL.md` |
+| `OpenCodeProvider` | `opencode` | `-p "..." -q` | `.opencode/commands/<rol>.md` |
+
+### 1.3 Resolución de provider
+
+`AgentsConfig` tiene un `provider` global (default `"pi"`) y cada rol puede
+sobreescribirlo vía `AgentRoleConfig`. La CLI puede sobreescribir el global
+con `--provider`.
+
+```rust
+impl AgentsConfig {
+    pub fn provider_for_role(&self, role: &str) -> String { ... }
+    pub fn skill_for_role(&self, role: &str) -> String { ... }
+}
+```
+
+---
+
+## 2. Configuración (`.regista/config.toml`)
 
 ```toml
 [project]
@@ -22,10 +64,11 @@ decisions_dir  = ".regista/decisions"
 log_dir        = ".regista/logs"
 
 [agents]
-product_owner = ".pi/skills/product-owner/SKILL.md"
-qa_engineer   = ".pi/skills/qa-engineer/SKILL.md"
-developer     = ".pi/skills/developer/SKILL.md"
-reviewer      = ".pi/skills/reviewer/SKILL.md"
+provider = "pi"                        # provider global (pi, claude, codex, opencode)
+
+[agents.product_owner]                 # opcional: sobreescribir por rol
+# provider = "claude"
+# skill = ".claude/agents/po-custom.md"
 
 [limits]
 max_iterations            = 0   # 0 = auto: nº historias × 6 (mín 10)
@@ -48,9 +91,9 @@ enabled = true
 
 ---
 
-## 2. Máquina de Estados
+## 3. Máquina de Estados
 
-### 2.1 Diagrama
+### 3.1 Diagrama
 
 ```
                     ┌──────────┐
@@ -95,7 +138,7 @@ enabled = true
                   └──────────────────────────────────────────┘
 ```
 
-### 2.2 Tabla canónica de transiciones
+### 3.2 Tabla canónica de transiciones
 
 | # | De | A | Actor | Condición |
 |---|---|---|---|---|
@@ -117,7 +160,7 @@ enabled = true
 > Las transiciones 12, 13, 14 son **automáticas**: las ejecuta el propio orquestador
 > sin invocar agentes.
 
-### 2.3 Tipo en Rust
+### 3.3 Tipo en Rust
 
 ```rust
 pub enum Status {
@@ -132,12 +175,12 @@ pub enum Actor {
 
 ---
 
-## 3. Detección de bloqueos (deadlock)
+## 4. Detección de bloqueos (deadlock)
 
 Si no hay historias accionables, el orquestador analiza el grafo de dependencias
 y dispara al PO para desatascar la historia que más bloqueos resuelve.
 
-### 3.1 Algoritmo
+### 4.1 Algoritmo
 
 ```
 Para cada historia no terminal:
@@ -152,14 +195,14 @@ Si ninguna accionable Y hay stuck → disparar PO para la de mayor prioridad.
 Si ninguna accionable Y sin stuck  → Pipeline Complete.
 ```
 
-### 3.2 Prioridad de desbloqueo
+### 4.2 Prioridad de desbloqueo
 
 La historia que **desbloquea más historias** (conteo de referencias inversas).
 En empate, ID numérico más bajo.
 
 ---
 
-## 4. Arquitectura del crate
+## 5. Arquitectura del crate
 
 ```
 regista/
@@ -169,17 +212,18 @@ regista/
 ├── AGENTS.md                  ← guía para agentes de codificación
 ├── src/
 │   ├── main.rs                ← CLI (clap), subcomandos, JSON output, exit codes
-│   ├── config.rs              ← Config, carga TOML, defaults, validate()
+│   ├── config.rs              ← Config, AgentsConfig + AgentRoleConfig, carga TOML
 │   ├── state.rs               ← Status, Actor, Transition, can_transition_to()
 │   ├── story.rs               ← Story, parseo .md, set_status(), advance_status_in_memory()
 │   ├── dependency_graph.rs    ← Grafo, ciclo DFS, has_any_cycle(), blocks_count()
 │   ├── deadlock.rs            ← analyze(), DeadlockResolution, priorización
+│   ├── providers.rs           ← trait AgentProvider + 4 implementaciones + factory
 │   ├── agent.rs               ← invoke_with_retry(), AgentOptions, feedback rico
 │   ├── prompts.rs             ← PromptContext, 7 funciones de prompt
 │   ├── orchestrator.rs        ← run(), run_real(), run_dry(), process_story()
 │   ├── checkpoint.rs          ← OrchestratorState: save/load/remove (.regista/state.toml)
 │   ├── validator.rs           ← validate(): chequeo pre-vuelo de proyecto
-│   ├── init.rs                ← init(): scaffolding de proyecto nuevo
+│   ├── init.rs                ← init(): scaffolding multi-provider
 │   ├── groom.rs               ← run(): generación de backlog desde spec
 │   ├── hooks.rs               ← run_hook(): comandos post-fase
 │   ├── git.rs                 ← snapshot(), rollback()
@@ -190,7 +234,7 @@ regista/
 
 ---
 
-## 5. Formato de historia esperado (contrato fijo)
+## 6. Formato de historia esperado (contrato fijo)
 
 ```markdown
 # STORY-NNN: Título
@@ -217,7 +261,7 @@ EPIC-XXX
 
 ---
 
-## 6. CLI
+## 7. CLI
 
 ### Comandos
 
@@ -233,6 +277,7 @@ EPIC-XXX
 
 | Flag | Descripción |
 |------|-------------|
+| `--provider <NAME>` | Provider a usar (pi, claude, codex, opencode) |
 | `--once` | Una sola iteración |
 | `--json` | Salida JSON a stdout |
 | `--quiet` | Suprimir logs de progreso |
@@ -259,7 +304,7 @@ EPIC-XXX
 
 ---
 
-## 7. Checkpoint / Resume
+## 8. Checkpoint / Resume
 
 Tras cada `process_story()` exitoso, el orquestador guarda su estado en
 `<project_dir>/.regista/state.toml`:
@@ -283,7 +328,7 @@ la iteración guardada. El checkpoint se limpia automáticamente al llegar a
 
 ---
 
-## 8. Feedback rico de agentes
+## 9. Feedback rico de agentes
 
 Cuando `inject_feedback_on_retry = true` (default):
 
@@ -301,7 +346,7 @@ Cuando `inject_feedback_on_retry = true` (default):
 
 ---
 
-## 9. Dry-run
+## 10. Dry-run
 
 `--dry-run` simula el pipeline en memoria sin invocar agentes ni modificar
 archivos. Usa `Story::advance_status_in_memory()` para mutar estados sin
@@ -310,7 +355,7 @@ desbloquearían, y estima el tiempo total. Compatible con `--json`.
 
 ---
 
-## 10. Groom — Generación automática de backlog
+## 11. Groom — Generación automática de backlog
 
 `regista groom <spec.md>` invoca al PO para descomponer una spec en historias
 y épicas. Tras generar, ejecuta un **bucle de validación**:
@@ -325,7 +370,7 @@ Máximo de iteraciones configurable: `groom_max_iterations` (default 5).
 
 ---
 
-## 11. Plan de implementación (histórico)
+## 12. Plan de implementación (histórico)
 
 | Fase | Qué | Resultado |
 |------|-----|-----------|
@@ -334,3 +379,4 @@ Máximo de iteraciones configurable: `groom_max_iterations` (default 5).
 | F14 | `regista validate`, `regista init` | Subcomandos ✅ |
 | F15 | `regista groom` | Generación de backlog ✅ |
 | F16 | Checkpoint/resume + feedback rico | `--resume`, feedback en retry ✅ |
+| F17 | **Multi-provider (#20)** | pi, Claude Code, Codex, OpenCode ✅ |

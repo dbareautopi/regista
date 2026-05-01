@@ -15,8 +15,8 @@ y notas de implementación.
 | 1 | **Paralelismo**: ejecutar múltiples historias independientes simultáneamente | [`01-paralelismo.md`](./01-paralelismo.md) | Alto |
 | 2 | **Salida JSON + CI/CD**: reportes estructurados, exit codes, integración con pipelines | [`02-salida-json-ci-cd.md`](./02-salida-json-ci-cd.md) | ✅ Implementado |
 | 3 | **Dry-run**: simular qué haría el orquestador sin ejecutar agentes | [`03-dry-run.md`](./03-dry-run.md) | ✅ Implementado |
-| 4 | **Workflow configurable**: estados y transiciones definibles en `.regista.toml` | [`04-workflow-configurable.md`](./04-workflow-configurable.md) | Medio |
-| 20 | **🆕 Multi-provider**: Claude Code, Aider, etc. No depender solo de `pi` | [`20-multi-provider.md`](./20-multi-provider.md) | Medio |
+| 4 | **Workflow configurable**: estados y transiciones definibles en `.regista/config.toml` | [`04-workflow-configurable.md`](./04-workflow-configurable.md) | Medio |
+| 20 | **🆕 Multi-provider**: pi, Claude Code, Codex, OpenCode | [`20-multi-provider.md`](./20-multi-provider.md) | ✅ Implementado |
 
 ---
 

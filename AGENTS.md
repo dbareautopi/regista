@@ -15,8 +15,8 @@ checkpoint/resume, y salida JSON para CI/CD.
 **Filosofía clave**: regista **no sabe nada del proyecto** que orquesta.  
 No importa si el proyecto usa Rust, Python, o cualquier cosa. Solo necesita:
 1. Dónde están las historias de usuario (archivos `.md`)
-2. Qué skills de `pi` usar para cada rol
-3. La máquina de estados fija
+2. Qué provider y qué instrucciones de rol usar para cada rol
+3. La máquina de estados fija que gobierna las transiciones
 
 ---
 
@@ -44,29 +44,30 @@ No importa si el proyecto usa Rust, Python, o cualquier cosa. Solo necesita:
 regista/
 ├── AGENTS.md                  ← este archivo
 ├── README.md                  ← descripción general para usuarios
-├── DESIGN.md                  ← diseño completo (máquina de estados, arquitectura)
+├── DESIGN.md                  ← diseño completo (máquina de estados, arquitectura, multi-provider)
 ├── HANDOFF.md                 ← handoff de la última sesión (lo implementado y pendiente)
 ├── Cargo.toml                 ← dependencias y metadata del crate
 ├── .gitignore
 ├── src/
-│   ├── main.rs                ← CLI (clap), subcomandos, JSON output, exit codes
-│   ├── config.rs              ← Config, ProjectConfig, AgentsConfig, LimitsConfig, carga TOML
+│   ├── main.rs                ← CLI (clap), subcomandos, JSON output, exit codes, --provider
+│   ├── config.rs              ← Config, ProjectConfig, AgentsConfig + AgentRoleConfig, carga TOML
 │   ├── state.rs               ← Status, Actor, Transition, can_transition_to(), ALL
 │   ├── story.rs               ← Story, parseo de .md, set_status(), advance_status_in_memory()
 │   ├── dependency_graph.rs    ← DependencyGraph, DFS para ciclos, blocks_count()
 │   ├── deadlock.rs            ← analyze(), DeadlockResolution, priorización
-│   ├── agent.rs               ← invoke_with_retry(), AgentOptions, feedback rico
+│   ├── providers.rs           ← trait AgentProvider + Pi/ClaudeCode/Codex/OpenCode + factory
+│   ├── agent.rs               ← invoke_with_retry(provider: &dyn AgentProvider, …), AgentOptions, feedback rico
 │   ├── prompts.rs             ← PromptContext, 7 funciones de prompt
-│   ├── orchestrator.rs        ← run(), run_real(), run_dry(), process_story(), checkpoint save
-│   ├── checkpoint.rs          ← OrchestratorState: save/load/remove (.regista.state.toml)
-│   ├── validator.rs           ← validate(): chequeo pre-vuelo de proyecto
-│   ├── init.rs                ← init(): scaffolding de proyecto nuevo
+│   ├── orchestrator.rs        ← run(), run_real(), run_dry(), process_story() con resolución de provider por rol
+│   ├── checkpoint.rs          ← OrchestratorState: save/load/remove (.regista/state.toml)
+│   ├── validator.rs           ← validate(): chequeo pre-vuelo multi-provider
+│   ├── init.rs                ← init(): scaffolding multi-provider (pi, claude, codex, opencode)
 │   ├── groom.rs               ← run(): generación de backlog desde spec con bucle validate
 │   ├── hooks.rs               ← run_hook(), ejecución de comandos shell post-fase
 │   ├── git.rs                 ← snapshot(), rollback(), init_git()
 │   └── daemon.rs              ← detach(), status(), kill(), follow(), DaemonState
 ├── roadmap/                   ← Documentos de diseño de features futuras
-│   ├── ROADMAP.md             ← Índice con estado de cada feature
+│   ├── ROADMAP.md             ← Índice con estado de cada feature y orden de implementación
 │   ├── 01-paralelismo.md
 │   ├── 02-salida-json-ci-cd.md        ← ✅ IMPLEMENTADO
 │   ├── 03-dry-run.md                  ← ✅ IMPLEMENTADO
@@ -77,7 +78,9 @@ regista/
 │   ├── 08-feedback-agentes.md         ← ✅ IMPLEMENTADO
 │   ├── 13-groom-generacion-historias.md ← ✅ IMPLEMENTADO
 │   ├── 14-groom-from-dir.md
-│   └── 15-groom-interactive.md
+│   ├── 15-groom-interactive.md
+│   ├── 20-multi-provider.md           ← ✅ IMPLEMENTADO
+│   └── 20-implementacion.md           ← Detalle técnico de la implementación
 └── tests/
     └── fixtures/
         ├── story_draft.md
@@ -103,6 +106,7 @@ cargo test
 cargo test --lib state
 cargo test --lib checkpoint
 cargo test --lib groom
+cargo test --lib providers
 
 # Ejecutar test ignorado (requiere pi instalado)
 cargo test -- --ignored
@@ -207,11 +211,17 @@ EPIC-XXX
 - Configura tracing (stderr, env-filter, respeta `--quiet`)
 - Salida JSON a stdout con `--json`; exit codes 0/2/3
 - Manejo de `--resume` y `--clean-state`
+- Flag `--provider` para sobreescribir provider global desde CLI
 
 ### `config.rs` — Configuración
 - `Config` con `#[serde(default)]`: todos los campos tienen defaults razonables
-- Carga desde `.regista.toml`; si no existe, usa defaults
-- Nuevos campos: `groom_max_iterations` (default 5), `inject_feedback_on_retry` (default true)
+- Carga desde `.regista/config.toml`; si no existe, usa defaults
+- `AgentsConfig`: `provider` global + `AgentRoleConfig` por rol (product_owner, qa_engineer, developer, reviewer)
+- `AgentRoleConfig`: `provider` opcional (hereda del global) y `skill` opcional (usa convención del provider)
+- `provider_for_role(role)`: resuelve el nombre del provider para un rol
+- `skill_for_role(role)`: resuelve la ruta al archivo de instrucciones
+- `all_roles()`: iterador de los 4 roles canónicos
+- `LimitsConfig`: incluye `groom_max_iterations` (default 5), `inject_feedback_on_retry` (default true)
 - `validate()`: verifica que `stories_dir` existe, crea `decisions_dir` y `log_dir`
 
 ### `state.rs` — Máquina de estados
@@ -239,8 +249,20 @@ EPIC-XXX
 - Prioriza por: mayor `unblocks`, luego menor ID numérico
 - Tests: 7 tests
 
+### `providers.rs` — Sistema de providers
+- `AgentProvider` trait: `binary()`, `build_args()`, `display_name()`, `instruction_name()`, `instruction_dir()`
+- El trait devuelve `Vec<String>` (args de CLI), no `Command` — compatible con sync y async (paralelismo #01)
+- **PiProvider**: `pi -p "..." --skill <path> --no-session`
+- **ClaudeCodeProvider**: `claude -p "..." --append-system-prompt-file <path> --permission-mode bypassPermissions`
+- **CodexProvider**: `codex exec --sandbox workspace-write "..."` (auto-descubre `.agents/skills/`)
+- **OpenCodeProvider**: `opencode -p "..." -q`
+- Factory `from_name(name)`: resuelve alias (claude-code, open-code, etc.), case-insensitive
+- `supported_providers()`: lista `["pi", "claude", "codex", "opencode"]`
+- Tests: 17 tests (factory, alias, case insensitivity, args verification para cada provider)
+
 ### `agent.rs` — Invocación de agentes con feedback
-- `invoke_with_retry()`: loop con backoff exponencial, acepta `AgentOptions`
+- `invoke_with_retry(provider: &dyn AgentProvider, …)`: loop con backoff exponencial, acepta `AgentOptions`
+- Recibe el provider como trait object — sin hardcodear `pi`
 - `AgentOptions`: `story_id`, `decisions_dir`, `inject_feedback`
 - Feedback rico: guarda stdout/stderr en `decisions/`, inyecta errores en reintentos
 - `AgentResult` incluye `attempt` y `attempts: Vec<AttemptTrace>`
@@ -261,34 +283,43 @@ EPIC-XXX
 - `run_dry()`: simulación en memoria sin agentes ni escritura a disco
   - Usa `advance_status_in_memory()` para mutar estados
   - Muestra desbloqueos y estima tiempo
-- `process_story()`: determina skill + prompt, invoca agente con AgentOptions
+- `process_story()`: determina rol → resuelve provider + instrucciones vía `AgentsConfig` → invoca agente con AgentOptions
+- `map_status_to_role()`: mapea Status → rol canónico ("product_owner", "qa_engineer", "developer", "reviewer")
 - `filter_stories()`: aplica filtros `--story`, `--epic`, `--epics`
 - Tests: 18 tests
 
 ### `checkpoint.rs` — Persistencia del estado
 - `OrchestratorState`: `iteration`, `reject_cycles`, `story_iterations`, `story_errors`
-- `save()` / `load()` / `remove()` sobre `.regista.state.toml`
+- `save()` / `load()` / `remove()` sobre `.regista/state.toml`
 - `load()` maneja archivos corruptos (los borra)
 - Tests: 5 tests
 
 ### `validator.rs` — Comando `validate`
-- Valida: config, skills, historias (parseo, Activity Log), dependencias (refs rotas, ciclos), git
+- Valida: config, instrucciones de rol (multi-provider), historias (parseo, Activity Log), dependencias (refs rotas, ciclos), git
+- Reconoce `AgentsConfig` con per-role providers — valida cada path de instrucción según el provider del rol
 - `ValidationResult` con `Vec<Finding>` (severity: Error/Warning, category, message)
 - `--json` para CI, exit codes: 0=OK, 1=errores, 2=warnings
 - Tests: 3 tests
 
 ### `init.rs` — Comando `init`
-- Genera `.regista.toml`, 4 `SKILL.md`, estructura `product/...`
-- `--light`: solo config, sin skills
+- Genera `.regista/config.toml` con el provider especificado y estructura de directorios
+- `init(project_dir, light, with_example, provider_name)` — provider_name determina dónde guardar instrucciones
+- Directorios por provider:
+  - `pi` → `.pi/skills/<rol>/SKILL.md`
+  - `claude` → `.claude/agents/<rol>.md`
+  - `codex` → `.agents/skills/<rol>/SKILL.md`
+  - `opencode` → `.opencode/commands/<rol>.md`
+- `--light`: solo config, sin instrucciones de rol
 - `--with-example`: incluye historia y épica de ejemplo
+- `--provider <NAME>`: elegir provider (default: pi)
 - No pisa archivos existentes
-- Tests: 5 tests
+- Tests: 7 tests
 
 ### `groom.rs` — Comando `groom`
 - `run()`: invoca al PO para generar historias desde spec
 - **Bucle de validación**: groom → validate dependencias → si errores → feedback al PO → repetir
 - Máx iteraciones: `groom_max_iterations` (default 5)
-- `--max-stories` (0 = sin límite), `--merge`/`--replace`
+- `--max-stories` (0 = sin límite), `--merge`/`--replace`, `--provider`
 - Prompts: `groom_prompt_initial()`, `groom_prompt_fix()` con `GroomCtx`
 - Tests: 6 tests
 
@@ -303,7 +334,7 @@ EPIC-XXX
 ### `daemon.rs` — Modo daemon
 - `detach()`: spawnea proceso hijo con `--daemon` interno
 - `status()`, `kill()`, `follow()`: gestión del proceso
-- Estado guardado en `.regista.pid` (TOML)
+- Estado guardado en `.regista/daemon.pid` (TOML)
 - Tests: 6 tests
 
 ---
@@ -311,32 +342,45 @@ EPIC-XXX
 ## 💡 Decisiones de diseño importantes
 
 1. **Agnóstico al proyecto anfitrión**: regista no sabe de Rust, cargo, ni nada.  
-   Solo invoca `pi --skill <path>` con prompts genéricos.
+   Solo invoca el provider configurado con prompts genéricos.
 
 2. **Workflow fijo e inmutable**: las 14 transiciones son canónicas.  
    No se añaden transiciones en runtime **por diseño**.
 
-3. **Subcomandos vía args manual**: `validate`, `init`, `groom` se detectan antes de clap  
+3. **Trait `AgentProvider` devuelve `Vec<String>`**: no `Command`, para ser  
+   compatible con ejecución síncrona y asíncrona (paralelismo #01).  
+   El invocador decide si usar `std::process::Command` o `tokio::process::Command`.
+
+4. **Subcomandos vía args manual**: `validate`, `init`, `groom` se detectan antes de clap  
    inspeccionando `std::env::args()`. Evita refactorizar toda la CLI con clap subcommands.
 
-4. **Dry-run en memoria**: `advance_status_in_memory()` muta `Story` sin tocar el filesystem.  
+5. **Dry-run en memoria**: `advance_status_in_memory()` muta `Story` sin tocar el filesystem.  
    Permite simular pipelines completos sin gastar créditos de LLM.
 
-5. **Checkpoint TOML**: el estado del orquestador se guarda en `.regista.state.toml`.  
+6. **Checkpoint TOML**: el estado del orquestador se guarda en `.regista/state.toml`.  
    Si el pipeline se interrumpe, `--resume` lo reanuda. Se limpia en `PipelineComplete`.
 
-6. **Feedback rico en reintentos**: cuando un agente falla, su stderr se guarda en  
+7. **Feedback rico en reintentos**: cuando un agente falla, su stderr se guarda en  
    `decisions/` y se inyecta en el prompt del reintento. Truncado a 2000 bytes.
 
-7. **Groom con bucle validate**: generar historias no basta — hay que validar que las  
+8. **Groom con bucle validate**: generar historias no basta — hay que validar que las  
    dependencias son correctas. El PO recibe feedback concreto y corrige en bucle.
 
-8. **Salida JSON dual**: `--json` emite JSON a stdout, logs a stderr.  
+9. **Salida JSON dual**: `--json` emite JSON a stdout, logs a stderr.  
    `--quiet` suprime logs. Compatible con `regista --json > report.json`.
 
-9. **Backoff exponencial**: `agent.rs` duplica el delay entre reintentos (`delay *= 2`).
+10. **Backoff exponencial**: `agent.rs` duplica el delay entre reintentos (`delay *= 2`).
 
-10. **`set_status()` con backup atómico**: escribe → re-parsea → si falla, restaura `.bak`.
+11. **`set_status()` con backup atómico**: escribe → re-parsea → si falla, restaura `.bak`.
+
+12. **Provider por defecto `"pi"`**: retrocompatibilidad total. Si no se especifica  
+    provider en config ni CLI, se usa pi. Projects existentes siguen funcionando sin cambios.
+
+13. **Provider por rol**: cada rol (PO, QA, Dev, Reviewer) puede usar un provider distinto.  
+    Ejemplo: PO con Claude Code, Dev con pi. Configurable en `.regista/config.toml`.
+
+14. **Codex auto-descubre skills**: `CodexProvider` ignora el path de instrucciones —  
+    Codex lee automáticamente `.agents/skills/` y `AGENTS.md` del proyecto.
 
 ---
 
@@ -344,16 +388,16 @@ EPIC-XXX
 
 ### Features no implementadas
 
-| # | Feature | Esfuerzo |
-|---|---------|----------|
-| 01 | Paralelismo | Alto |
-| 04 | Workflow configurable | Medio |
-| 09 | Prompts agnósticos al stack | Bajo |
-| 10 | Cross-story context | Medio |
-| 11 | TUI / dashboard | Medio |
-| 12 | Cost tracking | Medio |
-| 14 | Groom `--from-dir` | Bajo |
-| 15 | Groom `--interactive` | Medio |
+| # | Feature | Esfuerzo | Fase |
+|---|---------|----------|------|
+| 01 | Paralelismo | Alto | 2 |
+| 04 | Workflow configurable | Medio | 6 |
+| 09 | Prompts agnósticos al stack | Bajo | 3 |
+| 10 | Cross-story context | Medio | 5 |
+| 11 | TUI / dashboard | Medio | 7 |
+| 12 | Cost tracking | Medio | 7 |
+| 14 | Groom `--from-dir` | Bajo | 4 |
+| 15 | Groom `--interactive` | Medio | 7 |
 
 ---
 
@@ -362,11 +406,12 @@ EPIC-XXX
 - **Tests unitarios**: cada módulo tiene `#[cfg(test)] mod tests` con fixtures inline
 - **Fixtures**: `tests/fixtures/` contiene archivos .md de ejemplo para pruebas de parseo
 - **Test ignorado**: `agent::tests::invoke_with_retry_fails_when_pi_not_installed` (requiere `pi` en PATH)
-- **Total**: 104 tests pasando, 0 fallos, 1 ignorado
+- **Total**: 128 tests pasando, 0 fallos, 1 ignorado
 
 Para añadir tests:
 - Usa `make_story()` o `story_fixture()` helpers para crear Stories sintéticas
 - No dependas de archivos reales salvo en tests de `story.rs` (que usan fixtures)
+- Para tests de providers, usa `from_name()` para obtener una instancia y verificar `build_args()`
 - Para tests de nuevos módulos, usa `tempfile::tempdir()` para aislar el filesystem
 
 ---
@@ -387,8 +432,20 @@ Para añadir tests:
 - ❌ **Usar `..ctx` (struct update) sin clonar**: `PromptContext` contiene Strings, el update  
   syntax los mueve. Si necesitas reutilizar `ctx`, clona los campos explícitamente.
 
-- ❌ **Llamar a `invoke_with_retry` sin `AgentOptions`**: la firma cambió, ahora requiere  
-  el 4º argumento. Usa `&AgentOptions::default()` si no necesitas feedback.
+- ❌ **Llamar a `invoke_with_retry` sin provider**: la firma requiere `&dyn AgentProvider` como  
+  primer argumento. Usa `providers::from_name("pi")` si no necesitas un provider concreto.
+
+- ❌ **Asumir que el provider es `pi`**: usa `AgentsConfig::provider_for_role(role)` para  
+  resolver el provider correcto según la configuración del proyecto.
+
+- ❌ **Hardcodear flags de provider**: usa `AgentProvider::build_args()` para construir los  
+  argumentos de CLI. Cada provider tiene sus propios flags y subcomandos.
+
+- ❌ **Usar `.regista.toml` como path de config**: el path correcto es `.regista/config.toml`  
+  (dentro del directorio `.regista/`, no en la raíz).
+
+- ❌ **Generar solo skills para pi en `init`**: el generador usa `AgentProvider::instruction_dir(role)`  
+  para colocar las instrucciones en el directorio correcto según el provider.
 
 ---
 
