@@ -7,6 +7,18 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.4.0] — 2026-05-02
+
+### Added
+- **`groom --run`**: flag que encadena groom → pipeline automáticamente. Tras generar las historias desde la spec, ejecuta `validate` completo y lanza el ciclo de desarrollo sin intervención manual.
+- **Validación pre-pipeline en `--run`**: antes de lanzar el pipeline, se ejecuta `validator::validate()` (config, skills, historias, dependencias, Activity Log, git). Si hay errores, el pipeline se omite; los warnings se muestran pero se continúa.
+- **Forwarding de flags de pipeline en `groom --run`**: `--once`, `--story`, `--epic`, `--epics`, `--dry-run`, `--json`, `--quiet` y `--resume` se aplican al pipeline lanzado automáticamente.
+- **Modo `groom --run --json`**: suprime la salida legible del groom para no contaminar stdout (donde va el JSON del pipeline).
+
+### Fixed
+- **`--provider` en `groom`**: el flag se parseaba pero no se aplicaba a la configuración. Ahora afecta tanto al groom como al pipeline lanzado con `--run`.
+- **Guardas de seguridad en `--run`**: el pipeline no se lanza si el groom generó 0 historias o si el grafo de dependencias quedó con errores.
+
 ## [0.3.4] — 2026-05-01
 
 ### Fixed
@@ -70,7 +82,7 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 - Dry-run, salida JSON, feedback rico en reintentos
 - Hooks post-fase y snapshots git
 
-[0.3.3]: https://github.com/dbareautopi/regista/compare/v0.3.2...v0.3.3
+[0.4.0]: https://github.com/dbareautopi/regista/compare/v0.3.4...v0.4.0
 [0.3.4]: https://github.com/dbareautopi/regista/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/dbareautopi/regista/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/dbareautopi/regista/compare/v0.3.1...v0.3.2

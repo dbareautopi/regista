@@ -465,7 +465,7 @@ fn run_init(args: &[String]) {
 /// Ejecuta el subcomando `groom`.
 fn run_groom(args: &[String]) {
     if args.is_empty() || args[0].starts_with('-') {
-        eprintln!("Uso: regista groom <SPEC.md> [--max-stories N] [--merge|--replace] [--provider pi|claude|codex|opencode]");
+        eprintln!("Uso: regista groom <SPEC.md> [--max-stories N] [--merge|--replace] [--provider pi|claude|codex|opencode] [--run] [...]");
         std::process::exit(1);
     }
 
@@ -482,11 +482,52 @@ fn run_groom(args: &[String]) {
         .position(|a| a == "--config")
         .and_then(|i| args.get(i + 1))
         .map(|s| s.as_str());
-    let _provider_override = args
+    let provider_override = args
         .iter()
         .position(|a| a == "--provider")
         .and_then(|i| args.get(i + 1))
         .map(|s| s.to_lowercase());
+
+    // ── Flags de pipeline para --run ──────────────────────────────
+    let run_after = args.iter().any(|a| a == "--run");
+    let once = args.iter().any(|a| a == "--once");
+    let story_filter = args
+        .iter()
+        .position(|a| a == "--story")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+    let epic_filter = args
+        .iter()
+        .position(|a| a == "--epic")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+    let epics_range_str = args
+        .iter()
+        .position(|a| a == "--epics")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+    let dry_run = args.iter().any(|a| a == "--dry-run");
+    let json = args.iter().any(|a| a == "--json");
+    let quiet = args.iter().any(|a| a == "--quiet");
+    let resume = args.iter().any(|a| a == "--resume");
+
+    // Parsear rango de épicas
+    let epics_range = if let Some(ref range) = epics_range_str {
+        let parts: Vec<&str> = range.split("..").collect();
+        if parts.len() != 2 {
+            eprintln!(
+                "Formato de rango inválido: '{}'. Use 'EPIC-001..EPIC-003'",
+                range
+            );
+            std::process::exit(1);
+        }
+        Some((
+            parts[0].trim().to_uppercase(),
+            parts[1].trim().to_uppercase(),
+        ))
+    } else {
+        None
+    };
 
     let spec_path = Path::new(spec_path_str);
     // El directorio del proyecto es el dir padre del spec, o el actual
@@ -494,7 +535,7 @@ fn run_groom(args: &[String]) {
 
     let config_path = config.map(Path::new);
 
-    let cfg = match config::Config::load(project_root, config_path) {
+    let mut cfg = match config::Config::load(project_root, config_path) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Error al cargar configuración: {e}");
@@ -502,9 +543,18 @@ fn run_groom(args: &[String]) {
         }
     };
 
+    // Aplicar override de provider (afecta tanto al groom como al pipeline)
+    if let Some(ref provider) = provider_override {
+        cfg.agents.provider = provider.clone();
+    }
+
     // Configurar logging para el groom
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let env_filter = if quiet || json {
+        tracing_subscriber::EnvFilter::new("error")
+    } else {
+        tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+    };
     tracing_subscriber::fmt()
         .with_env_filter(env_filter)
         .with_writer(std::io::stderr)
@@ -516,19 +566,126 @@ fn run_groom(args: &[String]) {
 
     match groom::run(project_root, spec_path, &cfg, max_stories, replace) {
         Ok(result) => {
-            println!(
-                "\n✅ Groom completado en {} iteraciones.",
-                result.iterations
-            );
-            println!("   Historias generadas: {}", result.stories_created);
-            println!("   Épicas generadas:    {}", result.epics_created);
-            if result.dependencies_clean {
-                println!("   Grafo de dependencias: limpio ✅");
-            } else {
-                println!("   Grafo de dependencias: con errores ⚠️");
-                println!("   Ejecuta `regista validate` para ver los detalles.");
+            // En modo --run --json, suprimimos la salida legible del groom
+            // para no contaminar el stdout (que lleva el JSON del pipeline)
+            if !(run_after && json) {
+                println!(
+                    "\n✅ Groom completado en {} iteraciones.",
+                    result.iterations
+                );
+                println!("   Historias generadas: {}", result.stories_created);
+                println!("   Épicas generadas:    {}", result.epics_created);
+                if result.dependencies_clean {
+                    println!("   Grafo de dependencias: limpio ✅");
+                } else {
+                    println!("   Grafo de dependencias: con errores ⚠️");
+                    println!("   Ejecuta `regista validate` para ver los detalles.");
+                }
             }
-            if result.stories_created > 0 {
+
+            if run_after {
+                // ── Lanzar pipeline automáticamente tras el groom ──────
+                if result.stories_created == 0 {
+                    tracing::warn!("⚠️  No hay historias que procesar. Omitiendo pipeline.");
+                    return;
+                }
+                if !result.dependencies_clean {
+                    tracing::warn!(
+                        "⚠️  Grafo de dependencias con errores. Omitiendo pipeline.\n    Ejecuta `regista validate` y corrige las historias antes."
+                    );
+                    return;
+                }
+
+                // ── Validación completa pre-pipeline ──────────────────
+                tracing::info!("🔍 Ejecutando validación completa...");
+                let validation = validator::validate(project_root, config_path);
+
+                if validation.errors > 0 {
+                    tracing::warn!(
+                        "⚠️  Validación encontró {} error(es). Omitiendo pipeline.",
+                        validation.errors
+                    );
+                    for finding in &validation.findings {
+                        if finding.severity == validator::Severity::Error {
+                            tracing::warn!("  ❌ [{}] {}", finding.category, finding.message);
+                        }
+                    }
+                    tracing::warn!("    Corrige los errores y vuelve a ejecutar.");
+                    return;
+                }
+
+                if validation.warnings > 0 {
+                    tracing::warn!(
+                        "⚠️  Validación encontró {} warning(s). Continuando de todos modos.",
+                        validation.warnings
+                    );
+                    for finding in &validation.findings {
+                        if finding.severity == validator::Severity::Warning {
+                            tracing::warn!("  ⚠️  [{}] {}", finding.category, finding.message);
+                        }
+                    }
+                } else {
+                    tracing::info!("✅ Validación completa: todo OK.");
+                }
+
+                tracing::info!("🚀 Iniciando pipeline automático tras groom...");
+
+                let run_options = orchestrator::RunOptions {
+                    once,
+                    story_filter,
+                    epic_filter,
+                    epics_range,
+                    dry_run,
+                    quiet: quiet || json,
+                };
+
+                let resume_state = if resume {
+                    checkpoint::OrchestratorState::load(project_root)
+                } else {
+                    None
+                };
+
+                match orchestrator::run(project_root, &cfg, &run_options, resume_state) {
+                    Ok(report) => {
+                        if json {
+                            output_json_report(&report, &project_root.display().to_string());
+                        } else {
+                            if let Some(ref reason) = report.stop_reason {
+                                tracing::info!("╔══════════════════════════════════╗");
+                                tracing::info!("║  ⚠️  Pipeline detenido (límite)  ║");
+                                tracing::info!("╠══════════════════════════════════╣");
+                                tracing::info!("║ Razón: {:<23} ║", reason);
+                            } else {
+                                tracing::info!("╔══════════════════════════════════╗");
+                                tracing::info!("║     🏁 Pipeline completado      ║");
+                                tracing::info!("╠══════════════════════════════════╣");
+                            }
+                            tracing::info!("║ Historias totales:   {:>4}       ║", report.total);
+                            tracing::info!("║ Done:                {:>4}       ║", report.done);
+                            tracing::info!("║ Failed:              {:>4}       ║", report.failed);
+                            tracing::info!("║ Blocked:             {:>4}       ║", report.blocked);
+                            tracing::info!("║ Draft:               {:>4}       ║", report.draft);
+                            tracing::info!(
+                                "║ Iteraciones:         {:>4}       ║",
+                                report.iterations
+                            );
+                            tracing::info!(
+                                "║ Tiempo:              {:>4}s      ║",
+                                report.elapsed.as_secs()
+                            );
+                            tracing::info!("╚══════════════════════════════════╝");
+                        }
+                        std::process::exit(exit_code_from_report(&report));
+                    }
+                    Err(e) => {
+                        tracing::error!("❌ Pipeline falló: {e}");
+                        if json {
+                            output_json_error(&e.to_string());
+                        }
+                        std::process::exit(1);
+                    }
+                }
+            } else if result.stories_created > 0 {
                 println!("\n   🚀 Siguiente paso: regista --dry-run");
             }
         }
