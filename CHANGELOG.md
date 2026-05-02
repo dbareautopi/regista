@@ -7,6 +7,12 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.4.1] — 2026-05-02
+
+### Fixed
+- **`groom` resolvía `project_root` incorrectamente**: usaba el directorio padre del spec como raíz del proyecto, haciendo que las historias se generaran en `specs/.regista/stories/` en vez de `.regista/stories/`. Ahora el project root es siempre el directorio actual (`.`), igual que el resto de comandos.
+- **README actualizado** con nuevo flujo de trabajo "Specification-Driven Development" como flujo principal: el usuario escribe specs en la raíz del repo y regista genera el backlog en `.regista/`.
+
 ## [0.4.0] — 2026-05-02
 
 ### Added
@@ -82,6 +88,7 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 - Dry-run, salida JSON, feedback rico en reintentos
 - Hooks post-fase y snapshots git
 
+[0.4.1]: https://github.com/dbareautopi/regista/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/dbareautopi/regista/compare/v0.3.4...v0.4.0
 [0.3.4]: https://github.com/dbareautopi/regista/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/dbareautopi/regista/compare/v0.3.2...v0.3.3

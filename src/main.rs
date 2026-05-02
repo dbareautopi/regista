@@ -530,8 +530,9 @@ fn run_groom(args: &[String]) {
     };
 
     let spec_path = Path::new(spec_path_str);
-    // El directorio del proyecto es el dir padre del spec, o el actual
-    let project_root = spec_path.parent().unwrap_or_else(|| Path::new("."));
+    // El directorio del proyecto es siempre el actual (raíz del repo).
+    // El spec es input de usuario a nivel repo, la salida va a .regista/.
+    let project_root = Path::new(".");
 
     let config_path = config.map(Path::new);
 

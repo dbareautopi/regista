@@ -52,14 +52,17 @@ instrucciones de rol (skills, agents, commands).
 # 1. Instalar
 cargo install regista
 
-# 2. Crear un proyecto nuevo (elige tu provider)
+# 2. Inicializar regista en tu proyecto
 cd mi-proyecto
-regista init --provider claude --with-example    # o --provider pi, codex, opencode
+regista init --provider claude
 
-# 3. Simular antes de ejecutar
+# 3. Escribe una especificación (p. ej. specs/mi-app.md) y genera el backlog
+regista groom specs/mi-app.md
+
+# 4. Simular para revisar el plan
 regista --dry-run
 
-# 4. Ejecutar el pipeline real
+# 5. Ejecutar el pipeline real
 regista
 ```
 
@@ -260,6 +263,122 @@ Como [rol], quiero [acción] para que [beneficio].
 
 ---
 
+## Flujo de trabajo: Specification-Driven Development
+
+Regista está diseñado para un flujo **spec-first**: escribes un documento de
+especificación en lenguaje natural y regista se encarga de todo lo demás.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  1. Escribe tu spec          specs/mi-app.md   (input usuario) │
+│  2. Genera el backlog        regista groom specs/mi-app.md     │
+│  3. Valida el proyecto       regista validate                  │
+│  4. Simula el pipeline       regista --dry-run                 │
+│  5. Ejecuta                  regista                           │
+│  6. Itera sobre los rechazos corrigiendo la spec si hace falta │
+└─────────────────────────────────────────────────────────────────┘
+
+     🌍 Raíz del repo (input de usuario)    │    📁 .regista/ (output de regista)
+     ───────────────────────────────────────┼──────────────────────────────────
+     specs/mi-app.md                        │    .regista/stories/STORY-*.md
+     (especificación de producto)           │    .regista/epics/EPIC-*.md
+                                            │    .regista/decisions/
+                                            │    .regista/state.toml
+```
+
+El usuario solo escribe la spec. Las historias, épicas, decisiones y estado
+viven dentro de `.regista/` — el espacio de trabajo privado del orquestador.
+
+### Paso a paso
+
+**1. Inicializa regista en tu proyecto:**
+
+```bash
+cd mi-proyecto
+regista init --provider claude
+```
+
+Esto crea `.regista/config.toml` y las instrucciones de rol para tu provider.
+
+**2. Escribe la especificación** en un `.md` dentro del repo:
+
+```markdown
+# Mi App — Especificación
+
+## Descripción general
+Plataforma de blogging con soporte multi-idioma y comentarios.
+
+## Funcionalidades
+- Los autores pueden crear, editar y publicar artículos
+- Los lectores pueden comentar artículos (con moderación)
+- Soporte para traducción de artículos a 3 idiomas
+- Dashboard de analytics para autores
+- Sistema de notificaciones por email
+```
+
+**3. Genera el backlog** con `groom`:
+
+```bash
+# El PO lee la spec y genera historias + épicas en .regista/
+regista groom specs/mi-app.md
+
+# Con límite de historias para iterar rápido
+regista groom specs/mi-app.md --max-stories 8
+
+# Regenerar todo el backlog desde cero
+regista groom specs/mi-app.md --replace
+
+# Con un provider concreto para el PO
+regista groom specs/mi-app.md --provider claude
+```
+
+`groom` invoca al Product Owner, que descompone la spec en historias atómicas
+con criterios de aceptación, las agrupa en épicas, y las escribe en
+`.regista/stories/`. Después ejecuta un **bucle de validación** de dependencias
+hasta que el grafo esté limpio (máx. 5 iteraciones).
+
+**4. Valida que todo esté correcto:**
+
+```bash
+regista validate
+regista validate --json    # para CI/CD
+```
+
+**5. Simula el pipeline** para ver el plan sin gastar créditos:
+
+```bash
+regista --dry-run
+regista --dry-run --json   # salida estructurada
+```
+
+**6. Ejecuta el pipeline real:**
+
+```bash
+regista
+
+# Procesar solo una épica
+regista --epic EPIC-001
+
+# Procesar con límite de iteraciones
+regista --once
+```
+
+**7. Itera.** Si alguna historia queda en `Failed`, ajusta la spec, regenera
+y vuelve a ejecutar. La spec es tu punto de control.
+
+### El contrato: input vs output
+
+| ¿De quién es? | Ubicación | Contenido |
+|---|---|---|
+| **Usuario** (input) | `specs/*.md` | Especificación de producto en lenguaje natural |
+| **Regista** (output) | `.regista/stories/` | Historias de usuario generadas por el PO |
+| **Regista** (output) | `.regista/epics/` | Épicas generadas por el PO |
+| **Regista** (output) | `.regista/decisions/` | Decisiones documentadas por los agentes |
+| **Regista** (interno) | `.regista/config.toml` | Configuración del pipeline |
+| **Regista** (interno) | `.regista/state.toml` | Checkpoint para `--resume` |
+
+---
+
 ## Uso
 
 ### `regista help`
@@ -270,25 +389,21 @@ Muestra todos los comandos y flags disponibles:
 regista help
 ```
 
-### Generar el backlog (`groom`)
-
-Descompone un documento de especificación en historias automáticamente:
+### Más sobre `groom`
 
 ```bash
-regista groom product/spec.md
+# Especificar provider para el PO
+regista groom specs/spec.md --provider opencode
 
-# Con límite de historias
-regista groom product/spec.md --max-stories 8
+# Con --run: ejecuta el pipeline automáticamente tras el groom
+regista groom specs/spec.md --run
 
-# Regenerar desde cero
-regista groom product/spec.md --replace
+# Con --run --json: salida JSON del pipeline a stdout
+regista groom specs/spec.md --run --json
 
-# Con un provider específico
-regista groom product/spec.md --provider claude
+# Con --run --story: procesa solo una historia tras groom
+regista groom specs/spec.md --run --story STORY-003
 ```
-
-`groom` invoca al PO, escribe los `.md` y ejecuta un **bucle de validación**
-de dependencias hasta que el grafo esté limpio.
 
 ### Validar el proyecto (`validate`)
 
@@ -494,9 +609,9 @@ Configurable con `inject_feedback_on_retry = false`.
 
 ```
 regista [DIR]                        Pipeline completo
+regista groom <SPEC.md>              Especificación → backlog (SDD)
 regista validate [DIR]               Validación pre-vuelo
 regista init [DIR]                   Scaffolding de proyecto
-regista groom <SPEC.md>              Generar historias desde spec
 regista help                         Mostrar esta ayuda
 
 Flags del pipeline:
@@ -523,6 +638,7 @@ Flags de groom:
   --provider <NAME>      Provider para el PO (default: el del config)
   --max-stories <N>      Máximo de historias (0 = sin límite)
   --replace              Regenerar desde cero
+  --run                  Ejecutar el pipeline automáticamente tras groom
   --config <FILE>        Archivo de configuración alternativo
 
 Flags de init:
