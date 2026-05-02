@@ -7,6 +7,34 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.5.0] — 2026-05-02
+
+### Changed
+- **Refactor completo de la CLI**: migración a `#[derive(Subcommand)]` de clap. Todos los comandos son ahora subcomandos propios con su `--help`.
+- **100% daemon**: toda ejecución de pipeline spawnea un proceso en background. Ya no existe el modo bloqueante. Usa `--logs` para ver el progreso en vivo (Ctrl+C no detiene el daemon).
+- **Nuevos subcomandos**:
+  - `plan <spec>` — genera historias desde especificación (sustituye a `groom` standalone).
+  - `auto <spec>` — planifica + ejecuta pipeline completo en un solo paso (sustituye a `groom --run`).
+  - `run` — ejecuta pipeline sobre historias existentes.
+  - `logs [dir]` — tail del log del daemon en vivo.
+  - `status [dir]` — consulta si el daemon está corriendo.
+  - `kill [dir]` — detiene el daemon.
+  - `validate [dir]` — validación pre-vuelo.
+  - `init [dir]` — scaffolding del proyecto.
+- **Flag `--replace`** en `plan` y `auto` para modo destructivo (borrar historias antes de generar).
+- **Flag `--logs`** en `plan`, `auto` y `run` para tail del log tras spawnear el daemon.
+
+### Removed
+- **`--detach`**: eliminado. Detach es ahora el comportamiento por defecto.
+- **`--follow`**: renombrado a `--logs`.
+- **`--json`**: deprecado. Se rediseñará en una versión futura.
+- **`regista groom`**: sustituido por `regista plan` y `regista auto`.
+- **`regista help`**: sustituido por `--help` automático de clap.
+- **`regista [DIR]` a secas**: ahora requiere subcomando (`regista run`).
+
+### Fixed
+- **`daemon::detach()`** ahora acepta `child_args: &[String]` explícitos en vez de leer `std::env::args()`, permitiendo que `plan`, `auto` y `run` construyan sus propios argumentos para el proceso hijo.
+
 ## [0.4.1] — 2026-05-02
 
 ### Fixed
@@ -88,6 +116,7 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 - Dry-run, salida JSON, feedback rico en reintentos
 - Hooks post-fase y snapshots git
 
+[0.5.0]: https://github.com/dbareautopi/regista/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/dbareautopi/regista/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/dbareautopi/regista/compare/v0.3.4...v0.4.0
 [0.3.4]: https://github.com/dbareautopi/regista/compare/v0.3.3...v0.3.4
