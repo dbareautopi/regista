@@ -64,19 +64,38 @@ impl Drop for PidCleanup {
 
 /// Lanza el orquestador en segundo plano (modo daemon).
 ///
-/// Spawnea un proceso hijo con los mismos argumentos, reemplazando
-/// `--detach` por `--daemon` y añadiendo `--log-file` si es necesario.
+/// `child_args` son los argumentos completos que se pasarán al proceso hijo,
+/// excluyendo el path del binario. Deben incluir `--daemon` y `--log-file`.
+///
+/// Ejemplo de child_args:
+///   ["run", ".", "--daemon", "--log-file", ".regista/daemon.log", "--epic", "EPIC-001"]
+///
 /// Retorna el PID del hijo.
-pub fn detach(project_dir: &Path, log_file_override: Option<&Path>) -> anyhow::Result<u32> {
+pub fn detach(
+    project_dir: &Path,
+    child_args: &[String],
+    log_file_override: Option<&Path>,
+) -> anyhow::Result<u32> {
     let exe = std::env::current_exe()?;
     let canonical_project = project_dir
         .canonicalize()
         .unwrap_or_else(|_| project_dir.to_path_buf());
 
-    // Determinar el archivo de log
+    // Determinar el archivo de log: override explícito > buscar --log-file en child_args > default
     let log_file = match log_file_override {
         Some(p) => p.to_path_buf(),
-        None => canonical_project.join(".regista/daemon.log"),
+        None => {
+            let mut log_path = canonical_project.join(".regista/daemon.log");
+            let mut i = 0;
+            while i < child_args.len() {
+                if child_args[i] == "--log-file" && i + 1 < child_args.len() {
+                    log_path = PathBuf::from(&child_args[i + 1]);
+                    break;
+                }
+                i += 1;
+            }
+            log_path
+        }
     };
 
     // Crear directorio padre del log si es necesario
@@ -84,50 +103,11 @@ pub fn detach(project_dir: &Path, log_file_override: Option<&Path>) -> anyhow::R
         fs::create_dir_all(parent)?;
     }
 
-    // Construir argumentos para el hijo:
-    // - eliminar --detach y --follow/--status/--kill (no deberían aparecer, pero seguros)
-    // - añadir --daemon
-    // - asegurar que --log-file esté presente
-    let raw_args: Vec<String> = std::env::args().skip(1).collect();
-    let mut child_args: Vec<String> = vec![];
-    let mut has_log_file = false;
-    let mut i = 0;
-    while i < raw_args.len() {
-        let arg = raw_args[i].as_str();
-        match arg {
-            "--detach" | "--follow" | "--status" | "--kill" => {
-                i += 1;
-                continue;
-            }
-            "--log-file" => {
-                has_log_file = true;
-                child_args.push(raw_args[i].clone());
-                i += 1;
-                if i < raw_args.len() {
-                    child_args.push(raw_args[i].clone());
-                    i += 1;
-                }
-                continue;
-            }
-            _ => {
-                child_args.push(raw_args[i].clone());
-                i += 1;
-            }
-        }
-    }
-
-    // Añadir flags internos
-    child_args.push("--daemon".to_string());
-    if !has_log_file {
-        child_args.push("--log-file".to_string());
-        child_args.push(log_file.to_string_lossy().to_string());
-    }
-
-    // Crear/truncar el archivo de log
+    // Crear/truncar el archivo de log para stdout del hijo
     let log_handle = fs::File::create(&log_file)?;
 
     let child = Command::new(&exe)
-        .args(&child_args)
+        .args(child_args)
         .stdin(std::process::Stdio::null())
         .stdout(log_handle)
         .stderr(std::process::Stdio::null())
@@ -138,7 +118,7 @@ pub fn detach(project_dir: &Path, log_file_override: Option<&Path>) -> anyhow::R
     // Guardar estado para los comandos de gestión
     let state = DaemonState {
         pid,
-        log_file: log_file.clone(),
+        log_file,
         project_dir: canonical_project.clone(),
     };
     state.save(&canonical_project)?;
