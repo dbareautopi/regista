@@ -250,7 +250,7 @@ fn default_max_retries() -> u32 {
     5
 }
 fn default_max_reject_cycles() -> u32 {
-    3
+    8
 }
 fn default_agent_timeout() -> u64 {
     1800
@@ -393,7 +393,7 @@ mod tests {
         assert_eq!(cfg.agents.provider, "pi");
         assert_eq!(cfg.limits.max_iterations, 0);
         assert_eq!(cfg.limits.max_retries_per_step, 5);
-        assert_eq!(cfg.limits.max_reject_cycles, 3);
+        assert_eq!(cfg.limits.max_reject_cycles, 8);
         assert_eq!(cfg.limits.agent_timeout_seconds, 1800);
         assert!(cfg.hooks.post_qa.is_none());
         assert!(cfg.git.enabled);

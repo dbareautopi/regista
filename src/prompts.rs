@@ -119,14 +119,18 @@ impl PromptContext {
         } else {
             String::new()
         };
+        let stack_block = self.stack.render();
 
         format!(
             "{}\n\
              Escribe los tests necesarios según los criterios de aceptación.\n\
-             {}Mueve el estado de {from} → {to}.\n\
+             {}Ejecútalos para verificar que compilan y pasan:\n\
+             {}\n\
+             Mueve el estado de {from} → {to}.\n\
              {}",
             self.header("Escribe tests para"),
             placeholder,
+            stack_block,
             self.suffix("QA"),
             from = self.from,
             to = self.to,
@@ -135,13 +139,17 @@ impl PromptContext {
 
     /// Prompt para QA — Corregir tests (Tests Ready → Tests Ready).
     pub fn qa_fix_tests(&self) -> String {
+        let stack_block = self.stack.render();
         format!(
             "{}\n\
              El Developer reportó problemas con los tests actuales.\n\
              Lee especialmente el Activity Log para entender el feedback.\n\
-             Corrige los tests. El estado se mantiene en {to}.\n\
+             Corrige los tests y verifica que compilan y pasan:\n\
+             {}\n\
+             El estado se mantiene en {to}.\n\
              {}",
             self.header("Corrige los tests de"),
+            stack_block,
             self.suffix("QA"),
             to = self.to,
         )
@@ -387,6 +395,33 @@ mod tests {
         let c = ctx(); // stack default: src_dir = None
         let prompt = c.qa_tests();
         assert!(!prompt.contains("placeholders"));
+    }
+
+    #[test]
+    fn qa_tests_includes_stack_commands() {
+        let prompt = ctx_with_stack().qa_tests();
+        assert!(prompt.contains("make"));
+        assert!(prompt.contains("make test"));
+        assert!(prompt.contains("golangci-lint"));
+    }
+
+    #[test]
+    fn qa_fix_tests_includes_stack_commands() {
+        let mut c = ctx_with_stack();
+        c.from = Status::TestsReady;
+        c.to = Status::TestsReady;
+        let prompt = c.qa_fix_tests();
+        assert!(prompt.contains("make"));
+        assert!(prompt.contains("Activity Log"));
+        assert!(prompt.contains("Tests Ready"));
+    }
+
+    #[test]
+    fn qa_tests_sin_stack_no_menciona_comandos() {
+        let c = ctx(); // stack default: todo None
+        let prompt = c.qa_tests();
+        assert!(prompt.contains("Compila/construye"));
+        assert!(!prompt.contains('`'), "sin comandos = sin backticks");
     }
 
     #[test]

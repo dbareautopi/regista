@@ -7,6 +7,20 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.6.1] — 2026-05-03
+
+### Fixed
+- **QA prompts ahora incluyen stack commands**: `qa_tests()` y `qa_fix_tests()`
+  inyectan `stack.render()` igual que `dev_implement()`, `dev_fix()` y `reviewer()`.
+  El QA ya no está ciego a la toolchain del proyecto.
+- **`regista kill` mata procesos hijos**: ahora se recorren recursivamente
+  `/proc/<pid>/task/*/children` y se mata a todos los descendientes antes
+  que al daemon. Sin huérfanos.
+
+### Changed
+- **`max_reject_cycles` default sube de 3 a 8**: evita que historias casi
+  completas mueran por un detalle trivial en el tercer ciclo de rechazo.
+
 ## [0.6.0] — 2026-05-03
 
 ### Added
@@ -160,6 +174,7 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 - Dry-run, salida JSON, feedback rico en reintentos
 - Hooks post-fase y snapshots git
 
+[0.6.1]: https://github.com/dbareautopi/regista/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/dbareautopi/regista/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/dbareautopi/regista/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/dbareautopi/regista/compare/v0.5.0...v0.5.1
