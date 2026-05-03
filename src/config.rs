@@ -164,9 +164,9 @@ pub struct LimitsConfig {
     #[serde(default = "default_retry_delay_base")]
     pub retry_delay_base_seconds: u64,
 
-    /// Máximo de iteraciones del bucle groom→validate→corregir.
-    #[serde(default = "default_groom_max_iterations")]
-    pub groom_max_iterations: u32,
+    /// Máximo de iteraciones del bucle plan→validate→corregir.
+    #[serde(default = "default_plan_max_iterations")]
+    pub plan_max_iterations: u32,
 
     /// Inyectar stderr del intento fallido en el prompt del reintento.
     #[serde(default = "default_inject_feedback")]
@@ -238,7 +238,7 @@ fn default_max_wall_time() -> u64 {
 fn default_retry_delay_base() -> u64 {
     10
 }
-fn default_groom_max_iterations() -> u32 {
+fn default_plan_max_iterations() -> u32 {
     5
 }
 fn default_inject_feedback() -> bool {
@@ -283,7 +283,7 @@ impl Default for LimitsConfig {
             agent_timeout_seconds: default_agent_timeout(),
             max_wall_time_seconds: default_max_wall_time(),
             retry_delay_base_seconds: default_retry_delay_base(),
-            groom_max_iterations: default_groom_max_iterations(),
+            plan_max_iterations: default_plan_max_iterations(),
             inject_feedback_on_retry: default_inject_feedback(),
         }
     }

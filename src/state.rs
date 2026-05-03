@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 /// Los estados `Blocked` y `Failed` son estados laterales/terminales.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Status {
-    /// Historia creada pero no refinada. Pendiente de PO (groom).
+    /// Historia creada pero no refinada. Pendiente de PO (plan).
     Draft,
     /// Historia refinada, cumple DoR. Pendiente de QA.
     Ready,

@@ -7,6 +7,15 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.5.2] — 2026-05-03
+
+### Changed
+- **Renombrado `groom.rs` → `plan.rs`**: el módulo, structs, funciones y configuración usan ahora `plan` en vez de `groom` en todo el código fuente. Elimina la ambigüedad entre el nombre interno del módulo y el comando CLI.
+  - `GroomResult` → `PlanResult`, `GroomCtx` → `PlanCtx`
+  - `po_groom()` → `po_plan()`, `groom_prompt_*()` → `plan_prompt_*()`
+  - `groom_max_iterations` → `plan_max_iterations`
+- **Documentación sincronizada**: `AGENTS.md`, `HANDOFF.md`, `DESIGN.md` y `README.md` reflejan el renombrado.
+
 ## [0.5.1] — 2026-05-03
 
 ### Added
@@ -129,6 +138,7 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 - Dry-run, salida JSON, feedback rico en reintentos
 - Hooks post-fase y snapshots git
 
+[0.5.2]: https://github.com/dbareautopi/regista/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/dbareautopi/regista/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/dbareautopi/regista/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/dbareautopi/regista/compare/v0.4.0...v0.4.1

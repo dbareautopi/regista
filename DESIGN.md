@@ -77,7 +77,7 @@ max_reject_cycles         = 3
 agent_timeout_seconds     = 1800
 max_wall_time_seconds     = 28800
 retry_delay_base_seconds  = 10
-groom_max_iterations      = 5       # bucle groom→validate→corregir
+plan_max_iterations      = 5       # bucle plan→validate→corregir
 inject_feedback_on_retry  = true    # inyectar stderr en reintentos
 
 [hooks]
@@ -99,7 +99,7 @@ enabled = true
                     ┌──────────┐
                     │  Draft   │  ← Historia creada, pendiente de refinamiento
                     └────┬─────┘
-                         │ PO (groom)
+                         │ PO (plan)
                     ┌────▼─────┐
               ┌─────│  Ready   │  ← Refinada, lista para QA
               │     └────┬─────┘
@@ -142,7 +142,7 @@ enabled = true
 
 | # | De | A | Actor | Condición |
 |---|---|---|---|---|
-| 1 | `Draft` | `Ready` | **PO** (groom) | Historia cumple DoR |
+| 1 | `Draft` | `Ready` | **PO** (plan) | Historia cumple DoR |
 | 2 | `Ready` | `Tests Ready` | **QA** | Tests escritos para todos los CAs |
 | 3 | `Ready` | `Draft` | **QA** (rollback) | Historia no es testeable → PO debe re-refinar |
 | 4 | `Tests Ready` | `In Review` | **Dev** | Implementación completa, tests pasan |
@@ -184,9 +184,9 @@ y dispara al PO para desatascar la historia que más bloqueos resuelve.
 
 ```
 Para cada historia no terminal:
-  1. Si status == Draft         → "stuck": necesita PO (groom)
+  1. Si status == Draft         → "stuck": necesita PO (plan)
   2. Si status == Blocked:
-     a. Si algún bloqueador está en Draft → "stuck": PO debe groom el Draft
+     a. Si algún bloqueador está en Draft → "stuck": PO debe planificar el Draft
      b. Si hay ciclo de dependencias     → "stuck": PO debe romper el ciclo
      c. Si todos los bloqueadores Done   → automático → Ready
   3. Resto → el loop normal lo maneja
@@ -224,7 +224,7 @@ regista/
 │   ├── checkpoint.rs          ← OrchestratorState: save/load/remove (.regista/state.toml)
 │   ├── validator.rs           ← validate(): chequeo pre-vuelo de proyecto
 │   ├── init.rs                ← init(): scaffolding multi-provider
-│   ├── groom.rs               ← run(): generación de backlog desde spec
+│   ├── plan.rs               ← run(): generación de backlog desde spec
 │   ├── hooks.rs               ← run_hook(): comandos post-fase
 │   ├── git.rs                 ← snapshot(), rollback()
 │   └── daemon.rs              ← detach(), status(), kill(), follow()
@@ -270,7 +270,7 @@ EPIC-XXX
 | `regista [DIR]` | Pipeline completo (default) |
 | `regista validate [DIR]` | Chequeo pre-vuelo de integridad |
 | `regista init [DIR]` | Scaffolding de proyecto nuevo |
-| `regista groom <SPEC>` | Generar backlog desde spec |
+| `regista plan <SPEC>` | Generar backlog desde spec |
 | `regista help` | Mostrar todos los comandos y flags |
 
 ### Flags principales
@@ -357,16 +357,16 @@ desbloquearían, y estima el tiempo total. Compatible con `--json`.
 
 ## 11. Groom — Generación automática de backlog
 
-`regista groom <spec.md>` invoca al PO para descomponer una spec en historias
+`regista plan <spec.md>` invoca al PO para descomponer una spec en historias
 y épicas. Tras generar, ejecuta un **bucle de validación**:
 
 ```
-groom → generate → validate dependencias
+plan → generate → validate dependencias
   ├── OK → terminar
   └── errores → feedback al PO → corregir → validate → ...
 ```
 
-Máximo de iteraciones configurable: `groom_max_iterations` (default 5).
+Máximo de iteraciones configurable: `plan_max_iterations` (default 5).
 
 ---
 
@@ -377,6 +377,6 @@ Máximo de iteraciones configurable: `groom_max_iterations` (default 5).
 | F1–F12 | Crate base, CLI, máquina de estados, pipeline, daemon, tests | 82 tests ✅ |
 | F13 | Salida JSON + CI/CD, dry-run | `--json`, `--dry-run` ✅ |
 | F14 | `regista validate`, `regista init` | Subcomandos ✅ |
-| F15 | `regista groom` | Generación de backlog ✅ |
+| F15 | `regista plan` | Generación de backlog ✅ |
 | F16 | Checkpoint/resume + feedback rico | `--resume`, feedback en retry ✅ |
 | F17 | **Multi-provider (#20)** | pi, Claude Code, Codex, OpenCode ✅ |

@@ -1,5 +1,5 @@
 //! Generación automática de historias desde un documento de requisitos
-//! (`regista groom`).
+//! (`regista plan`).
 //!
 //! El Product Owner lee una spec de alto nivel, la descompone en historias
 //! atómicas con criterios de aceptación, las agrupa en épicas, y las escribe
@@ -12,20 +12,20 @@ use crate::providers;
 use crate::validator;
 use std::path::Path;
 
-/// Resultado de la operación de groom.
+/// Resultado de la operación de plan.
 #[derive(Debug, Clone)]
-pub struct GroomResult {
+pub struct PlanResult {
     /// Número de historias generadas.
     pub stories_created: usize,
     /// Número de épicas generadas.
     pub epics_created: usize,
-    /// Número de iteraciones del bucle groom→validate.
+    /// Número de iteraciones del bucle plan→validate.
     pub iterations: u32,
     /// Si terminó con el grafo de dependencias limpio.
     pub dependencies_clean: bool,
 }
 
-/// Ejecuta el groom completo: generar historias desde una spec y validar
+/// Ejecuta el plan completo: generar historias desde una spec y validar
 /// dependencias en bucle hasta que estén limpias.
 pub fn run(
     project_root: &Path,
@@ -33,7 +33,7 @@ pub fn run(
     cfg: &Config,
     max_stories: u32,
     replace: bool,
-) -> anyhow::Result<GroomResult> {
+) -> anyhow::Result<PlanResult> {
     // ── 1. Validar que la spec existe ──────────────────────────────
     if !spec_path.exists() {
         anyhow::bail!(
@@ -71,21 +71,21 @@ pub fn run(
 
     // ── 3. Snapshot git inicial ────────────────────────────────────
     let snapshot_hash = if cfg.git.enabled {
-        crate::git::snapshot(project_root, "groom-start")
+        crate::git::snapshot(project_root, "plan-start")
     } else {
         None
     };
 
-    // ── 4. Bucle groom → validate ──────────────────────────────────
+    // ── 4. Bucle plan → validate ───────────────────────────────────
     let provider_name = cfg.agents.provider_for_role("product_owner");
     let provider = providers::from_name(&provider_name);
     let skill_path_str = cfg.agents.skill_for_role("product_owner");
     let skill_path = project_root.join(&skill_path_str);
-    let max_loop = cfg.limits.groom_max_iterations.max(1);
+    let max_loop = cfg.limits.plan_max_iterations.max(1);
 
     let spec_content = std::fs::read_to_string(spec_path)?;
 
-    let ctx = GroomCtx {
+    let ctx = PlanCtx {
         spec_path,
         spec_content: &spec_content,
         stories_dir: &stories_dir,
@@ -104,7 +104,7 @@ pub fn run(
         loop_iteration += 1;
 
         let prompt = if loop_iteration == 1 {
-            groom_prompt_initial(&ctx)
+            plan_prompt_initial(&ctx)
         } else {
             // Validar y obtener errores de dependencias
             let config_path = project_root.join(".regista.toml");
@@ -146,7 +146,7 @@ pub fn run(
                 dep_errors.len()
             );
 
-            groom_prompt_fix(&ctx, &dep_errors)
+            plan_prompt_fix(&ctx, &dep_errors)
         };
 
         tracing::info!("🤖 Invocando PO para generar/corregir historias...");
@@ -172,14 +172,14 @@ pub fn run(
             Err(e) => {
                 tracing::error!("❌ Falló la invocación del PO: {e}");
                 if let Some(ref hash) = snapshot_hash {
-                    crate::git::rollback(project_root, hash, "groom-failed");
+                    crate::git::rollback(project_root, hash, "plan-failed");
                 }
-                anyhow::bail!("Groom falló: {e}");
+                anyhow::bail!("Plan falló: {e}");
             }
         }
     }
 
-    Ok(GroomResult {
+    Ok(PlanResult {
         stories_created: stories_count,
         epics_created: epics_count,
         iterations: loop_iteration,
@@ -189,8 +189,8 @@ pub fn run(
 
 // ── Prompts ─────────────────────────────────────────────────────────────
 
-/// Contexto común para los prompts de groom.
-struct GroomCtx<'a> {
+/// Contexto común para los prompts de plan.
+struct PlanCtx<'a> {
     spec_path: &'a Path,
     spec_content: &'a str,
     stories_dir: &'a Path,
@@ -201,7 +201,7 @@ struct GroomCtx<'a> {
 }
 
 /// Prompt para la primera generación de historias.
-fn groom_prompt_initial(ctx: &GroomCtx) -> String {
+fn plan_prompt_initial(ctx: &PlanCtx) -> String {
     let limit_line = if ctx.max_stories > 0 {
         format!(
             "\nGenera como **máximo {} historias** en total.\n",
@@ -277,7 +277,7 @@ fn groom_prompt_initial(ctx: &GroomCtx) -> String {
            Solo referenciar historias que TÚ has creado en esta sesión.\n\
          - Cada historia comienza en estado **Draft**.\n\
          - El Activity Log debe tener una entrada inicial con la fecha de hoy.\n\
-         - Documenta las decisiones de diseño del backlog en {decisions_dir}/groom-decision.md.\n\
+         - Documenta las decisiones de diseño del backlog en {decisions_dir}/plan-decision.md.\n\
          - Escribe los archivos reales en el filesystem. No los imprimas en pantalla.\n\
          - **NO preguntes nada al usuario. Trabaja de forma 100% autónoma.**\n\
          \n\
@@ -293,7 +293,7 @@ fn groom_prompt_initial(ctx: &GroomCtx) -> String {
 }
 
 /// Prompt para corregir historias tras fallos de validación de dependencias.
-fn groom_prompt_fix(ctx: &GroomCtx, errors: &[String]) -> String {
+fn plan_prompt_fix(ctx: &PlanCtx, errors: &[String]) -> String {
     let limit_line = if ctx.max_stories > 0 {
         format!(
             "\nNo generes más de {} historias en total.\n",
@@ -340,7 +340,7 @@ fn groom_prompt_fix(ctx: &GroomCtx, errors: &[String]) -> String {
          ## Reglas\n\
          - Solo modifica archivos existentes. No crees nuevas historias a menos que sea inevitable.\n\
          - Los IDs deben seguir el patrón {story_pattern}.\n\
-         - Documenta los cambios en {decisions_dir}/groom-correcciones.md.\n\
+         - Documenta los cambios en {decisions_dir}/plan-correcciones.md.\n\
          - **NO preguntes nada al usuario. 100% autónomo.**\n\
          \n\
          Corrige los errores ahora.",
@@ -370,7 +370,7 @@ fn count_files(dir: &Path, pattern: &str) -> usize {
 mod tests {
     use super::*;
 
-    fn ctx_fixture() -> GroomCtx<'static> {
+    fn ctx_fixture() -> PlanCtx<'static> {
         // Safety: all &str and Path references are to statics
         let spec_content: &'static str = "contenido de prueba";
         let spec_path = Path::new("spec.md");
@@ -378,7 +378,7 @@ mod tests {
         let epics_dir = Path::new("epics");
         let decisions_dir = Path::new("decisions");
         let story_pattern = "STORY-*.md";
-        GroomCtx {
+        PlanCtx {
             spec_path,
             spec_content,
             stories_dir,
@@ -405,34 +405,34 @@ mod tests {
     }
 
     #[test]
-    fn groom_prompt_initial_contains_spec() {
-        let prompt = groom_prompt_initial(&ctx_fixture());
+    fn plan_prompt_initial_contains_spec() {
+        let prompt = plan_prompt_initial(&ctx_fixture());
         assert!(prompt.contains("contenido de prueba"));
         assert!(prompt.contains("stories"));
         assert!(prompt.contains("NO preguntes"));
     }
 
     #[test]
-    fn groom_prompt_initial_respects_max_stories() {
+    fn plan_prompt_initial_respects_max_stories() {
         let mut ctx = ctx_fixture();
         ctx.max_stories = 10;
-        let prompt = groom_prompt_initial(&ctx);
+        let prompt = plan_prompt_initial(&ctx);
         assert!(prompt.contains("máximo 10 historias"));
     }
 
     #[test]
-    fn groom_prompt_initial_no_limit_when_zero() {
-        let prompt = groom_prompt_initial(&ctx_fixture());
+    fn plan_prompt_initial_no_limit_when_zero() {
+        let prompt = plan_prompt_initial(&ctx_fixture());
         assert!(!prompt.contains("máximo"));
     }
 
     #[test]
-    fn groom_prompt_fix_includes_errors() {
+    fn plan_prompt_fix_includes_errors() {
         let errors = vec![
             "STORY-003: referencia a STORY-999 que no existe".to_string(),
             "Ciclo entre STORY-005 y STORY-007".to_string(),
         ];
-        let prompt = groom_prompt_fix(&ctx_fixture(), &errors);
+        let prompt = plan_prompt_fix(&ctx_fixture(), &errors);
         assert!(prompt.contains("STORY-003"));
         assert!(prompt.contains("STORY-999"));
         assert!(prompt.contains("Ciclo"));

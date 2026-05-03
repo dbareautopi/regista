@@ -63,7 +63,7 @@ regista/
 │   ├── checkpoint.rs          ← OrchestratorState: save/load/remove (.regista/state.toml)
 │   ├── validator.rs           ← validate(): chequeo pre-vuelo multi-provider
 │   ├── init.rs                ← init(): scaffolding multi-provider (pi, claude, codex, opencode)
-│   ├── groom.rs               ← run(): generación de backlog (comando `plan`)
+│   ├── plan.rs               ← run(): generación de backlog (comando `plan`)
 │   ├── hooks.rs               ← run_hook(), ejecución de comandos shell post-fase
 │   ├── git.rs                 ← snapshot(), rollback(), init_git()
 │   ├── daemon.rs              ← detach(), status(), kill(), follow(), DaemonState
@@ -109,7 +109,7 @@ cargo test
 # Ejecutar tests de un módulo específico
 cargo test --lib state
 cargo test --lib checkpoint
-cargo test --lib groom
+cargo test --lib plan
 cargo test --lib providers
 
 # Ejecutar test ignorado (requiere pi instalado)
@@ -132,7 +132,7 @@ cargo clippy -- -D warnings
 ### Diagrama del flujo feliz
 
 ```
-Draft ──PO(groom)──→ Ready ──QA(tests)──→ Tests Ready ──Dev(implement)──→ In Review
+Draft ──PO(plan)──→ Ready ──QA(tests)──→ Tests Ready ──Dev(implement)──→ In Review
                                                                                 │
                                                                          Reviewer │
                                                                                 ▼
@@ -215,7 +215,7 @@ EPIC-XXX
 - `plan`/`auto`/`run` spawnean un daemon (proceso hijo); `logs`/`status`/`kill` lo gestionan
 - `--version` y `--help` son nativos de clap
 - Configura tracing (stderr para usuario, archivo de log para daemon)
-- Exit codes: 0=OK, 1=error groom, 2=pipeline con Failed, 3=parada temprana
+- Exit codes: 0=OK, 1=error plan, 2=pipeline con Failed, 3=parada temprana
 - Flag `--provider` para sobreescribir provider global desde CLI
 - Flags `--dry-run`, `--quiet`, `--resume`, `--clean-state`, `--logs`, `--config`
 
@@ -227,7 +227,7 @@ EPIC-XXX
 - `provider_for_role(role)`: resuelve el nombre del provider para un rol
 - `skill_for_role(role)`: resuelve la ruta al archivo de instrucciones
 - `all_roles()`: iterador de los 4 roles canónicos
-- `LimitsConfig`: incluye `groom_max_iterations` (default 5), `inject_feedback_on_retry` (default true)
+- `LimitsConfig`: incluye `plan_max_iterations` (default 5), `inject_feedback_on_retry` (default true)
 - `validate()`: verifica que `stories_dir` existe, crea `decisions_dir` y `log_dir`
 
 ### `state.rs` — Máquina de estados
@@ -321,13 +321,13 @@ EPIC-XXX
 - No pisa archivos existentes
 - Tests: 7 tests
 
-### `groom.rs` — Comando `plan`
+### `plan.rs` — Comando `plan`
 - `run()`: invoca al PO para generar historias desde spec
 - **Bucle de validación**: plan → validate dependencias → si errores → feedback al PO → repetir
-- Máx iteraciones: `groom_max_iterations` (default 5)
+- Máx iteraciones: `plan_max_iterations` (default 5)
 - `--max-stories` (0 = sin límite), `--replace`
-- Prompts: `groom_prompt_initial()`, `groom_prompt_fix()` con `GroomCtx`
-- El módulo mantiene el nombre `groom.rs` por compatibilidad interna; el comando CLI es `plan`
+- Prompts: `plan_prompt_initial()`, `plan_prompt_fix()` con `PlanCtx`
+- El módulo mantiene el nombre `plan.rs` por compatibilidad interna; el comando CLI es `plan`
 - Tests: 6 tests
 
 ### `hooks.rs` — Hooks post-fase

@@ -23,7 +23,7 @@ pub struct PromptContext {
 
 impl PromptContext {
     /// Prompt para el Product Owner — Refinamiento (Draft → Ready).
-    pub fn po_groom(&self) -> String {
+    pub fn po_plan(&self) -> String {
         format!(
             "Refina {id}. Lee {dir}/{id}.md.\n\
              Valídala contra el Definition of Ready. Si está lista, muévela de {from} → {to}.\n\
@@ -158,13 +158,13 @@ mod tests {
     }
 
     #[test]
-    fn po_groom_contains_story_id() {
-        let groom_ctx = PromptContext {
+    fn po_plan_contains_story_id() {
+        let plan_ctx = PromptContext {
             from: Status::Draft,
             to: Status::Ready,
             ..ctx()
         };
-        let prompt = groom_ctx.po_groom();
+        let prompt = plan_ctx.po_plan();
         assert!(prompt.contains("STORY-042"));
         assert!(prompt.contains("Draft"));
         assert!(prompt.contains("Ready"));
@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn all_prompts_contain_story_id() {
         for prompt in [
-            ctx().po_groom(),
+            ctx().po_plan(),
             ctx().po_validate(),
             ctx().qa_tests(),
             ctx().qa_fix_tests(),
@@ -199,7 +199,7 @@ mod tests {
     #[test]
     fn all_prompts_contain_no_preguntes() {
         for prompt in [
-            ctx().po_groom(),
+            ctx().po_plan(),
             ctx().po_validate(),
             ctx().qa_tests(),
             ctx().qa_fix_tests(),

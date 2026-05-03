@@ -465,7 +465,7 @@ max_reject_cycles         = 3
 agent_timeout_seconds     = 1800
 max_wall_time_seconds     = 28800
 retry_delay_base_seconds  = 10
-groom_max_iterations      = 5
+plan_max_iterations      = 5
 inject_feedback_on_retry  = true
 
 [hooks]
@@ -604,7 +604,7 @@ src/
 ├── checkpoint.rs          ← Save/load/remove state.toml
 ├── validator.rs           ← validate: chequeo pre-vuelo multi-provider
 ├── init.rs                ← init: scaffolding multi-provider
-├── groom.rs               ← plan: generación de backlog + bucle validate
+├── plan.rs               ← plan: generación de backlog + bucle validate
 ├── hooks.rs               ← Ejecución de hooks post-fase
 ├── git.rs                 ← Snapshots + rollback
 └── daemon.rs              ← Modo daemon (detach/logs/status/kill)
