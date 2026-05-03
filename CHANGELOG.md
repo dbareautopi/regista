@@ -7,6 +7,28 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.6.0] — 2026-05-03
+
+### Added
+- **Prompts agnósticos al stack (#09)**: los prompts ya no contienen hardcodeos
+  de herramientas (`cargo`, `src/`). Los comandos de build, test, lint y
+  formato se configuran en la nueva sección `[stack]` de `.regista/config.toml`.
+- **`StackConfig`**: nuevo struct con `build_command`, `test_command`,
+  `lint_command`, `fmt_command` y `src_dir` (todos opcionales).
+- **`StackConfig::render()`**: genera el bloque de comandos para el prompt.
+  Si no hay comandos definidos, devuelve instrucción genérica.
+- **Helpers `header()` / `suffix()`** en `PromptContext`: componen prompts
+  sin repetir el esqueleto común. Reutilizables para workflows custom (#04).
+
+### Changed
+- **7 prompts refactorizados**: `reviewer()`, `dev_implement()` y `dev_fix()`
+  usan `stack.render()` en vez de comandos hardcodeados. `qa_tests()` usa
+  `stack.src_dir` para placeholders. PO y QA fix prompts son stack-agnósticos.
+- **Retrocompatibilidad total**: sin `[stack]` en TOML, los prompts funcionan
+  exactamente igual que antes.
+- **Documentación actualizada**: README, DESIGN, AGENTS, HANDOFF y ROADMAP
+  reflejan la nueva sección `[stack]` y los prompts stack-agnósticos.
+
 ## [0.5.2] — 2026-05-03
 
 ### Changed
@@ -138,6 +160,7 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 - Dry-run, salida JSON, feedback rico en reintentos
 - Hooks post-fase y snapshots git
 
+[0.6.0]: https://github.com/dbareautopi/regista/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/dbareautopi/regista/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/dbareautopi/regista/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/dbareautopi/regista/compare/v0.4.1...v0.5.0

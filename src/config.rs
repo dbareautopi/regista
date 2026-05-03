@@ -9,6 +9,26 @@ use crate::providers;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
+/// Configuración del stack tecnológico del proyecto anfitrión.
+///
+/// Totalmente opcional. Si no se define, los prompts usan instrucciones
+/// genéricas ("compila/construye el proyecto") y el skill del agente
+/// se encarga de interpretarlas.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct StackConfig {
+    /// Comando para compilar/construir el proyecto.
+    pub build_command: Option<String>,
+    /// Comando para ejecutar los tests.
+    pub test_command: Option<String>,
+    /// Comando para ejecutar el linter.
+    pub lint_command: Option<String>,
+    /// Comando para verificar el formato de código.
+    pub fmt_command: Option<String>,
+    /// Directorio de código fuente (para placeholders de tests).
+    pub src_dir: Option<String>,
+}
+
 /// Configuración completa del orquestador.
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
@@ -18,6 +38,9 @@ pub struct Config {
     pub limits: LimitsConfig,
     pub hooks: HooksConfig,
     pub git: GitConfig,
+    /// Configuración del stack tecnológico (comandos de build, test, lint, fmt).
+    #[serde(default)]
+    pub stack: StackConfig,
 }
 
 /// Dónde encontrar los artefactos del workflow.
@@ -513,5 +536,46 @@ enabled = false
         assert_eq!(cfg.limits.max_iterations, 5);
         assert_eq!(cfg.hooks.post_dev.as_deref(), Some("cargo test"));
         assert!(!cfg.git.enabled);
+    }
+
+    #[test]
+    fn parse_stack_config_all_fields() {
+        let toml = r#"
+[stack]
+build_command = "npm run build"
+test_command = "npm test"
+lint_command = "eslint ."
+fmt_command = "prettier --check ."
+src_dir = "src/"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.stack.build_command.as_deref(), Some("npm run build"));
+        assert_eq!(cfg.stack.test_command.as_deref(), Some("npm test"));
+        assert_eq!(cfg.stack.lint_command.as_deref(), Some("eslint ."));
+        assert_eq!(cfg.stack.fmt_command.as_deref(), Some("prettier --check ."));
+        assert_eq!(cfg.stack.src_dir.as_deref(), Some("src/"));
+    }
+
+    #[test]
+    fn parse_stack_config_partial() {
+        let toml = r#"
+[stack]
+test_command = "pytest"
+src_dir = "src/"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.stack.test_command.as_deref(), Some("pytest"));
+        assert!(cfg.stack.build_command.is_none());
+        assert!(cfg.stack.lint_command.is_none());
+    }
+
+    #[test]
+    fn default_stack_is_all_none() {
+        let stack = StackConfig::default();
+        assert!(stack.build_command.is_none());
+        assert!(stack.test_command.is_none());
+        assert!(stack.lint_command.is_none());
+        assert!(stack.fmt_command.is_none());
+        assert!(stack.src_dir.is_none());
     }
 }

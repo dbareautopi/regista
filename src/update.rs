@@ -19,11 +19,8 @@ pub struct UpdateStatus {
 
 /// Compara dos versiones semánticas (X.Y.Z) y devuelve true si `a < b`.
 fn version_less_than(a: &str, b: &str) -> bool {
-    let parse = |v: &str| -> Vec<u32> {
-        v.split('.')
-            .filter_map(|p| p.parse::<u32>().ok())
-            .collect()
-    };
+    let parse =
+        |v: &str| -> Vec<u32> { v.split('.').filter_map(|p| p.parse::<u32>().ok()).collect() };
     let va = parse(a);
     let vb = parse(b);
     let n = va.len().max(vb.len());
@@ -46,8 +43,9 @@ fn fetch_latest_version() -> Result<Option<String>> {
         .call()
         .context("No se pudo contactar con crates.io. ¿Hay conexión a internet?")?;
 
-    let json: serde_json::Value =
-        resp.into_json().context("No se pudo interpretar la respuesta de crates.io")?;
+    let json: serde_json::Value = resp
+        .into_json()
+        .context("No se pudo interpretar la respuesta de crates.io")?;
 
     // max_stable_version es la versión estable más reciente (no yanked)
     let version = json["crate"]["max_stable_version"]
