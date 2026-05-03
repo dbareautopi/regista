@@ -7,7 +7,7 @@ del procesamiento secuencial actual (una historia por iteración).
 
 ## 📍 Posición en el roadmap
 
-**Fase 2** — se implementa justo después del multi-provider (#20).
+**Fase 7 (última)** — se implementa al final, cuando el resto del sistema esté maduro.
 
 El trait `AgentProvider` (definido en #20) ya está en producción y devuelve
 `Vec<String>` (args de CLI, agnóstico a sync/async). El paralelismo simplemente
