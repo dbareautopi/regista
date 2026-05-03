@@ -81,15 +81,27 @@ pub fn detach(
         .canonicalize()
         .unwrap_or_else(|_| project_dir.to_path_buf());
 
-    // Determinar el archivo de log: override explícito > buscar --log-file en child_args > default
+    // Determinar el archivo de log: override explícito > buscar --log-file en child_args > default.
+    // Todos los paths se resuelven contra canonical_project para evitar paths relativos en daemon.pid.
     let log_file = match log_file_override {
-        Some(p) => p.to_path_buf(),
+        Some(p) => {
+            if p.is_relative() {
+                canonical_project.join(p)
+            } else {
+                p.to_path_buf()
+            }
+        }
         None => {
             let mut log_path = canonical_project.join(".regista/daemon.log");
             let mut i = 0;
             while i < child_args.len() {
                 if child_args[i] == "--log-file" && i + 1 < child_args.len() {
-                    log_path = PathBuf::from(&child_args[i + 1]);
+                    let raw = PathBuf::from(&child_args[i + 1]);
+                    log_path = if raw.is_relative() {
+                        canonical_project.join(raw)
+                    } else {
+                        raw
+                    };
                     break;
                 }
                 i += 1;
@@ -134,7 +146,10 @@ pub fn status(project_dir: &Path) -> anyhow::Result<String> {
         .unwrap_or_else(|_| project_dir.to_path_buf());
 
     match DaemonState::load(&canonical) {
-        None => Ok("❌ No se encontró archivo PID. El daemon no está corriendo.".to_string()),
+        None => Ok(format!(
+            "❌ No se encontró daemon en {}.\n   Usa `regista status <dir>` para consultar otro proyecto.",
+            canonical.display()
+        )),
         Some(state) => {
             if is_process_alive(state.pid) {
                 Ok(format!(
@@ -145,8 +160,9 @@ pub fn status(project_dir: &Path) -> anyhow::Result<String> {
             } else {
                 DaemonState::remove(&canonical);
                 Ok(format!(
-                    "❌ PID {} ya no existe. Archivo PID huérfano limpiado.",
-                    state.pid
+                    "❌ PID {} ya no existe en {}. Archivo PID huérfano limpiado.",
+                    state.pid,
+                    canonical.display()
                 ))
             }
         }
@@ -165,15 +181,19 @@ pub fn kill(project_dir: &Path) -> anyhow::Result<String> {
     let state = match DaemonState::load(&canonical) {
         Some(s) => s,
         None => {
-            return Ok("❌ No se encontró archivo PID. El daemon no está corriendo.".to_string());
+            return Ok(format!(
+                "❌ No se encontró daemon en {}. Nada que detener.",
+                canonical.display()
+            ));
         }
     };
 
     if !is_process_alive(state.pid) {
         DaemonState::remove(&canonical);
         return Ok(format!(
-            "❌ PID {} ya no existe. Archivo PID huérfano limpiado.",
-            state.pid
+            "❌ PID {} ya no existe en {}. Archivo PID huérfano limpiado.",
+            state.pid,
+            canonical.display()
         ));
     }
 

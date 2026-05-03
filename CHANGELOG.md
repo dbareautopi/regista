@@ -7,6 +7,17 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.6.2] — 2026-05-03
+
+### Fixed
+- **`log_file` relativo en `daemon.pid`**: el path del archivo de log se guardaba
+  como ruta relativa (`./.regista/daemon.log`) en el archivo PID, lo que rompía
+  `regista logs` si se ejecutaba desde otro directorio. Ahora se resuelve contra
+  el directorio canónico del proyecto.
+- **Mensajes de `status` y `kill` más informativos**: ahora muestran la ruta
+  del directorio consultado y sugieren `regista status <dir>` para consultar
+  otros proyectos, en lugar del genérico «no se encontró archivo PID».
+
 ## [0.6.1] — 2026-05-03
 
 ### Fixed
@@ -174,6 +185,7 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 - Dry-run, salida JSON, feedback rico en reintentos
 - Hooks post-fase y snapshots git
 
+[0.6.2]: https://github.com/dbareautopi/regista/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/dbareautopi/regista/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/dbareautopi/regista/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/dbareautopi/regista/compare/v0.5.1...v0.5.2
