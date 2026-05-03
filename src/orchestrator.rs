@@ -322,7 +322,7 @@ fn run_dry(project_root: &Path, cfg: &Config, options: &RunOptions) -> anyhow::R
                 unblocks,
                 ..
             } => {
-                tracing::info!("  → {story_id} (Draft) sería procesada por PO (groom) → Ready");
+                tracing::info!("  → {story_id} (Draft) sería procesada por PO (plan) → Ready");
                 tracing::info!("    Razón: {reason}");
                 if *unblocks > 0 {
                     tracing::info!("    Desbloquearía: {unblocks} historias");
@@ -341,7 +341,7 @@ fn run_dry(project_root: &Path, cfg: &Config, options: &RunOptions) -> anyhow::R
                     if let Some(story) = stories.iter_mut().find(|s| s.id == id) {
                         let next = next_status(story.status);
                         let label = match story.status {
-                            Status::Draft => "PO (groom)",
+                            Status::Draft => "PO (plan)",
                             Status::Ready => "QA (tests)",
                             Status::TestsReady => "Dev (implement)",
                             Status::InProgress => "Dev (fix)",
@@ -689,7 +689,7 @@ fn process_story(
 
     // Prompt según el estado (sin cambios)
     let (prompt, label) = match story.status {
-        Status::Draft => (ctx.po_groom(), "PO (groom)"),
+        Status::Draft => (ctx.po_plan(), "PO (plan)"),
         Status::Ready => (ctx.qa_tests(), "QA (tests)"),
         Status::TestsReady => {
             if story.last_actor().as_deref() == Some("Dev") {

@@ -27,12 +27,12 @@
 │   ├── deadlock.rs             ← analyze(), DeadlockResolution, priorización
 │   ├── providers.rs            ← trait AgentProvider + PiProvider/ClaudeCodeProvider/CodexProvider/OpenCodeProvider + factory from_name()
 │   ├── agent.rs                ← invoke_with_retry(provider: &dyn AgentProvider, …), AgentOptions, feedback rico, guardado decisiones
-│   ├── prompts.rs              ← PromptContext, 7 funciones de prompt (po_groom, qa_tests, etc.)
+│   ├── prompts.rs              ← PromptContext, 7 funciones de prompt (po_plan, qa_tests, etc.)
 │   ├── orchestrator.rs         ← run(), run_real(), run_dry(), process_story() con resolución de provider por rol
 │   ├── checkpoint.rs           ← OrchestratorState: save/load/remove (.regista/state.toml)
 │   ├── validator.rs            ← validate(): chequeo pre-vuelo multi-provider (config, skills, historias, dependencias, git)
 │   ├── init.rs                 ← init(): scaffolding multi-provider (pi, claude, codex, opencode)
-│   ├── groom.rs                ← run(): generación de backlog (comando `plan`)
+│   ├── plan.rs                ← run(): generación de backlog (comando `plan`)
 │   ├── hooks.rs                ← run_hook(): comandos post-fase
 │   ├── git.rs                  ← snapshot(), rollback()
 │   ├── daemon.rs               ← detach(), status(), kill(), follow()
@@ -74,7 +74,7 @@
 
 | Comando | Módulo | Función |
 |---------|--------|---------|
-| `regista plan <spec>` | `groom.rs` | Generar historias desde una especificación (daemon) |
+| `regista plan <spec>` | `plan.rs` | Generar historias desde una especificación (daemon) |
 | `regista auto <spec>` | `main.rs` | `plan` + `run` en un solo paso (daemon) |
 | `regista run [dir]` | `orchestrator.rs` | Pipeline sobre historias existentes (daemon) |
 | `regista logs [dir]` | `daemon.rs` | Ver el log del daemon en vivo (`tail -f`) |
@@ -163,9 +163,9 @@
 
 ### Plan / Groom (`13`)
 - `regista plan <spec.md>`: PO descompone spec en historias y épicas
-- **Bucle de validación**: plan → validate dependencias → si errores → feedback al PO → corregir → repetir (máx `groom_max_iterations`=5)
+- **Bucle de validación**: plan → validate dependencias → si errores → feedback al PO → corregir → repetir (máx `plan_max_iterations`=5)
 - `--max-stories` (0 = sin límite), `--replace`
-- El módulo sigue llamándose `groom.rs` internamente
+- El módulo sigue llamándose `plan.rs` internamente
 
 ### Checkpoint / Resume (`07`)
 - `checkpoint.rs`: `OrchestratorState` guardado en `.regista/state.toml` tras cada iteración

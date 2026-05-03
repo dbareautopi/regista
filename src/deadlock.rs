@@ -62,7 +62,7 @@ pub fn analyze(stories: &[Story], graph: &DependencyGraph) -> DeadlockResolution
 
     for story in non_terminal {
         match story.status {
-            // Caso A: Draft → necesita PO grooming
+            // Caso A: Draft → necesita PO planning
             Status::Draft => {
                 let unblocks = graph.blocks_count(&story.id);
                 candidates.push(Candidate {
@@ -206,7 +206,7 @@ mod tests {
 
         match result {
             DeadlockResolution::InvokePoFor { story_id, .. } => {
-                assert_eq!(story_id, "STORY-001", "Debería groom el Draft que bloquea");
+                assert_eq!(story_id, "STORY-001", "Debería planificar el Draft que bloquea");
             }
             _ => panic!("Expected InvokePoFor, got {result:?}"),
         }

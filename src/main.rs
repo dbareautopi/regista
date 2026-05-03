@@ -1,7 +1,7 @@
 //! regista — 🎬 AI agent director.
 //!
 //! Orquestador genérico de agentes para pi, Claude Code, Codex y OpenCode.
-//! Pipeline con 3 modos: plan (groom), auto (groom + pipeline), run (pipeline).
+//! Pipeline con 3 modos: plan, auto (plan + pipeline), run (pipeline).
 //! Toda ejecución es en modo daemon (background). Usa --logs para ver el progreso.
 
 mod agent;
@@ -11,7 +11,7 @@ mod daemon;
 mod deadlock;
 mod dependency_graph;
 mod git;
-mod groom;
+mod plan;
 mod hooks;
 mod init;
 mod orchestrator;
@@ -68,7 +68,7 @@ struct RepoArgs {
     dir: String,
 }
 
-/// Args del modo plan (groom).
+/// Args del modo plan.
 #[derive(Args, Debug)]
 struct PlanModeArgs {
     /// Archivo de especificación de producto
@@ -259,7 +259,7 @@ fn main() {
 fn handle_plan(args: PlanArgs) {
     let project_root = Path::new(&args.repo.dir);
 
-    // Proceso hijo daemon: ejecutar groom y salir
+    // Proceso hijo daemon: ejecutar plan y salir
     if args.daemon.daemon {
         setup_daemon_tracing(args.daemon.log_file.as_deref(), args.common.quiet);
         let _cleanup = daemon::PidCleanup(project_root.to_path_buf());
@@ -268,7 +268,7 @@ fn handle_plan(args: PlanArgs) {
             args.common.config.as_deref(),
             args.common.provider.as_deref(),
         );
-        match groom::run(
+        match plan::run(
             project_root,
             Path::new(&args.plan_mode.spec),
             &cfg,
@@ -299,7 +299,7 @@ fn handle_plan(args: PlanArgs) {
         return;
     }
 
-    // Modo dry-run: ejecutar groom síncrono
+    // Modo dry-run: ejecutar plan síncrono
     if args.common.dry_run {
         setup_user_tracing(args.common.quiet, false, None);
         let cfg = load_config(
@@ -307,7 +307,7 @@ fn handle_plan(args: PlanArgs) {
             args.common.config.as_deref(),
             args.common.provider.as_deref(),
         );
-        match groom::run(
+        match plan::run(
             project_root,
             Path::new(&args.plan_mode.spec),
             &cfg,
@@ -357,7 +357,7 @@ fn handle_auto(args: AutoArgs) {
         println!("✅ Checkpoint eliminado.");
     }
 
-    // Proceso hijo daemon: groom + pipeline
+    // Proceso hijo daemon: plan + pipeline
     if args.daemon.daemon {
         setup_daemon_tracing(args.daemon.log_file.as_deref(), args.common.quiet);
         let _cleanup = daemon::PidCleanup(project_root.to_path_buf());
@@ -368,30 +368,30 @@ fn handle_auto(args: AutoArgs) {
         );
 
         // 1. Groom
-        match groom::run(
+        match plan::run(
             project_root,
             Path::new(&args.plan_mode.spec),
             &cfg,
             args.plan_mode.max_stories,
             args.plan_mode.replace,
         ) {
-            Ok(groom_result) => {
+            Ok(plan_result) => {
                 tracing::info!(
                     "Groom completado: {} historias, {} épicas, deps={}",
-                    groom_result.stories_created,
-                    groom_result.epics_created,
-                    if groom_result.dependencies_clean {
+                    plan_result.stories_created,
+                    plan_result.epics_created,
+                    if plan_result.dependencies_clean {
                         "limpias"
                     } else {
                         "con errores"
                     }
                 );
 
-                if groom_result.stories_created == 0 {
+                if plan_result.stories_created == 0 {
                     tracing::warn!("No se generaron historias. Omitiendo pipeline.");
                     return;
                 }
-                if !groom_result.dependencies_clean {
+                if !plan_result.dependencies_clean {
                     tracing::warn!("Grafo de dependencias con errores. Omitiendo pipeline.");
                     std::process::exit(2);
                 }
@@ -429,7 +429,7 @@ fn handle_auto(args: AutoArgs) {
         }
     }
 
-    // Modo dry-run: groom síncrono + pipeline dry-run síncrono
+    // Modo dry-run: plan síncrono + pipeline dry-run síncrono
     if args.common.dry_run {
         setup_user_tracing(args.common.quiet, false, None);
         let cfg = load_config(
@@ -439,23 +439,23 @@ fn handle_auto(args: AutoArgs) {
         );
 
         // Groom
-        match groom::run(
+        match plan::run(
             project_root,
             Path::new(&args.plan_mode.spec),
             &cfg,
             args.plan_mode.max_stories,
             args.plan_mode.replace,
         ) {
-            Ok(groom_result) => {
+            Ok(plan_result) => {
                 println!(
                     "✅ Groom: {} historias, {} épicas",
-                    groom_result.stories_created, groom_result.epics_created
+                    plan_result.stories_created, plan_result.epics_created
                 );
-                if !groom_result.dependencies_clean {
+                if !plan_result.dependencies_clean {
                     println!("⚠️  Dependencias con errores. Omitiendo pipeline.");
                     return;
                 }
-                if groom_result.stories_created == 0 {
+                if plan_result.stories_created == 0 {
                     println!("⚠️  Sin historias. Omitiendo pipeline.");
                     return;
                 }
