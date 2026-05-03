@@ -27,7 +27,7 @@ provider = "{provider_name}"
 [limits]
 max_iterations = 0  # 0 = auto: nº de historias × 6
 max_retries_per_step = 5
-max_reject_cycles = 3
+max_reject_cycles = 8
 agent_timeout_seconds = 1800
 max_wall_time_seconds = 28800
 retry_delay_base_seconds = 10
