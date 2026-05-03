@@ -206,7 +206,10 @@ mod tests {
 
         match result {
             DeadlockResolution::InvokePoFor { story_id, .. } => {
-                assert_eq!(story_id, "STORY-001", "Debería planificar el Draft que bloquea");
+                assert_eq!(
+                    story_id, "STORY-001",
+                    "Debería planificar el Draft que bloquea"
+                );
             }
             _ => panic!("Expected InvokePoFor, got {result:?}"),
         }

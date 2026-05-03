@@ -1,9 +1,9 @@
 # 🧠 regista — Session Handoff
 
 > **Fecha**: 2026-05-03
-> **Sesión**: v0.5.0 — Refactor CLI (clap Subcommand, daemon), repriorización paralelismo (#01 al final), comando `update`, `--version`
-> **Versión**: v0.5.0
-> **Estado**: 145 tests pasando, 0 fallos, 1 ignorado, 0 warnings.
+> **Sesión**: v0.5.2 — #09 Prompts agnósticos al stack (StackConfig, render, header/suffix)
+> **Versión**: v0.5.2
+> **Estado**: 158 tests pasando, 0 fallos, 1 ignorado, 0 warnings.
 
 ---
 
@@ -27,7 +27,7 @@
 │   ├── deadlock.rs             ← analyze(), DeadlockResolution, priorización
 │   ├── providers.rs            ← trait AgentProvider + PiProvider/ClaudeCodeProvider/CodexProvider/OpenCodeProvider + factory from_name()
 │   ├── agent.rs                ← invoke_with_retry(provider: &dyn AgentProvider, …), AgentOptions, feedback rico, guardado decisiones
-│   ├── prompts.rs              ← PromptContext, 7 funciones de prompt (po_plan, qa_tests, etc.)
+│   ├── prompts.rs              ← PromptContext, 7 prompts stack-agnósticos, StackConfig::render(), header/suffix
 │   ├── orchestrator.rs         ← run(), run_real(), run_dry(), process_story() con resolución de provider por rol
 │   ├── checkpoint.rs           ← OrchestratorState: save/load/remove (.regista/state.toml)
 │   ├── validator.rs            ← validate(): chequeo pre-vuelo multi-provider (config, skills, historias, dependencias, git)
@@ -47,7 +47,7 @@
 │   ├── 06-init-scaffold.md            ← ✅ IMPLEMENTADO
 │   ├── 07-checkpoint-resume.md        ← ✅ IMPLEMENTADO
 │   ├── 08-feedback-agentes.md         ← ✅ IMPLEMENTADO
-│   ├── 09-prompts-agnosticos.md       ← ✍️  Diseño definido (Fase 2)
+│   ├── 09-prompts-agnosticos.md       ← ✅ IMPLEMENTADO (Fase 2)
 │   ├── 10-cross-story-context.md      ← ✍️  Diseño definido (Fase 4)
 │   ├── 13-groom-generacion-historias.md ← ✅ IMPLEMENTADO (comando `plan`)
 │   ├── 14-groom-from-dir.md           ← Pendiente (`plan --from-dir`, Fase 3)
@@ -181,6 +181,16 @@
 - `AgentResult` incluye `attempts: Vec<AttemptTrace>`
 - Configurable: `inject_feedback_on_retry` (default true)
 
+### v0.5.2 — Prompts agnósticos al stack (#09)
+- **StackConfig**: struct con `build_command`, `test_command`, `lint_command`, `fmt_command`, `src_dir` (todos opcionales)
+- **`StackConfig::render()`**: genera bloque de comandos para el prompt o instrucción genérica
+- **`PromptContext::header()` / `suffix()`**: helpers para componer prompts sin repetir el esqueleto
+- **7 prompts refactorizados**: `reviewer()`, `dev_implement()` y `dev_fix()` usan `stack.render()`;
+  `qa_tests()` usa `stack.src_dir` para placeholders; PO/QA fix prompts son stack-agnósticos
+- **Retrocompatibilidad total**: sin `[stack]` en TOML → `render()` devuelve instrucción genérica
+- **Preparado para #04**: `header()`/`suffix()` y `StackConfig` son bloques reutilizables por transiciones custom
+- **Config**: nueva sección `[stack]` en `.regista/config.toml`, parseo con serde(default)
+
 ### v0.5.0 — CLI refactor, daemon, update, --version
 - **CLI con clap Subcommand**: `plan`, `auto`, `run`, `logs`, `status`, `kill`, `validate`, `init`, `update`
 - **Modo daemon**: `plan`, `auto`, `run` spawnean un proceso hijo; `logs`/`status`/`kill` lo gestionan
@@ -223,7 +233,7 @@
 ```bash
 cargo build              # Debug
 cargo build --release    # Release
-cargo test               # 145 tests, 0 fallos, 1 ignorado
+cargo test               # 158 tests, 0 fallos, 1 ignorado
 cargo check              # Verificar warnings
 cargo fmt                # Formatear
 cargo clippy -- -D warnings  # 0 issues
@@ -261,7 +271,6 @@ EPIC-XXX
 ## 🚧 Pendiente (roadmap)
 
 ### Media prioridad
-- **09 - Prompts agnósticos al stack**: desacoplar referencias a cargo/npm (Fase 2, ✍️ diseño definido)
 - **10 - Cross-story context**: agentes reciben contexto de historias relacionadas (Fase 4, ✍️ diseño definido)
 - **04 - Workflow configurable**: transiciones definibles en `.regista/config.toml` (Fase 5)
 - **11 - TUI / dashboard**: visualización en vivo del progreso (Fase 6)

@@ -87,7 +87,31 @@ post_reviewer = "cargo test && cargo clippy -- -D warnings"
 
 [git]
 enabled = true
+
+[stack]
+# Comandos del stack. Opcionales: si no se definen, el prompt usa
+# instrucciones genéricas y el skill del agente interpreta el stack.
+build_command = "npm run build"
+test_command  = "npm test"
+lint_command  = "eslint ."
+fmt_command   = "prettier --check ."
+src_dir       = "src/"
 ```
+
+### 2.1 StackConfig
+
+```rust
+pub struct StackConfig {
+    pub build_command: Option<String>,
+    pub test_command: Option<String>,
+    pub lint_command: Option<String>,
+    pub fmt_command: Option<String>,
+    pub src_dir: Option<String>,
+}
+```
+
+`StackConfig::render()` genera el bloque de comandos para el prompt.
+Si no hay comandos definidos, devuelve instrucción genérica.
 
 ---
 
@@ -219,7 +243,7 @@ regista/
 │   ├── deadlock.rs            ← analyze(), DeadlockResolution, priorización
 │   ├── providers.rs           ← trait AgentProvider + 4 implementaciones + factory
 │   ├── agent.rs               ← invoke_with_retry(), AgentOptions, feedback rico
-│   ├── prompts.rs             ← PromptContext, 7 funciones de prompt
+│   ├── prompts.rs             ← PromptContext, 7 prompts stack-agnósticos, StackConfig::render()
 │   ├── orchestrator.rs        ← run(), run_real(), run_dry(), process_story()
 │   ├── checkpoint.rs          ← OrchestratorState: save/load/remove (.regista/state.toml)
 │   ├── validator.rs           ← validate(): chequeo pre-vuelo de proyecto

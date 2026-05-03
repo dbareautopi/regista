@@ -476,9 +476,20 @@ post_reviewer = "cargo test"
 
 [git]
 enabled = true
+
+[stack]
+# Comandos del stack tecnológico. Opcionales: si no se definen,
+# los agentes usan instrucciones genéricas y su skill interpreta el stack.
+build_command = "npm run build"
+test_command  = "npm test"
+lint_command  = "eslint ."
+fmt_command   = "prettier --check ."
+src_dir       = "src/"
 ```
 
-Todos los campos son opcionales.
+Todos los campos son opcionales. Si no se define `[stack]`, los prompts
+usan instrucciones genéricas ("compila/construye el proyecto") y el skill del
+agente interpreta el stack automáticamente.
 
 ### Providers soportados
 

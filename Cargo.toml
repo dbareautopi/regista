@@ -1,8 +1,8 @@
 [package]
 name = "regista"
-version = "0.5.2"
+version = "0.6.0"
 edition = "2021"
-description = "🎬 AI agent director — state-machine-driven pipeline for pi"
+description = "🎬 AI agent director — multi-provider, stack-agnostic pipeline"
 license = "MIT"
 repository = "https://github.com/dbareautopi/regista"
 documentation = "https://github.com/dbareautopi/regista"

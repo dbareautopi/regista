@@ -58,7 +58,7 @@ regista/
 │   ├── deadlock.rs            ← analyze(), DeadlockResolution, priorización
 │   ├── providers.rs           ← trait AgentProvider + Pi/ClaudeCode/Codex/OpenCode + factory
 │   ├── agent.rs               ← invoke_with_retry(provider: &dyn AgentProvider, …), AgentOptions, feedback rico
-│   ├── prompts.rs             ← PromptContext, 7 funciones de prompt
+│   ├── prompts.rs             ← PromptContext, 7 prompts stack-agnósticos, StackConfig::render()
 │   ├── orchestrator.rs        ← run(), run_real(), run_dry(), process_story() con resolución de provider por rol
 │   ├── checkpoint.rs          ← OrchestratorState: save/load/remove (.regista/state.toml)
 │   ├── validator.rs           ← validate(): chequeo pre-vuelo multi-provider
@@ -275,10 +275,14 @@ EPIC-XXX
 - Tests: 3 tests + 1 ignorado
 
 ### `prompts.rs` — Generación de prompts
-- `PromptContext`: `story_id`, `stories_dir`, `decisions_dir`, `last_rejection`, `from`, `to`
-- 7 funciones de prompt (una por transición accionable por agentes)
+- `PromptContext`: `story_id`, `stories_dir`, `decisions_dir`, `last_rejection`, `from`, `to`, `stack: StackConfig`
+- `StackConfig::render()`: renderiza bloque de comandos (build/test/lint/fmt) o instrucción genérica
+- `PromptContext::header()` / `suffix()`: helpers privados para componer prompts
+- 7 funciones de prompt (una por transición accionable por agentes), todas stack-agnósticas
+- Los prompts de Dev (`dev_implement`, `dev_fix`) y Reviewer inyectan `stack.render()`
+- `qa_tests()` usa `stack.src_dir` para placeholders (si está definido)
 - Todos los prompts terminan con `"NO preguntes. 100% autónomo."`
-- Tests: 4 tests
+- Tests: 15 tests
 
 ### `orchestrator.rs` — Loop principal
 - `run()`: dispatch a `run_real()` o `run_dry()` según `options.dry_run`

@@ -678,6 +678,7 @@ fn process_story(
         last_rejection: story.last_rejection.clone(),
         from: story.status,
         to: next_status(story.status),
+        stack: cfg.stack.clone(),
     };
 
     // Determinar el rol, provider, y path de instrucciones
@@ -700,6 +701,7 @@ fn process_story(
                     decisions_dir: ctx.decisions_dir.clone(),
                     last_rejection: ctx.last_rejection.clone(),
                     from: ctx.from,
+                    stack: ctx.stack.clone(),
                 };
                 (qa_ctx.qa_fix_tests(), "QA (fix tests)")
             } else {

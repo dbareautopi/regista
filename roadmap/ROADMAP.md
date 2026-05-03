@@ -34,7 +34,7 @@ y notas de implementación.
 
 | # | Funcionalidad | Doc | Esfuerzo |
 |---|---|---|---|
-| 9 | **Prompts agnósticos al stack**: desacoplar referencias a herramientas (cargo, npm) | [`09-prompts-agnosticos.md`](./09-prompts-agnosticos.md) ✍️ | Bajo |
+| 9 | **Prompts agnósticos al stack**: desacoplar referencias a herramientas (cargo, npm) | [`09-prompts-agnosticos.md`](./09-prompts-agnosticos.md) ✅ | Bajo |
 | 10 | **Conciencia cross-story**: agentes reciben contexto de historias relacionadas | [`10-cross-story-context.md`](./10-cross-story-context.md) ✍️ | Medio |
 | 11 | **TUI / dashboard**: visualización en vivo del progreso del pipeline | [`11-tui-dashboard.md`](./11-tui-dashboard.md) | Medio |
 | 12 | **Cost tracking**: estimación y límite de gasto en llamadas LLM | [`12-cost-tracking.md`](./12-cost-tracking.md) | Medio |
@@ -80,7 +80,7 @@ Fase 1 (abstracción fundacional) ── 🆕 #20 multi-provider (Claude Code, C
 
 Fase 2 (prerrequisito natural) ──── #09 prompts agnósticos al stack
                                      ├── Templates de prompt con vars de stack
-                                     └── Esfuerzo: bajo (~80 líneas)
+                                     └── Esfuerzo: bajo (~80 líneas) ✅ IMPLEMENTADO
 
 Fase 3 (quick win) ──────────────── #14 plan --from-dir
                                      ├── Iterar specs en directorio
