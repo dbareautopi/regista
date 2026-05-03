@@ -34,6 +34,7 @@ No importa si el proyecto usa Rust, Python, o cualquier cosa. Solo necesita:
 | Fechas | **chrono** |
 | Glob | **glob** 0.3 |
 | Tests | `#[cfg(test)]` + `tempfile` (dev-dependency) |
+| HTTP client | **ureq** 2 (json feature) |
 | Build | `cargo` |
 
 ---
@@ -49,8 +50,8 @@ regista/
 ├── Cargo.toml                 ← dependencias y metadata del crate
 ├── .gitignore
 ├── src/
-│   ├── main.rs                ← CLI (clap), subcomandos, JSON output, exit codes, --provider
-│   ├── config.rs              ← Config, ProjectConfig, AgentsConfig + AgentRoleConfig, carga TOML
+│   ├── main.rs                ← CLI (clap Subcommand), 9 subcomandos, --version
+│   ├── config.rs              ← Config, AgentsConfig + AgentRoleConfig, carga TOML
 │   ├── state.rs               ← Status, Actor, Transition, can_transition_to(), ALL
 │   ├── story.rs               ← Story, parseo de .md, set_status(), advance_status_in_memory()
 │   ├── dependency_graph.rs    ← DependencyGraph, DFS para ciclos, blocks_count()
@@ -62,23 +63,26 @@ regista/
 │   ├── checkpoint.rs          ← OrchestratorState: save/load/remove (.regista/state.toml)
 │   ├── validator.rs           ← validate(): chequeo pre-vuelo multi-provider
 │   ├── init.rs                ← init(): scaffolding multi-provider (pi, claude, codex, opencode)
-│   ├── groom.rs               ← run(): generación de backlog desde spec con bucle validate
+│   ├── groom.rs               ← run(): generación de backlog (comando `plan`)
 │   ├── hooks.rs               ← run_hook(), ejecución de comandos shell post-fase
 │   ├── git.rs                 ← snapshot(), rollback(), init_git()
-│   └── daemon.rs              ← detach(), status(), kill(), follow(), DaemonState
+│   ├── daemon.rs              ← detach(), status(), kill(), follow(), DaemonState
+│   └── update.rs              ← check() + run(): auto-update desde crates.io
 ├── roadmap/                   ← Documentos de diseño de features futuras
 │   ├── ROADMAP.md             ← Índice con estado de cada feature y orden de implementación
-│   ├── 01-paralelismo.md
+│   ├── 01-paralelismo.md      ← Diseño detallado (Fase 7, último)
 │   ├── 02-salida-json-ci-cd.md        ← ✅ IMPLEMENTADO
 │   ├── 03-dry-run.md                  ← ✅ IMPLEMENTADO
-│   ├── 04-workflow-configurable.md
+│   ├── 04-workflow-configurable.md    ← Diseño detallado (Fase 5)
 │   ├── 05-validate.md                 ← ✅ IMPLEMENTADO
 │   ├── 06-init-scaffold.md            ← ✅ IMPLEMENTADO
 │   ├── 07-checkpoint-resume.md        ← ✅ IMPLEMENTADO
 │   ├── 08-feedback-agentes.md         ← ✅ IMPLEMENTADO
-│   ├── 13-groom-generacion-historias.md ← ✅ IMPLEMENTADO
-│   ├── 14-groom-from-dir.md
-│   ├── 15-groom-interactive.md
+│   ├── 09-prompts-agnosticos.md       ← ✍️  Diseño definido (Fase 2)
+│   ├── 10-cross-story-context.md      ← ✍️  Diseño definido (Fase 4)
+│   ├── 13-groom-generacion-historias.md ← ✅ IMPLEMENTADO (comando `plan`)
+│   ├── 14-groom-from-dir.md           ← Pendiente (`plan --from-dir`, Fase 3)
+│   ├── 15-groom-interactive.md        ← Pendiente (`plan --interactive`, Fase 6)
 │   ├── 20-multi-provider.md           ← ✅ IMPLEMENTADO
 │   └── 20-implementacion.md           ← Detalle técnico de la implementación
 └── tests/
@@ -206,12 +210,14 @@ EPIC-XXX
 ## 🧩 Descripción de módulos
 
 ### `main.rs` — Entry point
-- Define `Cli` con clap (16 flags + project_dir posicional)
-- Detecta subcomandos `validate`, `init`, `groom`, `help` antes del parseo de clap
-- Configura tracing (stderr, env-filter, respeta `--quiet`)
-- Salida JSON a stdout con `--json`; exit codes 0/2/3
-- Manejo de `--resume` y `--clean-state`
+- Define `Cli` con `#[derive(Parser)]` y `#[derive(Subcommand)]` de clap 4
+- 9 subcomandos: `plan`, `auto`, `run`, `logs`, `status`, `kill`, `validate`, `init`, `update`
+- `plan`/`auto`/`run` spawnean un daemon (proceso hijo); `logs`/`status`/`kill` lo gestionan
+- `--version` y `--help` son nativos de clap
+- Configura tracing (stderr para usuario, archivo de log para daemon)
+- Exit codes: 0=OK, 1=error groom, 2=pipeline con Failed, 3=parada temprana
 - Flag `--provider` para sobreescribir provider global desde CLI
+- Flags `--dry-run`, `--quiet`, `--resume`, `--clean-state`, `--logs`, `--config`
 
 ### `config.rs` — Configuración
 - `Config` con `#[serde(default)]`: todos los campos tienen defaults razonables
@@ -315,12 +321,13 @@ EPIC-XXX
 - No pisa archivos existentes
 - Tests: 7 tests
 
-### `groom.rs` — Comando `groom`
+### `groom.rs` — Comando `plan`
 - `run()`: invoca al PO para generar historias desde spec
-- **Bucle de validación**: groom → validate dependencias → si errores → feedback al PO → repetir
+- **Bucle de validación**: plan → validate dependencias → si errores → feedback al PO → repetir
 - Máx iteraciones: `groom_max_iterations` (default 5)
-- `--max-stories` (0 = sin límite), `--merge`/`--replace`, `--provider`
+- `--max-stories` (0 = sin límite), `--replace`
 - Prompts: `groom_prompt_initial()`, `groom_prompt_fix()` con `GroomCtx`
+- El módulo mantiene el nombre `groom.rs` por compatibilidad interna; el comando CLI es `plan`
 - Tests: 6 tests
 
 ### `hooks.rs` — Hooks post-fase
@@ -337,6 +344,13 @@ EPIC-XXX
 - Estado guardado en `.regista/daemon.pid` (TOML)
 - Tests: 6 tests
 
+### `update.rs` — Auto-update
+- `check()`: consulta `https://crates.io/api/v1/crates/regista` vía `ureq`
+- `run(auto_yes)`: compara versiones, pregunta confirmación, ejecuta `cargo install regista --version <latest>`
+- `current_version()`: devuelve `env!("CARGO_PKG_VERSION")`
+- Flag `--yes` para omitir prompt interactivo
+- Tests: 2 tests
+
 ---
 
 ## 💡 Decisiones de diseño importantes
@@ -351,8 +365,10 @@ EPIC-XXX
    compatible con ejecución síncrona y asíncrona (paralelismo #01).  
    El invocador decide si usar `std::process::Command` o `tokio::process::Command`.
 
-4. **Subcomandos vía args manual**: `validate`, `init`, `groom` se detectan antes de clap  
-   inspeccionando `std::env::args()`. Evita refactorizar toda la CLI con clap subcommands.
+4. **CLI con clap Subcommand**: la CLI usa `#[derive(Subcommand)]` de clap 4.
+   Los subcomandos son `plan`, `auto`, `run`, `logs`, `status`, `kill`,
+   `validate`, `init`, `update`. `--version` y `--help` son nativos de clap.
+   Ya no se usa detección manual de args.
 
 5. **Dry-run en memoria**: `advance_status_in_memory()` muta `Story` sin tocar el filesystem.  
    Permite simular pipelines completos sin gastar créditos de LLM.
@@ -363,11 +379,11 @@ EPIC-XXX
 7. **Feedback rico en reintentos**: cuando un agente falla, su stderr se guarda en  
    `decisions/` y se inyecta en el prompt del reintento. Truncado a 2000 bytes.
 
-8. **Groom con bucle validate**: generar historias no basta — hay que validar que las  
+8. **Plan con bucle validate**: generar historias no basta — hay que validar que las  
    dependencias son correctas. El PO recibe feedback concreto y corrige en bucle.
 
-9. **Salida JSON dual**: `--json` emite JSON a stdout, logs a stderr.  
-   `--quiet` suprime logs. Compatible con `regista --json > report.json`.
+9. **Salida JSON en validate**: `regista validate --json` emite JSON a stdout.
+   El pipeline daemon escribe resultados en `.regista/daemon.log`.
 
 10. **Backoff exponencial**: `agent.rs` duplica el delay entre reintentos (`delay *= 2`).
 
@@ -390,14 +406,14 @@ EPIC-XXX
 
 | # | Feature | Esfuerzo | Fase |
 |---|---------|----------|------|
-| 01 | Paralelismo | Alto | 2 |
-| 04 | Workflow configurable | Medio | 6 |
-| 09 | Prompts agnósticos al stack | Bajo | 3 |
-| 10 | Cross-story context | Medio | 5 |
-| 11 | TUI / dashboard | Medio | 7 |
-| 12 | Cost tracking | Medio | 7 |
-| 14 | Groom `--from-dir` | Bajo | 4 |
-| 15 | Groom `--interactive` | Medio | 7 |
+| 01 | Paralelismo | Alto | 7 (último) |
+| 04 | Workflow configurable | Medio | 5 |
+| 09 | Prompts agnósticos al stack | Bajo | 2 |
+| 10 | Cross-story context | Medio | 4 |
+| 11 | TUI / dashboard | Medio | 6 |
+| 12 | Cost tracking | Medio | 6 |
+| 14 | Plan `--from-dir` | Bajo | 3 |
+| 15 | Plan `--interactive` | Medio | 6 |
 
 ---
 
@@ -406,7 +422,7 @@ EPIC-XXX
 - **Tests unitarios**: cada módulo tiene `#[cfg(test)] mod tests` con fixtures inline
 - **Fixtures**: `tests/fixtures/` contiene archivos .md de ejemplo para pruebas de parseo
 - **Test ignorado**: `agent::tests::invoke_with_retry_fails_when_pi_not_installed` (requiere `pi` en PATH)
-- **Total**: 128 tests pasando, 0 fallos, 1 ignorado
+- **Total**: 145 tests pasando, 0 fallos, 1 ignorado
 
 Para añadir tests:
 - Usa `make_story()` o `story_fixture()` helpers para crear Stories sintéticas

@@ -7,6 +7,19 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.5.1] — 2026-05-03
+
+### Added
+- **Comando `regista update`**: comprueba si hay una nueva versión en crates.io y la instala automáticamente con `cargo install`. Flag `--yes` para omitir la confirmación interactiva.
+- **`regista --version` / `-V`**: muestra la versión instalada (nativo de clap).
+
+### Changed
+- **Repriorización del roadmap**: paralelismo (#01) movido de Fase 2 a Fase 7 (último). El orden ahora es: #20 → #09 → #14 → #10 → #04 → (#11, #12, #15) → #01.
+- **Documentación actualizada**: `ROADMAP.md`, `HANDOFF.md` y `AGENTS.md` reflejan la CLI real de v0.5.0 (9 subcomandos, daemon, `plan` en vez de `groom`).
+
+### Fixed
+- **Clippy warning**: `map_or` → `is_none_or` en `update.rs`.
+
 ## [0.5.0] — 2026-05-02
 
 ### Changed
@@ -116,6 +129,7 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 - Dry-run, salida JSON, feedback rico en reintentos
 - Hooks post-fase y snapshots git
 
+[0.5.1]: https://github.com/dbareautopi/regista/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/dbareautopi/regista/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/dbareautopi/regista/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/dbareautopi/regista/compare/v0.3.4...v0.4.0

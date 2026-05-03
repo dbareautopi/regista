@@ -1,9 +1,9 @@
 # 🧠 regista — Session Handoff
 
-> **Fecha**: 2026-05-01
-> **Sesión**: Definición de roadmap #09 (prompts agnósticos) y #10 (cross-story context) + análisis de colisiones con paralelismo
-> **Versión**: v0.3.0
-> **Estado**: 128 tests pasando, 0 fallos, 1 ignorado, 0 warnings.
+> **Fecha**: 2026-05-03
+> **Sesión**: v0.5.0 — Refactor CLI (clap Subcommand, daemon), repriorización paralelismo (#01 al final), comando `update`, `--version`
+> **Versión**: v0.5.0
+> **Estado**: 145 tests pasando, 0 fallos, 1 ignorado, 0 warnings.
 
 ---
 
@@ -19,7 +19,7 @@
 ├── HANDOFF.md                  ← Este documento
 ├── .gitignore
 ├── src/
-│   ├── main.rs                 ← CLI, 6 subcomandos (run/validate/init/groom/help + flags), JSON output, --provider
+│   ├── main.rs                 ← CLI (clap Subcommand), 9 subcomandos (plan/auto/run/logs/status/kill/validate/init/update), --version
 │   ├── config.rs               ← Config, AgentsConfig + AgentRoleConfig, provider_for_role(), skill_for_role(), carga TOML
 │   ├── state.rs                ← Status (9), Actor (5), Transition, can_transition_to()
 │   ├── story.rs                ← Story, parseo .md, set_status(), advance_status_in_memory()
@@ -32,25 +32,26 @@
 │   ├── checkpoint.rs           ← OrchestratorState: save/load/remove (.regista/state.toml)
 │   ├── validator.rs            ← validate(): chequeo pre-vuelo multi-provider (config, skills, historias, dependencias, git)
 │   ├── init.rs                 ← init(): scaffolding multi-provider (pi, claude, codex, opencode)
-│   ├── groom.rs                ← run(): generación de backlog desde spec con bucle validate
+│   ├── groom.rs                ← run(): generación de backlog (comando `plan`)
 │   ├── hooks.rs                ← run_hook(): comandos post-fase
 │   ├── git.rs                  ← snapshot(), rollback()
-│   └── daemon.rs               ← detach(), status(), kill(), follow()
+│   ├── daemon.rs               ← detach(), status(), kill(), follow()
+│   └── update.rs                ← check() + run(): auto-update desde crates.io
 ├── roadmap/
 │   ├── ROADMAP.md              ← Índice general con estado de cada feature y orden de implementación
-│   ├── 01-paralelismo.md       ← Diseño detallado (Fase 2, pendiente)
+│   ├── 01-paralelismo.md       ← Diseño detallado (Fase 7, último, pendiente)
 │   ├── 02-salida-json-ci-cd.md        ← ✅ IMPLEMENTADO
 │   ├── 03-dry-run.md                  ← ✅ IMPLEMENTADO
-│   ├── 04-workflow-configurable.md    ← Diseño detallado (Fase 6, pendiente)
+│   ├── 04-workflow-configurable.md    ← Diseño detallado (Fase 5, pendiente)
 │   ├── 05-validate.md                 ← ✅ IMPLEMENTADO
 │   ├── 06-init-scaffold.md            ← ✅ IMPLEMENTADO
 │   ├── 07-checkpoint-resume.md        ← ✅ IMPLEMENTADO
 │   ├── 08-feedback-agentes.md         ← ✅ IMPLEMENTADO
-│   ├── 09-prompts-agnosticos.md       ← ✍️  Diseño definido (Fase 3)
-│   ├── 10-cross-story-context.md      ← ✍️  Diseño definido (Fase 5)
-│   ├── 13-groom-generacion-historias.md ← ✅ IMPLEMENTADO
-│   ├── 14-groom-from-dir.md           ← Pendiente (variante)
-│   ├── 15-groom-interactive.md        ← Pendiente (variante)
+│   ├── 09-prompts-agnosticos.md       ← ✍️  Diseño definido (Fase 2)
+│   ├── 10-cross-story-context.md      ← ✍️  Diseño definido (Fase 4)
+│   ├── 13-groom-generacion-historias.md ← ✅ IMPLEMENTADO (comando `plan`)
+│   ├── 14-groom-from-dir.md           ← Pendiente (`plan --from-dir`, Fase 3)
+│   ├── 15-groom-interactive.md        ← Pendiente (`plan --interactive`, Fase 6)
 │   ├── 20-multi-provider.md           ← ✅ IMPLEMENTADO
 │   └── 20-implementacion.md           ← Detalle técnico de la implementación
 └── tests/fixtures/
@@ -73,32 +74,68 @@
 
 | Comando | Módulo | Función |
 |---------|--------|---------|
-| `regista [dir]` | `orchestrator.rs` | Pipeline completo multi-provider |
+| `regista plan <spec>` | `groom.rs` | Generar historias desde una especificación (daemon) |
+| `regista auto <spec>` | `main.rs` | `plan` + `run` en un solo paso (daemon) |
+| `regista run [dir]` | `orchestrator.rs` | Pipeline sobre historias existentes (daemon) |
+| `regista logs [dir]` | `daemon.rs` | Ver el log del daemon en vivo (`tail -f`) |
+| `regista status [dir]` | `daemon.rs` | Consultar si el daemon está corriendo |
+| `regista kill [dir]` | `daemon.rs` | Detener el daemon |
 | `regista validate [dir]` | `validator.rs` | Chequeo pre-vuelo (config, instrucciones de rol, historias, dependencias, git) |
 | `regista init [dir]` | `init.rs` | Scaffolding multi-provider: .regista/config.toml + instrucciones de rol + estructura dirs |
-| `regista groom <spec>` | `groom.rs` | Generar backlog desde spec con bucle de validación |
-| `regista help` | `main.rs` | Mostrar todos los comandos y flags |
+| `regista update` | `update.rs` | Comprobar si hay nueva versión en crates.io e instalar (`--yes` para automático) |
 
-### Flags
+> **Nota**: Todos los subcomandos de pipeline (`plan`, `auto`, `run`) ejecutan en modo daemon.
+> Usa `--logs` para ver el progreso en vivo, `--dry-run` para simulación sin agentes.
 
-| Flag | Feature |
-|------|---------|
-| `--provider <NAME>` | Seleccionar provider (pi, claude, codex, opencode) — aplica a pipeline y groom |
-| `--json` | Salida JSON estructurada a stdout (CI/CD) |
-| `--quiet` | Suprimir logs de progreso |
-| `--dry-run` | Simular pipeline en memoria sin agentes |
-| `--resume` | Reanudar desde último checkpoint |
-| `--clean-state` | Borrar checkpoint |
-| `--max-stories N` | (groom) Límite de historias, 0 = sin límite |
-| `--replace` | (groom) Regenerar desde cero |
-| `--light` | (init) Solo .regista/config.toml |
-| `--with-example` | (init) Incluir historia de ejemplo |
+### Flags comunes (plan / auto / run)
+
+| Flag | Descripción |
+|------|-------------|
+| `--logs` | Hacer `tail -f` del log tras lanzar el daemon |
+| `--dry-run` | Simulación en memoria sin agentes ni coste |
+| `--config <path>` | Ruta alternativa al archivo `.regista/config.toml` |
+| `--provider <NAME>` | Seleccionar provider (pi, claude, codex, opencode) |
+| `--quiet` | Suprimir logs de progreso (solo errores) |
+
+### Flags de pipeline (auto / run)
+
+| Flag | Descripción |
+|------|-------------|
+| `--story <ID>` | Filtrar por historia (STORY-001) |
+| `--epic <ID>` | Filtrar por épica (EPIC-001) |
+| `--epics <RANGE>` | Filtrar por rango de épicas (EPIC-001..EPIC-003) |
+| `--once` | Una sola iteración del pipeline |
+| `--resume` | Reanudar desde el último checkpoint |
+| `--clean-state` | Borrar el checkpoint antes de arrancar |
+
+### Flags de plan / auto
+
+| Flag | Descripción |
+|------|-------------|
+| `--replace` | Reemplazar historias existentes (modo destructivo) |
+| `--max-stories N` | Límite de historias a generar (0 = sin límite) |
+
+### Flags de init
+
+| Flag | Descripción |
+|------|-------------|
+| `--light` | Solo `.regista/config.toml`, sin instrucciones de rol |
+| `--with-example` | Incluir historia y épica de ejemplo |
+| `--provider <NAME>` | Provider de agente (default: pi) |
+
+### Flags de validate
+
+| Flag | Descripción |
+|------|-------------|
+| `--json` | Salida JSON para CI/CD |
+| `--config <path>` | Ruta alternativa al archivo `.regista/config.toml` |
+| `--provider <NAME>` | Provider de agente |
 
 ### JSON / CI-CD (`02`)
 - `RunReport` con `Serialize`, incluye `StoryRecord` por historia
 - Exit codes: 0 = OK, 2 = tiene Failed, 3 = parada temprana (límite)
-- `regista --json > report.json` para GitHub Actions/GitLab CI
-- Nuevo en v0.2.0: campos `stopped_early` y `stop_reason` en JSON
+- `regista validate --json` para CI (GitHub Actions/GitLab CI)
+- El pipeline daemon escribe el resultado en el log (`--logs` para seguirlo)
 
 ### Dry-run (`03`)
 - `run_dry()`: simula iteraciones en memoria, sin `pi` ni escritura a disco
@@ -124,10 +161,11 @@
 - `--with-example`: incluye historia y épica de ejemplo
 - `max_iterations = 0` por defecto (auto-escalado)
 
-### Groom (`13`)
-- `regista groom <spec.md>`: PO descompone spec en historias y épicas
-- **Bucle de validación**: groom → validate dependencias → si errores → feedback al PO → corregir → repetir (máx `groom_max_iterations`=5)
-- `--max-stories` (0 = sin límite), `--merge` (default) / `--replace`
+### Plan / Groom (`13`)
+- `regista plan <spec.md>`: PO descompone spec en historias y épicas
+- **Bucle de validación**: plan → validate dependencias → si errores → feedback al PO → corregir → repetir (máx `groom_max_iterations`=5)
+- `--max-stories` (0 = sin límite), `--replace`
+- El módulo sigue llamándose `groom.rs` internamente
 
 ### Checkpoint / Resume (`07`)
 - `checkpoint.rs`: `OrchestratorState` guardado en `.regista/state.toml` tras cada iteración
@@ -143,7 +181,15 @@
 - `AgentResult` incluye `attempts: Vec<AttemptTrace>`
 - Configurable: `inject_feedback_on_retry` (default true)
 
-### v0.2.0 — Migración a `.regista/`, calidad de vida y multi-provider
+### v0.5.0 — CLI refactor, daemon, update, --version
+- **CLI con clap Subcommand**: `plan`, `auto`, `run`, `logs`, `status`, `kill`, `validate`, `init`, `update`
+- **Modo daemon**: `plan`, `auto`, `run` spawnean un proceso hijo; `logs`/`status`/`kill` lo gestionan
+- **`auto`**: combina `plan` + `run` en un solo paso
+- **`update`**: comprueba crates.io e instala con `cargo install` (`--yes` para automático)
+- **`--version` / `-V`**: muestra la versión instalada (nativo de clap)
+- **`--logs`**: hace `tail -f` del log del daemon tras lanzarlo
+
+### v0.2.0 — Migración a `.regista/` y multi-provider
 - **Comando `help`**: `regista help` lista todos los comandos y flags
 - **Migración a `.regista/`**: todos los paths viven bajo `.regista/`:
   `config.toml`, `stories/`, `epics/`, `decisions/`, `logs/`,
@@ -177,7 +223,7 @@
 ```bash
 cargo build              # Debug
 cargo build --release    # Release
-cargo test               # 128 tests, 0 fallos, 1 ignorado
+cargo test               # 145 tests, 0 fallos, 1 ignorado
 cargo check              # Verificar warnings
 cargo fmt                # Formatear
 cargo clippy -- -D warnings  # 0 issues
@@ -214,19 +260,17 @@ EPIC-XXX
 
 ## 🚧 Pendiente (roadmap)
 
-### Alta/media prioridad
-- **01 - Paralelismo**: ejecutar historias independientes simultáneamente (Fase 2)
-- **09 - Prompts agnósticos al stack**: desacoplar referencias a cargo/npm (Fase 3, ✍️ diseño definido)
-- **04 - Workflow configurable**: transiciones definibles en `.regista/config.toml` (Fase 6)
-
 ### Media prioridad
-- **10 - Cross-story context**: agentes reciben contexto de historias relacionadas (Fase 5, ✍️ diseño definido)
-- **11 - TUI / dashboard**: visualización en vivo del progreso (Fase 7)
-- **12 - Cost tracking**: límite de gasto en llamadas LLM (Fase 7)
+- **09 - Prompts agnósticos al stack**: desacoplar referencias a cargo/npm (Fase 2, ✍️ diseño definido)
+- **10 - Cross-story context**: agentes reciben contexto de historias relacionadas (Fase 4, ✍️ diseño definido)
+- **04 - Workflow configurable**: transiciones definibles en `.regista/config.toml` (Fase 5)
+- **11 - TUI / dashboard**: visualización en vivo del progreso (Fase 6)
+- **12 - Cost tracking**: límite de gasto en llamadas LLM (Fase 6)
+- **01 - Paralelismo**: ejecutar historias independientes simultáneamente (Fase 7, ÚLTIMO)
 
-### Variantes de groom
-- **14 - `groom --from-dir`**: múltiples documentos fuente (Fase 4)
-- **15 - `groom --interactive`**: PO entrevista al usuario (Fase 7)
+### Variantes de plan
+- **14 - `plan --from-dir`**: múltiples documentos fuente (Fase 3)
+- **15 - `plan --interactive`**: PO entrevista al usuario (Fase 6)
 
 ---
 
@@ -246,13 +290,14 @@ EPIC-XXX
 
 6. **`set_status()` con backup atómico**: escribe → re-parsea → si falla, restaura `.bak`.
 
-7. **Subcomandos vía args manual**: en vez de refactorizar todo clap, se detectan
-   `validate`, `init`, `groom` al inicio de `main()` inspeccionando `std::env::args()`.
+7. **CLI con clap Subcommand**: la CLI usa `#[derive(Subcommand)]` de clap 4.
+   Los subcomandos son `plan`, `auto`, `run`, `logs`, `status`, `kill`,
+   `validate`, `init`, `update`. `--version` y `--help` son nativos de clap.
 
 8. **Dry-run en memoria**: `advance_status_in_memory()` muta `Story.status` y
    `raw_content` sin tocar el filesystem.
 
-9. **Groom con bucle validate**: el PO recibe feedback concreto de errores de
+9. **Plan con bucle validate**: el PO recibe feedback concreto de errores de
    dependencias y corrige hasta que el grafo está limpio.
 
 10. **Checkpoint TOML**: mismo formato que el resto del proyecto, legible y

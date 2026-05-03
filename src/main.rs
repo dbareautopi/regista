@@ -19,6 +19,7 @@ mod prompts;
 mod providers;
 mod state;
 mod story;
+mod update;
 mod validator;
 
 use clap::{Args, Parser, Subcommand};
@@ -53,6 +54,8 @@ enum Commands {
     Validate(ValidateArgs),
     /// Inicializar un nuevo proyecto
     Init(InitArgs),
+    /// Comprobar e instalar una nueva versión de regista desde crates.io
+    Update(UpdateArgs),
 }
 
 // ── Args compartidos ──────────────────────────────────────────────────────
@@ -220,6 +223,13 @@ struct InitArgs {
     provider: String,
 }
 
+#[derive(Args, Debug)]
+struct UpdateArgs {
+    /// Instalar automáticamente sin preguntar
+    #[arg(long)]
+    yes: bool,
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // main() — dispatch
 // ═══════════════════════════════════════════════════════════════════════════
@@ -236,6 +246,7 @@ fn main() {
         Commands::Kill(args) => handle_kill(args),
         Commands::Validate(args) => handle_validate(args),
         Commands::Init(args) => handle_init(args),
+        Commands::Update(args) => handle_update(args),
     }
 }
 
@@ -670,6 +681,18 @@ fn handle_init(args: InitArgs) {
         }
         Err(e) => {
             eprintln!("Error inicializando proyecto: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+// ── update ────────────────────────────────────────────────────────────────
+
+fn handle_update(args: UpdateArgs) {
+    match update::run(args.yes) {
+        Ok(()) => {}
+        Err(e) => {
+            eprintln!("{e}");
             std::process::exit(1);
         }
     }
