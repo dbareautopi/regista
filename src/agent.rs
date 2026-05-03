@@ -251,20 +251,47 @@ fn invoke_once(
     provider: &dyn AgentProvider,
     instruction: &Path,
     prompt: &str,
-    _timeout: Duration,
+    timeout: Duration,
 ) -> anyhow::Result<Output> {
     let args = provider.build_args(instruction, prompt);
-    let result = std::process::Command::new(provider.binary())
+    let mut child = std::process::Command::new(provider.binary())
         .args(&args)
-        .output();
-
-    match result {
-        Ok(output) => Ok(output),
-        Err(e) => {
-            anyhow::bail!(
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            anyhow::anyhow!(
                 "no se pudo ejecutar '{}': {e}. ¿Está instalado?",
                 provider.binary()
-            );
+            )
+        })?;
+
+    let start = std::time::Instant::now();
+    let poll = Duration::from_millis(250);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_status)) => {
+                // El proceso terminó. Leemos la salida capturada.
+                let output = child.wait_with_output().map_err(|e| {
+                    anyhow::anyhow!("error leyendo salida de '{}': {e}", provider.binary())
+                })?;
+                return Ok(output);
+            }
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    anyhow::bail!(
+                        "timeout ({}s) agotado esperando a '{}'",
+                        timeout.as_secs(),
+                        provider.binary()
+                    )
+                }
+                std::thread::sleep(poll);
+            }
+            Err(e) => {
+                anyhow::bail!("error esperando a '{}': {e}", provider.binary())
+            }
         }
     }
 }

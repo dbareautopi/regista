@@ -7,6 +7,22 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.6.3] — 2026-05-03
+
+### Fixed
+- **Prompt QA reescrito con reglas estrictas**: el QA ya no crea módulos,
+  fake providers ni infraestructura de testing. Tampoco ejecuta build/tests —
+  eso es trabajo del Developer. Solo escribe tests unitarios mínimos para
+  los criterios de aceptación.
+- **Prompt Dev con handoff explícito al QA**: cuando el Developer encuentra
+  tests que no compilan, ahora sabe que NO debe corregirlos (solo reportar
+  en el Activity Log y dejar el estado en TestsReady). El orquestador
+  enruta automáticamente al QA vía la transición #5.
+- **Timeout de agente ahora se aplica realmente**: `invoke_once()` ignoraba
+  el parámetro `_timeout` y delegaba en `.output()` (bloqueante sin límite).
+  Ahora usa `spawn()` + `try_wait()` en bucle, matando el proceso si supera
+  `agent_timeout_seconds` (configurable, default 1800s).
+
 ## [0.6.2] — 2026-05-03
 
 ### Fixed
@@ -185,6 +201,7 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 - Dry-run, salida JSON, feedback rico en reintentos
 - Hooks post-fase y snapshots git
 
+[0.6.3]: https://github.com/dbareautopi/regista/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/dbareautopi/regista/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/dbareautopi/regista/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/dbareautopi/regista/compare/v0.5.2...v0.6.0

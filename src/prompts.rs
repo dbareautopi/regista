@@ -111,25 +111,32 @@ impl PromptContext {
     }
 
     /// Prompt para QA — Escribir tests (Ready → Tests Ready).
+    ///
+    /// El QA SOLO escribe tests. No crea módulos, no implementa features,
+    /// no crea fake providers ni infraestructura de testing. Eso es trabajo
+    /// del Developer. El QA tampoco ejecuta build ni tests — el Developer
+    /// lo hará cuando implemente.
     pub fn qa_tests(&self) -> String {
-        let placeholder = if let Some(ref dir) = self.stack.src_dir {
-            format!(
-                "Si necesitas crear placeholders en {dir}/ para que los tests compilen, hazlo.\n",
-            )
-        } else {
-            String::new()
-        };
         let stack_block = self.stack.render();
 
         format!(
             "{}\n\
-             Escribe los tests necesarios según los criterios de aceptación.\n\
-             {}Ejecútalos para verificar que compilan y pasan:\n\
+             Escribe SOLO tests unitarios que cubran CADA criterio de aceptación.\n\
+             \n\
+             REGLAS ESTRICTAS:\n\
+             - NO crees módulos nuevos. Usa los módulos que ya existen.\n\
+             - NO generes fake providers ni infrastructure de testing.\n\
+             - NO implementes features ni lógica de negocio — eso es del Developer.\n\
+             - NO ejecutes build ni tests — el Developer verificará que compilan.\n\
+             - Si un test necesita un placeholder mínimo para compilar, créalo (solo el esqueleto).\n\
+             - Prioriza tests unitarios sobre tests de integración.\n\
+             - Si encuentras tests existentes que cubren los CAs, simplemente verifica que son suficientes.\n\
+             \n\
+             El Developer se encargará de ejecutar y validar con:\n\
              {}\n\
              Mueve el estado de {from} → {to}.\n\
              {}",
             self.header("Escribe tests para"),
-            placeholder,
             stack_block,
             self.suffix("QA"),
             from = self.from,
@@ -162,6 +169,14 @@ impl PromptContext {
             "{}\n\
              Los tests ya existen (QA los escribió). Búscalos y haz que pasen.\n\
              Implementa en el código fuente.\n\
+             \n\
+             SI LOS TESTS NO COMPILAN O ESTÁN MAL ESCRITOS:\n\
+             - NO los corrijas. Es trabajo del QA.\n\
+             - NO avances el estado a InReview.\n\
+             - Añade en el Activity Log qué test falla y por qué.\n\
+             - El orquestador se encargará de pasar el turno al QA automáticamente.\n\
+             \n\
+             Si los tests compilan y tu implementación es correcta:\n\
              {}\n\
              Mueve de {from} → {to}.\n\
              {}",
@@ -384,17 +399,20 @@ mod tests {
     }
 
     #[test]
-    fn qa_tests_uses_src_dir_when_defined() {
+    fn qa_tests_incluye_reglas_estrictas() {
         let prompt = ctx_with_stack().qa_tests();
-        assert!(prompt.contains("pkg/"));
-        assert!(prompt.contains("placeholders"));
+        assert!(prompt.contains("REGLAS ESTRICTAS"));
+        assert!(prompt.contains("NO crees módulos"));
+        assert!(prompt.contains("NO ejecutes build"));
     }
 
     #[test]
-    fn qa_tests_sin_src_dir_no_menciona_placeholders() {
-        let c = ctx(); // stack default: src_dir = None
-        let prompt = c.qa_tests();
-        assert!(!prompt.contains("placeholders"));
+    fn qa_tests_menciona_placeholders_minimos() {
+        // El nuevo prompt menciona placeholders mínimos siempre,
+        // independientemente de si src_dir está configurado.
+        let prompt = ctx_with_stack().qa_tests();
+        assert!(prompt.contains("placeholder"));
+        assert!(prompt.contains("esqueleto"));
     }
 
     #[test]
