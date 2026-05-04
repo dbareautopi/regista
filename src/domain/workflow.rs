@@ -64,11 +64,19 @@ mod tests {
 
     /// Verifica que se puede usar `CanonicalWorkflow` como `&dyn Workflow`.
     /// Esto prueba que el trait existe (CA1) y que el struct lo implementa (CA2).
+    ///
+    /// NOTA TDD: este test falla ahora (todo!() panic) y pasará cuando
+    /// el Developer implemente `next_status`, `map_status_to_role` y
+    /// `canonical_column_order` correctamente.
     #[test]
-    #[should_panic(expected = "not yet implemented")]
     fn canonical_workflow_can_be_used_as_trait_object() {
         let wf: &dyn Workflow = &CanonicalWorkflow;
-        let _ = wf.next_status(Status::Draft);
+        // CA1: el trait existe y expone next_status
+        assert_eq!(wf.next_status(Status::Draft), Status::Ready);
+        // CA1: el trait existe y expone map_status_to_role
+        assert_eq!(wf.map_status_to_role(Status::Ready), "qa_engineer");
+        // CA1: el trait existe y expone canonical_column_order (no vacío)
+        assert!(!wf.canonical_column_order().is_empty());
     }
 
     // ====================================================================
