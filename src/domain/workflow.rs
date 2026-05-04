@@ -47,6 +47,7 @@ impl Workflow for CanonicalWorkflow {
             Status::InProgress => Status::InReview,
             Status::InReview => Status::BusinessReview,
             Status::BusinessReview => Status::Done,
+            Status::Blocked => Status::Ready,
             _ => current,
         }
     }
@@ -152,11 +153,11 @@ mod tests {
             assert_eq!(wf.next_status(Status::Failed), Status::Failed);
         }
 
-        /// Blocked se queda como está (lo desbloquea el orchestrator, no un agente)
+        /// Blocked desbloquea a Ready (el orquestador usa el workflow para determinar el target)
         #[test]
-        fn blocked_stays() {
+        fn blocked_unblocks_to_ready() {
             let wf = CanonicalWorkflow;
-            assert_eq!(wf.next_status(Status::Blocked), Status::Blocked);
+            assert_eq!(wf.next_status(Status::Blocked), Status::Ready);
         }
 
         /// Verifica todos los estados posibles contra la salida esperada
@@ -172,7 +173,7 @@ mod tests {
                 (Status::InReview, Status::BusinessReview),
                 (Status::BusinessReview, Status::Done),
                 (Status::Done, Status::Done),
-                (Status::Blocked, Status::Blocked),
+                (Status::Blocked, Status::Ready),
                 (Status::Failed, Status::Failed),
             ];
 

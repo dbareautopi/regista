@@ -9,6 +9,7 @@ use crate::domain::graph::DependencyGraph;
 use crate::domain::prompts::{DomainStackConfig, PromptContext};
 use crate::domain::state::Status;
 use crate::domain::story::Story;
+use crate::domain::workflow::{CanonicalWorkflow, Workflow};
 use crate::infra::agent::{self, AgentOptions};
 use crate::infra::checkpoint::OrchestratorState;
 use crate::infra::providers;
@@ -105,6 +106,7 @@ fn run_real(
 
     let mut iteration: u32 = start_iteration;
     let mut stop_reason: Option<String> = None;
+    let workflow: &dyn Workflow = &CanonicalWorkflow;
 
     // Calcular límite efectivo de iteraciones una sola vez al inicio.
     // Si el usuario no lo configuró (0), se escala con el nº de historias.
@@ -140,8 +142,14 @@ fn run_real(
         let full_graph = DependencyGraph::from_stories(&stories);
 
         // 2. Aplicar transiciones automáticas sobre TODAS las historias
-        let stories =
-            apply_automatic_transitions(stories, &full_graph, &mut reject_cycles, cfg, false)?;
+        let stories = apply_automatic_transitions(
+            stories,
+            &full_graph,
+            &mut reject_cycles,
+            cfg,
+            false,
+            workflow,
+        )?;
 
         // 3. Filtrar historias según opciones de ejecución (--story, --epic, --epics)
         let stories = filter_stories(stories, options);
@@ -172,9 +180,14 @@ fn run_real(
                 let iter = story_iterations.entry(story.id.clone()).or_insert(0);
                 *iter += 1;
                 let agent_opts = build_agent_opts(story, cfg);
-                if let Err(e) =
-                    process_story(story, project_root, cfg, &mut reject_cycles, &agent_opts)
-                {
+                if let Err(e) = process_story(
+                    story,
+                    project_root,
+                    cfg,
+                    &mut reject_cycles,
+                    &agent_opts,
+                    workflow,
+                ) {
                     story_errors
                         .entry(story.id.clone())
                         .or_insert_with(|| e.to_string());
@@ -194,9 +207,14 @@ fn run_real(
                     let iter = story_iterations.entry(id.clone()).or_insert(0);
                     *iter += 1;
                     let agent_opts = build_agent_opts(story, cfg);
-                    if let Err(e) =
-                        process_story(story, project_root, cfg, &mut reject_cycles, &agent_opts)
-                    {
+                    if let Err(e) = process_story(
+                        story,
+                        project_root,
+                        cfg,
+                        &mut reject_cycles,
+                        &agent_opts,
+                        workflow,
+                    ) {
                         story_errors
                             .entry(id.clone())
                             .or_insert_with(|| e.to_string());
@@ -266,6 +284,7 @@ fn run_dry(project_root: &Path, cfg: &Config, options: &RunOptions) -> anyhow::R
     let mut story_iterations: HashMap<String, u32> = HashMap::new();
     let story_errors: HashMap<String, String> = HashMap::new();
     let mut iteration: u32 = 0;
+    let workflow = CanonicalWorkflow;
 
     // Calcular límite efectivo de iteraciones
     let effective_max = effective_max_iterations(cfg.limits.max_iterations, stories.len());
@@ -339,7 +358,7 @@ fn run_dry(project_root: &Path, cfg: &Config, options: &RunOptions) -> anyhow::R
                     pick_next_actionable(&stories, &graph).map(|s| s.id.clone())
                 } {
                     if let Some(story) = stories.iter_mut().find(|s| s.id == id) {
-                        let next = next_status(story.status);
+                        let next = workflow.next_status(story.status);
                         let label = match story.status {
                             Status::Draft => "PO (plan)",
                             Status::Ready => "QA (tests)",
@@ -525,6 +544,7 @@ fn apply_automatic_transitions(
     reject_cycles: &mut HashMap<String, u32>,
     cfg: &Config,
     simulate: bool,
+    workflow: &dyn Workflow,
 ) -> anyhow::Result<Vec<Story>> {
     let mut stories = stories;
 
@@ -573,11 +593,16 @@ fn apply_automatic_transitions(
             .all(|b| status_map.get(b).is_some_and(|s| *s == Status::Done));
 
         if all_blockers_done {
-            tracing::info!("🔓 {}: dependencias resueltas → Ready", story.id);
+            let unblock_target = workflow.next_status(Status::Blocked);
+            tracing::info!(
+                "🔓 {}: dependencias resueltas → {}",
+                story.id,
+                unblock_target
+            );
             if simulate {
-                story.advance_status_in_memory(Status::Ready);
+                story.advance_status_in_memory(unblock_target);
             } else {
-                story.set_status(Status::Ready)?;
+                story.set_status(unblock_target)?;
             }
         }
     }
@@ -670,6 +695,7 @@ fn process_story(
     cfg: &Config,
     reject_cycles: &mut HashMap<String, u32>,
     agent_opts: &AgentOptions,
+    workflow: &dyn Workflow,
 ) -> anyhow::Result<()> {
     let ctx = PromptContext {
         story_id: story.id.clone(),
@@ -677,7 +703,7 @@ fn process_story(
         decisions_dir: cfg.project.decisions_dir.clone(),
         last_rejection: story.last_rejection.clone(),
         from: story.status,
-        to: next_status(story.status),
+        to: workflow.next_status(story.status),
         stack: DomainStackConfig {
             build: cfg.stack.build_command.clone(),
             test: cfg.stack.test_command.clone(),
@@ -688,7 +714,7 @@ fn process_story(
     };
 
     // Determinar el rol, provider, y path de instrucciones
-    let role = map_status_to_role(story.status);
+    let role = workflow.map_status_to_role(story.status);
     let provider_name = providers::provider_for_role(&cfg.agents, role);
     let provider = providers::from_name(&provider_name);
     let skill_path_str = providers::skill_for_role(&cfg.agents, role);
@@ -804,30 +830,6 @@ fn process_story(
     Ok(())
 }
 
-/// Infiere el estado esperado tras la intervención del agente.
-fn next_status(current: Status) -> Status {
-    match current {
-        Status::Draft => Status::Ready,
-        Status::Ready => Status::TestsReady,
-        Status::TestsReady => Status::InReview,
-        Status::InProgress => Status::InReview,
-        Status::InReview => Status::BusinessReview,
-        Status::BusinessReview => Status::Done,
-        _ => current,
-    }
-}
-
-/// Mapea un estado del workflow al rol canónico que lo procesa.
-fn map_status_to_role(status: Status) -> &'static str {
-    match status {
-        Status::Draft | Status::BusinessReview => "product_owner",
-        Status::Ready => "qa_engineer",
-        Status::TestsReady | Status::InProgress => "developer",
-        Status::InReview => "reviewer",
-        _ => "product_owner", // fallback seguro
-    }
-}
-
 /// Extrae el número de un ID tipo "STORY-NNN".
 fn extract_numeric(id: &str) -> u32 {
     id.chars()
@@ -895,7 +897,7 @@ mod tests {
     // CA5: Las funciones hardcodeadas next_status() y map_status_to_role()
     // se eliminan de pipeline.rs. Los tests ahora usan CanonicalWorkflow.
 
-    use crate::domain::workflow::{Workflow, CanonicalWorkflow};
+    use crate::domain::workflow::{CanonicalWorkflow, Workflow};
 
     /// CA5: next_status() hardcodeada eliminada → se usa CanonicalWorkflow.
     #[test]
@@ -1159,7 +1161,10 @@ mod tests {
             assert_eq!(wf.map_status_to_role(Status::Ready), "qa_engineer");
             assert_eq!(wf.map_status_to_role(Status::TestsReady), "developer");
             assert_eq!(wf.map_status_to_role(Status::InReview), "reviewer");
-            assert_eq!(wf.map_status_to_role(Status::BusinessReview), "product_owner");
+            assert_eq!(
+                wf.map_status_to_role(Status::BusinessReview),
+                "product_owner"
+            );
 
             // canonical_column_order: 9 columnas
             assert_eq!(wf.canonical_column_order().len(), 9);
@@ -1308,8 +1313,15 @@ mod tests {
 
                 fn canonical_column_order(&self) -> &[&'static str] {
                     &[
-                        "Draft", "Ready", "Tests Ready", "In Progress",
-                        "In Review", "Business Review", "Done", "Blocked", "Failed",
+                        "Draft",
+                        "Ready",
+                        "Tests Ready",
+                        "In Progress",
+                        "In Review",
+                        "Business Review",
+                        "Done",
+                        "Blocked",
+                        "Failed",
                     ]
                 }
             }
@@ -1382,7 +1394,10 @@ mod tests {
             assert_eq!(wf.map_status_to_role(Status::TestsReady), "developer");
             assert_eq!(wf.map_status_to_role(Status::InProgress), "developer");
             assert_eq!(wf.map_status_to_role(Status::InReview), "reviewer");
-            assert_eq!(wf.map_status_to_role(Status::BusinessReview), "product_owner");
+            assert_eq!(
+                wf.map_status_to_role(Status::BusinessReview),
+                "product_owner"
+            );
         }
 
         // ── CA1+CA3: apply_automatic_transitions con &dyn Workflow ──
@@ -1430,11 +1445,10 @@ mod tests {
             let stories = vec![done_story, blocked_story];
             let graph = DependencyGraph::from_stories(&stories);
 
-            // simulate=true → no escribe a disco (sin workflow aún)
-            let result = apply_automatic_transitions(
-                stories, &graph, &mut reject_cycles, &cfg, true,
-            )
-            .unwrap();
+            // simulate=true → no escribe a disco
+            let result =
+                apply_automatic_transitions(stories, &graph, &mut reject_cycles, &cfg, true, &wf)
+                    .unwrap();
 
             let unblocked = result.iter().find(|s| s.id == "STORY-002").unwrap();
             let expected = wf.next_status(Status::Blocked);
@@ -1457,6 +1471,7 @@ mod tests {
         /// Verifica que apply_automatic_transitions no desbloquea prematuramente.
         #[test]
         fn apply_automatic_transitions_keeps_blocked_with_unresolved_deps() {
+            let wf = CanonicalWorkflow::default();
             let cfg = Config::default();
             let mut reject_cycles: HashMap<String, u32> = HashMap::new();
 
@@ -1475,14 +1490,14 @@ mod tests {
             let stories = vec![dep_draft, blocked_story];
             let graph = DependencyGraph::from_stories(&stories);
 
-            let result = apply_automatic_transitions(
-                stories, &graph, &mut reject_cycles, &cfg, true,
-            )
-            .unwrap();
+            let result =
+                apply_automatic_transitions(stories, &graph, &mut reject_cycles, &cfg, true, &wf)
+                    .unwrap();
 
             let still_blocked = result.iter().find(|s| s.id == "STORY-002").unwrap();
             assert_eq!(
-                still_blocked.status, Status::Blocked,
+                still_blocked.status,
+                Status::Blocked,
                 "STORY-002 debe permanecer Blocked; dependencia STORY-001 no está Done"
             );
         }
@@ -1526,8 +1541,15 @@ mod tests {
 
                 fn canonical_column_order(&self) -> &[&'static str] {
                     &[
-                        "Draft", "Ready", "Tests Ready", "In Progress",
-                        "In Review", "Business Review", "Done", "Blocked", "Failed",
+                        "Draft",
+                        "Ready",
+                        "Tests Ready",
+                        "In Progress",
+                        "In Review",
+                        "Business Review",
+                        "Done",
+                        "Blocked",
+                        "Failed",
                     ]
                 }
             }
@@ -1640,8 +1662,15 @@ mod tests {
 
                 fn canonical_column_order(&self) -> &[&'static str] {
                     &[
-                        "Draft", "Ready", "Tests Ready", "In Progress",
-                        "In Review", "Business Review", "Done", "Blocked", "Failed",
+                        "Draft",
+                        "Ready",
+                        "Tests Ready",
+                        "In Progress",
+                        "In Review",
+                        "Business Review",
+                        "Done",
+                        "Blocked",
+                        "Failed",
                     ]
                 }
             }
@@ -1771,10 +1800,7 @@ mod tests {
             assert_eq!(wf.next_status(Status::Done), Status::Done);
             assert_eq!(wf.next_status(Status::Failed), Status::Failed);
             // Verificar que aplicar dos veces da lo mismo
-            assert_eq!(
-                wf.next_status(wf.next_status(Status::Done)),
-                Status::Done
-            );
+            assert_eq!(wf.next_status(wf.next_status(Status::Done)), Status::Done);
             assert_eq!(
                 wf.next_status(wf.next_status(Status::Failed)),
                 Status::Failed
