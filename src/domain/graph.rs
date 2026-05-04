@@ -4,7 +4,7 @@
 //! el conteo de referencias inversas (cuántas historias desbloquea cada una),
 //! y determinar si una historia bloqueada puede desbloquearse.
 
-use crate::story::Story;
+use crate::domain::story::Story;
 use std::collections::{HashMap, HashSet};
 
 /// Grafo dirigido de dependencias: `bloqueador → bloqueados`.
@@ -154,7 +154,7 @@ mod tests {
         Story {
             id: id.to_string(),
             path: format!("stories/{id}.md").into(),
-            status: crate::state::Status::Blocked,
+            status: crate::domain::state::Status::Blocked,
             epic: None,
             blockers: blockers.iter().map(|s| s.to_string()).collect(),
             last_rejection: None,

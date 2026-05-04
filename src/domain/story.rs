@@ -4,7 +4,7 @@
 //! Este módulo extrae: status, épica, bloqueadores, activity log,
 //! y permite actualizar el status de forma segura.
 
-use crate::state::Status;
+use crate::domain::state::Status;
 use regex::Regex;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;

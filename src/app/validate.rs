@@ -4,9 +4,10 @@
 //! sin ejecutar agentes. Ideal como paso previo en CI/CD.
 
 use crate::config::{AgentsConfig, Config};
-use crate::dependency_graph::DependencyGraph;
-use crate::state::Status;
-use crate::story::Story;
+use crate::domain::graph::DependencyGraph;
+use crate::domain::state::Status;
+use crate::domain::story::Story;
+use crate::infra::providers;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::Path;
@@ -180,7 +181,7 @@ fn validate_skills(project_root: &Path, cfg: &Config, result: &mut ValidationRes
 
     let mut found = 0;
     for (i, role) in roles.iter().enumerate() {
-        let path_str = cfg.agents.skill_for_role(role);
+        let path_str = providers::skill_for_role(&cfg.agents, role);
         let path = project_root.join(&path_str);
         let label = role_names[i];
         if path.exists() && path.is_file() {
@@ -376,7 +377,7 @@ fn validate_git(project_root: &Path, cfg: &Config, result: &mut ValidationResult
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::Status;
+    use crate::domain::state::Status;
     use std::path::PathBuf;
 
     fn story_fixture(id: &str, status: Status, blockers: &[&str]) -> Story {

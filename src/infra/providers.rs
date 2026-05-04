@@ -288,6 +288,50 @@ pub fn supported_providers() -> Vec<&'static str> {
     vec!["pi", "claude", "codex", "opencode"]
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Resolver provider e instrucciones desde AgentsConfig
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Resuelve el nombre del provider para un rol dado desde la configuración.
+///
+/// Si el rol tiene `provider` explícito, lo usa.
+/// Si no, hereda del provider global.
+pub fn provider_for_role(agents: &crate::config::AgentsConfig, role: &str) -> String {
+    let config = match role {
+        "product_owner" => &agents.product_owner,
+        "qa_engineer" => &agents.qa_engineer,
+        "developer" => &agents.developer,
+        "reviewer" => &agents.reviewer,
+        _ => return agents.provider.clone(),
+    };
+    config
+        .provider
+        .clone()
+        .unwrap_or_else(|| agents.provider.clone())
+}
+
+/// Resuelve la ruta al archivo de instrucciones para un rol dado.
+///
+/// Si el rol tiene `skill` explícito, lo usa.
+/// Si no, usa la convención de directorio del provider.
+pub fn skill_for_role(agents: &crate::config::AgentsConfig, role: &str) -> String {
+    let config = match role {
+        "product_owner" => &agents.product_owner,
+        "qa_engineer" => &agents.qa_engineer,
+        "developer" => &agents.developer,
+        "reviewer" => &agents.reviewer,
+        _ => return String::new(),
+    };
+
+    if let Some(ref skill) = config.skill {
+        return skill.clone();
+    }
+
+    let provider_name = provider_for_role(agents, role);
+    let provider = from_name(&provider_name);
+    provider.instruction_dir(role)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

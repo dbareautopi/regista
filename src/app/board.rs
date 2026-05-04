@@ -8,9 +8,9 @@
 //! a las variantes del enum `Status`. Cuando los estados pasen a ser
 //! dinámicos, este módulo apenas necesitará cambios.
 
+use crate::app::pipeline;
 use crate::config::Config;
-use crate::orchestrator;
-use crate::story::Story;
+use crate::domain::story::Story;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
@@ -56,7 +56,7 @@ pub fn run(
     config_path: Option<&Path>,
 ) -> anyhow::Result<()> {
     let cfg = Config::load(project_root, config_path)?;
-    let mut stories = orchestrator::load_all_stories(project_root, &cfg)?;
+    let mut stories = pipeline::load_all_stories(project_root, &cfg)?;
 
     // Filtrar por épica si se especifica
     if let Some(epic) = epic_filter {
@@ -181,7 +181,7 @@ fn extract_numeric(id: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::Status;
+    use crate::domain::state::Status;
 
     /// Construye una Story sintética para tests.
     fn fake_story(

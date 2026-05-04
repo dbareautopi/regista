@@ -7,7 +7,23 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [0.7.2] — 2026-05-04
+## [0.8.0] — 2026-05-04
+
+### Changed
+- **Arquitectura en capas**: el código se reorganiza en 4 capas (`cli/`, `app/`,
+  `domain/`, `infra/`) con reglas de dependencia verificables automáticamente.
+  `main.rs` pasa de 1,335 líneas a 18. La máquina de estados, el grafo de
+  dependencias y los prompts ahora viven en `domain/` sin dependencias externas.
+- **`config.rs` como datos puros**: los métodos `provider_for_role()` y
+  `skill_for_role()` se mueven a `infra/providers.rs` como funciones libres,
+  eliminando la dependencia inversa `config → infra`.
+- **`DomainStackConfig`**: reemplaza a `StackConfig` en los prompts de dominio,
+  eliminando la dependencia `domain → config`.
+
+### Added
+- **Test de arquitectura**: `tests/architecture.rs` con 11 tests que verifican
+  las reglas R1-R5 (domain sin IO, infra sin lógica de negocio, etc.).
+  Ejecutable con `cargo test --test architecture`.
 
 ### Fixed
 - **OpenCode: agent name mismatch**: `instruction_dir()` ahora convierte
@@ -261,6 +277,7 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 - Dry-run, salida JSON, feedback rico en reintentos
 - Hooks post-fase y snapshots git
 
+[0.8.0]: https://github.com/dbareautopi/regista/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/dbareautopi/regista/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/dbareautopi/regista/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/dbareautopi/regista/compare/v0.6.3...v0.7.0

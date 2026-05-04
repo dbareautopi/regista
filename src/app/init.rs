@@ -4,7 +4,7 @@
 //! `.regista.toml`, skills de `pi`, e historias de ejemplo.
 
 use crate::config::AgentsConfig;
-use crate::providers;
+use crate::infra::providers;
 use std::path::Path;
 
 /// Contenido del archivo `.regista/config.toml` generado por `init`.
