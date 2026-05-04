@@ -18,11 +18,18 @@ pub fn run_hook(hook: Option<&str>, label: &str) -> anyhow::Result<()> {
     };
 
     tracing::info!("  🔍 {label}: ejecutando hook...");
-    let status = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .status()
-        .map_err(|e| anyhow::anyhow!("no se pudo ejecutar hook '{cmd}': {e}"))?;
+    let status = if cfg!(windows) {
+        std::process::Command::new("cmd")
+            .arg("/c")
+            .arg(cmd)
+            .status()
+    } else {
+        std::process::Command::new("sh")
+            .arg("-c")
+            .arg(cmd)
+            .status()
+    }
+    .map_err(|e| anyhow::anyhow!("no se pudo ejecutar hook '{cmd}': {e}"))?;
 
     if status.success() {
         tracing::info!("  ✓ hook {label} OK");

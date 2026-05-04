@@ -117,7 +117,7 @@ fn validate_config(
     config_path: Option<&Path>,
     result: &mut ValidationResult,
 ) -> Option<Config> {
-    let default_config_path = project_root.join(".regista.toml");
+    let default_config_path = project_root.join(".regista/config.toml");
     let config_path = config_path.unwrap_or(&default_config_path);
 
     if !config_path.exists() {

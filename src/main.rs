@@ -835,7 +835,7 @@ fn build_daemon_args(
     pipeline: &PipelineArgs,
     common: &CommonArgs,
 ) -> Vec<String> {
-    let log_path = format!("{dir}/.regista/daemon.log");
+    let log_path = Path::new(dir).join(".regista/daemon.log");
     let mut args = vec![subcommand.to_string()];
 
     // Spec posicional (solo plan / auto) — va antes de dir porque es required
@@ -849,7 +849,7 @@ fn build_daemon_args(
     // Flags internos del daemon
     args.push("--daemon".to_string());
     args.push("--log-file".to_string());
-    args.push(log_path);
+    args.push(log_path.to_string_lossy().to_string());
 
     // Plan mode flags
     if replace {
@@ -900,9 +900,9 @@ fn build_daemon_args(
 fn spawn_and_optionally_follow(project_root: &Path, child_args: &[String], follow_log: bool) {
     match daemon::detach(project_root, child_args, None) {
         Ok(pid) => {
-            let log_display = format!("{}/.regista/daemon.log", project_root.display());
+            let log_display = project_root.join(".regista/daemon.log");
             println!("🚀 Daemon lanzado (PID: {pid})");
-            println!("   Log: {log_display}");
+            println!("   Log: {}", log_display.display());
             println!("   Usa: regista logs, regista status, regista kill");
 
             if follow_log {
@@ -975,7 +975,7 @@ mod tests {
         let args = Cli::try_parse_from([
             "regista",
             "run",
-            "/tmp/proj",
+            "myproject",
             "--story",
             "STORY-001",
             "--once",
@@ -984,7 +984,7 @@ mod tests {
         .unwrap();
         match args.command {
             Commands::Run(r) => {
-                assert_eq!(r.repo.dir, "/tmp/proj");
+                assert_eq!(r.repo.dir, "myproject");
                 assert_eq!(r.pipeline.story.unwrap(), "STORY-001");
                 assert!(r.pipeline.once);
                 assert!(r.common.dry_run);
@@ -1088,9 +1088,9 @@ mod tests {
 
     #[test]
     fn logs_subcommand() {
-        let args = Cli::try_parse_from(["regista", "logs", "/tmp/proj"]).unwrap();
+        let args = Cli::try_parse_from(["regista", "logs", "myproject"]).unwrap();
         match args.command {
-            Commands::Logs(l) => assert_eq!(l.dir, "/tmp/proj"),
+            Commands::Logs(l) => assert_eq!(l.dir, "myproject"),
             _ => panic!("expected Logs"),
         }
     }
@@ -1165,7 +1165,7 @@ mod tests {
         let args = Cli::try_parse_from([
             "regista",
             "board",
-            "/tmp/proj",
+            "myproject",
             "--epic",
             "EPIC-002",
             "--json",
@@ -1173,7 +1173,7 @@ mod tests {
         .unwrap();
         match args.command {
             Commands::Board(b) => {
-                assert_eq!(b.repo.dir, "/tmp/proj");
+                assert_eq!(b.repo.dir, "myproject");
                 assert!(b.json);
                 assert_eq!(b.epic.unwrap(), "EPIC-002");
             }
@@ -1197,7 +1197,7 @@ mod tests {
         let args = Cli::try_parse_from([
             "regista",
             "init",
-            "/tmp/newproj",
+            "newproject",
             "--with-example",
             "--provider",
             "codex",
@@ -1205,7 +1205,7 @@ mod tests {
         .unwrap();
         match args.command {
             Commands::Init(i) => {
-                assert_eq!(i.repo.dir, "/tmp/newproj");
+                assert_eq!(i.repo.dir, "newproject");
                 assert!(i.with_example);
                 assert!(!i.light);
                 assert_eq!(i.provider, "codex");

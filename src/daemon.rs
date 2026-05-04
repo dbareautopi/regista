@@ -244,9 +244,14 @@ pub fn kill(project_dir: &Path) -> anyhow::Result<String> {
             state.pid
         ))
     } else {
+        let cmd_hint = if cfg!(windows) {
+            format!("taskkill /F /PID {}", state.pid)
+        } else {
+            format!("kill -9 {}", state.pid)
+        };
         Ok(format!(
-            "⚠️  No se pudo detener el proceso {}. Prueba: kill -9 {}",
-            state.pid, state.pid
+            "⚠️  No se pudo detener el proceso {}. Prueba: {cmd_hint}",
+            state.pid
         ))
     }
 }
@@ -313,15 +318,36 @@ pub fn follow(project_dir: &Path) -> anyhow::Result<()> {
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
-/// Comprueba si un proceso está vivo mediante `/proc/<pid>`.
+/// Comprueba si un proceso está vivo.
+///
+/// En Linux: verifica que `/proc/<pid>` existe.
+/// En Windows: consulta `tasklist` filtrando por PID.
+#[cfg(not(windows))]
 fn is_process_alive(pid: u32) -> bool {
     Path::new(&format!("/proc/{pid}")).exists()
 }
 
+#[cfg(windows)]
+fn is_process_alive(pid: u32) -> bool {
+    let output = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+        .output();
+    match output {
+        Ok(o) => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            // tasklist output contiene el PID si el proceso existe
+            stdout.contains(&pid.to_string())
+        }
+        Err(_) => false,
+    }
+}
+
 /// Obtiene recursivamente todos los PIDs hijos, nietos, etc. de un proceso.
 ///
-/// Lee `/proc/<pid>/task/*/children` para cada PID en el árbol, cubriendo
-/// todos los threads del proceso. Los procesos zombie o sin permisos se ignoran.
+/// En Linux: lee `/proc/<pid>/task/*/children` para cada PID en el árbol.
+/// En Windows: consulta los hijos directos con `wmic`. No es recursivo en v1.
+/// Los procesos zombie o sin permisos se ignoran en ambas plataformas.
+#[cfg(not(windows))]
 fn get_all_child_pids(pid: u32) -> Vec<u32> {
     let mut result: Vec<u32> = Vec::new();
     let mut queue: Vec<u32> = vec![pid];
@@ -342,19 +368,69 @@ fn get_all_child_pids(pid: u32) -> Vec<u32> {
                 }
             }
         }
-        // Si no se puede leer (proceso zombie, sin permisos), simplemente
-        // se ignora — no bloqueamos el kill por esto.
     }
 
     result
 }
 
-/// Envía una señal a un proceso mediante el comando `kill`.
+#[cfg(windows)]
+fn get_all_child_pids(pid: u32) -> Vec<u32> {
+    // Usamos wmic para obtener procesos cuyo ParentProcessId coincide.
+    // Nota: wmic está deprecated en Windows 11 24H2+, pero sigue funcionando.
+    // La alternativa (Get-CimInstance) requiere PowerShell y es más lenta.
+    let output = std::process::Command::new("wmic")
+        .args([
+            "process",
+            "where",
+            &format!("ParentProcessId={pid}"),
+            "get",
+            "ProcessId",
+            "/format:csv",
+        ])
+        .output();
+
+    let mut result = Vec::new();
+    if let Ok(o) = output {
+        let stdout = String::from_utf8_lossy(&o.stdout);
+        for line in stdout.lines().skip(1) {
+            // Formato CSV: Node,ProcessId
+            if let Some(last) = line.split(',').last() {
+                if let Ok(p) = last.trim().parse::<u32>() {
+                    if p != pid && !result.contains(&p) {
+                        result.push(p);
+                    }
+                }
+            }
+        }
+    }
+    result
+}
+
+/// Envía una señal a un proceso.
+///
+/// En Linux: usa el comando `kill -<sig> <pid>`.
+/// En Windows: usa `taskkill /PID <pid>` (con /F para SIGKILL).
+#[cfg(not(windows))]
 fn send_signal(pid: u32, sig: i32) -> bool {
-    Command::new("kill")
+    std::process::Command::new("kill")
         .arg(format!("-{sig}"))
         .arg(pid.to_string())
         .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn send_signal(pid: u32, sig: i32) -> bool {
+    let mut cmd = std::process::Command::new("taskkill");
+    cmd.arg("/PID").arg(pid.to_string());
+    // SIGKILL (9) → forzar terminación. Otros → sin /F (terminación normal).
+    if sig == 9 {
+        cmd.arg("/F");
+    }
+    cmd.stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
         .map(|s| s.success())
@@ -378,17 +454,19 @@ mod tests {
 
     #[test]
     fn pid_file_path_ends_with_correct_name() {
-        let path = DaemonState::pid_file(Path::new("/tmp/myproject"));
+        let path = DaemonState::pid_file(Path::new("myproject"));
         assert_eq!(path.file_name().unwrap(), "daemon.pid");
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn is_process_alive_init_is_pid1() {
         // PID 1 (init/systemd) siempre existe en Linux
         assert!(is_process_alive(1));
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn is_process_alive_returns_false_for_impossible_pid() {
         // Un PID muy alto que casi seguro no existe
         assert!(!is_process_alive(0xFFFF_FFF0));
@@ -399,14 +477,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let state = DaemonState {
             pid: 12345,
-            log_file: PathBuf::from("/tmp/foo.log"),
-            project_dir: PathBuf::from("/tmp/myproject"),
+            log_file: PathBuf::from("daemon.log"),
+            project_dir: PathBuf::from("myproject"),
         };
         state.save(tmp.path()).unwrap();
         let loaded = DaemonState::load(tmp.path()).unwrap();
         assert_eq!(loaded.pid, 12345);
-        assert_eq!(loaded.log_file, PathBuf::from("/tmp/foo.log"));
-        assert_eq!(loaded.project_dir, PathBuf::from("/tmp/myproject"));
+        assert_eq!(loaded.log_file, PathBuf::from("daemon.log"));
+        assert_eq!(loaded.project_dir, PathBuf::from("myproject"));
         // Cleanup
         DaemonState::remove(tmp.path());
     }
@@ -432,6 +510,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn get_all_child_pids_init_has_children() {
         // PID 1 (init/systemd) siempre tiene procesos hijos en Linux
         let children = get_all_child_pids(1);
@@ -441,12 +520,14 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn get_all_child_pids_impossible_returns_empty() {
         let children = get_all_child_pids(0xFFFF_FFF0);
         assert!(children.is_empty());
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn get_all_child_pids_finds_our_own_child() {
         // Spawneamos un sleep para verificar que lo encuentra como hijo.
         // NOTA: bajo `cargo test`, libtest puede usar clone() en vez de fork(),
