@@ -1,7 +1,7 @@
 # STORY-008: Migrar `pipeline.rs` a usar `&dyn Workflow`
 
 ## Status
-**Ready**
+**Tests Ready**
 
 ## Epic
 EPIC-03
@@ -23,3 +23,4 @@ Una vez definido el trait `Workflow` y `CanonicalWorkflow`, hay que adaptar `pip
 
 ## Activity Log
 - 2026-05-04 | PO | Historia generada desde roadmap/AUDITORIA-ESCALABILIDAD.md (hallazgos #1.2, #1.3, #1.4).
+- 2026-05-04 | QA | Tests unitarios escritos para CA1-CA7 en src/app/pipeline.rs (mod story008). 21 tests total: 14 pasan, 7 fallan por CanonicalWorkflow.next_status(Blocked) → Blocked (debe ser → Ready). Tests compilan correctamente. Decisión documentada en .regista/decisions/STORY-008-qa-engineer-20260504.md. Avanza a Tests Ready.
