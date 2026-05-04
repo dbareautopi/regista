@@ -2,7 +2,7 @@
 //! y feedback rico (captura de stdout/stderr para trazabilidad y reintentos).
 
 use crate::config::LimitsConfig;
-use crate::providers::AgentProvider;
+use crate::infra::providers::AgentProvider;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::time::Duration;
@@ -308,7 +308,7 @@ fn trace_from_output(attempt: u32, output: &Output) -> AttemptTrace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::PiProvider;
+    use crate::infra::providers::PiProvider;
 
     #[test]
     fn build_feedback_prompt_includes_error() {

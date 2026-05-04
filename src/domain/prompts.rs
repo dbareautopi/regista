@@ -5,8 +5,19 @@
 //! `[stack]` de `.regista/config.toml`. Si no se definen, el prompt usa
 //! instrucciones genéricas y el skill del agente interpreta el stack.
 
-use crate::config::StackConfig;
-use crate::state::Status;
+use crate::domain::state::Status;
+
+/// Representación de dominio de la configuración de stack.
+/// No depende de `config.rs` — la capa `app` se encarga de convertir.
+#[derive(Debug, Clone, Default)]
+pub struct DomainStackConfig {
+    pub build: Option<String>,
+    pub test: Option<String>,
+    pub lint: Option<String>,
+    pub fmt: Option<String>,
+    #[allow(dead_code)]
+    pub src_dir: Option<String>,
+}
 
 /// Contexto necesario para generar cualquier prompt.
 pub struct PromptContext {
@@ -22,10 +33,10 @@ pub struct PromptContext {
     pub from: Status,
     pub to: Status,
     /// Comandos del stack tecnológico (build, test, lint, fmt, src_dir).
-    pub stack: StackConfig,
+    pub stack: DomainStackConfig,
 }
 
-impl StackConfig {
+impl DomainStackConfig {
     /// Renderiza el bloque de stack para inyectar en el prompt.
     ///
     /// Si hay comandos definidos, los lista como instrucciones concretas.
@@ -34,16 +45,16 @@ impl StackConfig {
     pub fn render(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
 
-        if let Some(ref cmd) = self.build_command {
+        if let Some(ref cmd) = self.build {
             parts.push(format!("- Compilación/build: `{cmd}`"));
         }
-        if let Some(ref cmd) = self.test_command {
+        if let Some(ref cmd) = self.test {
             parts.push(format!("- Tests: `{cmd}`"));
         }
-        if let Some(ref cmd) = self.lint_command {
+        if let Some(ref cmd) = self.lint {
             parts.push(format!("- Linting: `{cmd}`"));
         }
-        if let Some(ref cmd) = self.fmt_command {
+        if let Some(ref cmd) = self.fmt {
             parts.push(format!("- Formato: `{cmd}`"));
         }
 
@@ -242,15 +253,15 @@ mod tests {
             last_rejection: Some("Falta test para edge case CA3".into()),
             from: Status::InProgress,
             to: Status::InReview,
-            stack: StackConfig::default(),
+            stack: DomainStackConfig::default(),
         }
     }
 
-    // ── StackConfig::render ──────────────────────────────────────
+    // ── DomainStackConfig::render ──────────────────────────────────────
 
     #[test]
     fn stack_render_empty_is_generic() {
-        let stack = StackConfig::default();
+        let stack = DomainStackConfig::default();
         let out = stack.render();
         assert!(out.contains("Compila/construye"));
         assert!(out.contains("linting"));
@@ -259,11 +270,11 @@ mod tests {
 
     #[test]
     fn stack_render_all_commands() {
-        let stack = StackConfig {
-            build_command: Some("npm run build".into()),
-            test_command: Some("npm test".into()),
-            lint_command: Some("eslint .".into()),
-            fmt_command: Some("prettier --check .".into()),
+        let stack = DomainStackConfig {
+            build: Some("npm run build".into()),
+            test: Some("npm test".into()),
+            lint: Some("eslint .".into()),
+            fmt: Some("prettier --check .".into()),
             src_dir: Some("src/".into()),
         };
         let out = stack.render();
@@ -277,14 +288,14 @@ mod tests {
 
     #[test]
     fn stack_render_partial_omits_missing() {
-        let stack = StackConfig {
-            test_command: Some("pytest".into()),
+        let stack = DomainStackConfig {
+            test: Some("pytest".into()),
             ..Default::default()
         };
         let out = stack.render();
         assert!(out.contains("pytest"));
-        assert!(!out.contains("build"), "sin build_command no se menciona");
-        assert!(!out.contains("lint"), "sin lint_command no se menciona");
+        assert!(!out.contains("build"), "sin build no se menciona");
+        assert!(!out.contains("lint"), "sin lint no se menciona");
     }
 
     // ── Contenido de prompts ──────────────────────────────────────
@@ -356,11 +367,11 @@ mod tests {
             last_rejection: None,
             from: Status::TestsReady,
             to: Status::InReview,
-            stack: StackConfig {
-                build_command: Some("make".into()),
-                test_command: Some("make test".into()),
-                lint_command: Some("golangci-lint run".into()),
-                fmt_command: Some("gofmt -l .".into()),
+            stack: DomainStackConfig {
+                build: Some("make".into()),
+                test: Some("make test".into()),
+                lint: Some("golangci-lint run".into()),
+                fmt: Some("gofmt -l .".into()),
                 src_dir: Some("pkg/".into()),
             },
         }

@@ -4,9 +4,9 @@
 //! este módulo analiza el grafo de dependencias y estados para decidir
 //! qué acción tomar (normalmente: invocar al PO para desatascar).
 
-use crate::dependency_graph::DependencyGraph;
-use crate::state::Status;
-use crate::story::Story;
+use crate::domain::graph::DependencyGraph;
+use crate::domain::state::Status;
+use crate::domain::story::Story;
 use std::collections::HashMap;
 
 /// Resultado del análisis de deadlock.
@@ -159,7 +159,7 @@ fn extract_numeric(id: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::Status;
+    use crate::domain::state::Status;
     use std::path::PathBuf;
 
     fn make_story(id: &str, status: Status, blockers: &[&str]) -> Story {

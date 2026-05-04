@@ -6,10 +6,10 @@
 //! en el directorio de historias. Un bucle de validación asegura que el grafo
 //! de dependencias resultante es correcto antes de dar el backlog por bueno.
 
-use crate::agent::{self, AgentOptions};
+use crate::app::validate;
 use crate::config::Config;
-use crate::providers;
-use crate::validator;
+use crate::infra::agent::{self, AgentOptions};
+use crate::infra::providers;
 use std::path::Path;
 
 /// Resultado de la operación de plan.
@@ -71,15 +71,15 @@ pub fn run(
 
     // ── 3. Snapshot git inicial ────────────────────────────────────
     let snapshot_hash = if cfg.git.enabled {
-        crate::git::snapshot(project_root, "plan-start")
+        crate::infra::git::snapshot(project_root, "plan-start")
     } else {
         None
     };
 
     // ── 4. Bucle plan → validate ───────────────────────────────────
-    let provider_name = cfg.agents.provider_for_role("product_owner");
+    let provider_name = providers::provider_for_role(&cfg.agents, "product_owner");
     let provider = providers::from_name(&provider_name);
-    let skill_path_str = cfg.agents.skill_for_role("product_owner");
+    let skill_path_str = providers::skill_for_role(&cfg.agents, "product_owner");
     let skill_path = project_root.join(&skill_path_str);
     let max_loop = cfg.limits.plan_max_iterations.max(1);
 
@@ -113,13 +113,11 @@ pub fn run(
             } else {
                 None
             };
-            let validation = validator::validate(project_root, config_path_opt);
+            let validation = validate::validate(project_root, config_path_opt);
             let dep_errors: Vec<String> = validation
                 .findings
                 .iter()
-                .filter(|f| {
-                    f.severity == validator::Severity::Error && f.category == "dependencies"
-                })
+                .filter(|f| f.severity == validate::Severity::Error && f.category == "dependencies")
                 .map(|f| f.message.clone())
                 .collect();
 
@@ -172,7 +170,7 @@ pub fn run(
             Err(e) => {
                 tracing::error!("❌ Falló la invocación del PO: {e}");
                 if let Some(ref hash) = snapshot_hash {
-                    crate::git::rollback(project_root, hash, "plan-failed");
+                    crate::infra::git::rollback(project_root, hash, "plan-failed");
                 }
                 anyhow::bail!("Plan falló: {e}");
             }

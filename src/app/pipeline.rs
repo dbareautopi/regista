@@ -3,15 +3,15 @@
 //! Carga historias, construye el grafo de dependencias, evalúa deadlocks,
 //! y dispara agentes según la máquina de estados. Es el corazón del pipeline.
 
-use crate::agent::{self, AgentOptions};
-use crate::checkpoint::OrchestratorState;
 use crate::config::Config;
-use crate::deadlock::{self, DeadlockResolution};
-use crate::dependency_graph::DependencyGraph;
-use crate::prompts::PromptContext;
-use crate::providers;
-use crate::state::Status;
-use crate::story::Story;
+use crate::domain::deadlock::{self, DeadlockResolution};
+use crate::domain::graph::DependencyGraph;
+use crate::domain::prompts::{DomainStackConfig, PromptContext};
+use crate::domain::state::Status;
+use crate::domain::story::Story;
+use crate::infra::agent::{self, AgentOptions};
+use crate::infra::checkpoint::OrchestratorState;
+use crate::infra::providers;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
@@ -678,14 +678,20 @@ fn process_story(
         last_rejection: story.last_rejection.clone(),
         from: story.status,
         to: next_status(story.status),
-        stack: cfg.stack.clone(),
+        stack: DomainStackConfig {
+            build: cfg.stack.build_command.clone(),
+            test: cfg.stack.test_command.clone(),
+            lint: cfg.stack.lint_command.clone(),
+            fmt: cfg.stack.fmt_command.clone(),
+            src_dir: cfg.stack.src_dir.clone(),
+        },
     };
 
     // Determinar el rol, provider, y path de instrucciones
     let role = map_status_to_role(story.status);
-    let provider_name = cfg.agents.provider_for_role(role);
+    let provider_name = providers::provider_for_role(&cfg.agents, role);
     let provider = providers::from_name(&provider_name);
-    let skill_path_str = cfg.agents.skill_for_role(role);
+    let skill_path_str = providers::skill_for_role(&cfg.agents, role);
     let instruction_path = project_root.join(&skill_path_str);
 
     // Prompt según el estado (sin cambios)
@@ -727,7 +733,7 @@ fn process_story(
 
     // Snapshot git antes de la invocación (si está habilitado)
     let prev_hash = if cfg.git.enabled {
-        crate::git::snapshot(project_root, &format!("{label}-{}", story.id))
+        crate::infra::git::snapshot(project_root, &format!("{label}-{}", story.id))
     } else {
         None
     };
@@ -766,20 +772,23 @@ fn process_story(
 
             // Ejecutar hook post-fase si está definido
             let hook_result = match story.status {
-                Status::Ready => crate::hooks::run_hook(cfg.hooks.post_qa.as_deref(), "post_qa"),
+                Status::Ready => {
+                    crate::infra::hooks::run_hook(cfg.hooks.post_qa.as_deref(), "post_qa")
+                }
                 Status::TestsReady | Status::InProgress => {
-                    crate::hooks::run_hook(cfg.hooks.post_dev.as_deref(), "post_dev")
+                    crate::infra::hooks::run_hook(cfg.hooks.post_dev.as_deref(), "post_dev")
                 }
-                Status::InReview => {
-                    crate::hooks::run_hook(cfg.hooks.post_reviewer.as_deref(), "post_reviewer")
-                }
+                Status::InReview => crate::infra::hooks::run_hook(
+                    cfg.hooks.post_reviewer.as_deref(),
+                    "post_reviewer",
+                ),
                 _ => Ok(()),
             };
 
             if let Err(e) = hook_result {
                 tracing::warn!("  ❌ hook falló: {e}");
                 if let Some(ref hash) = prev_hash {
-                    crate::git::rollback(project_root, hash, label);
+                    crate::infra::git::rollback(project_root, hash, label);
                 }
             }
         }
@@ -787,7 +796,7 @@ fn process_story(
             tracing::error!("  ❌ {}: falló la invocación del agente: {e}", story.id);
             // Rollback si hay snapshot
             if let Some(ref hash) = prev_hash {
-                crate::git::rollback(project_root, hash, label);
+                crate::infra::git::rollback(project_root, hash, label);
             }
         }
     }
