@@ -14,6 +14,7 @@ use crate::domain::state::Status;
 ///
 /// Cada método recibe `&self` (no `&mut self`) porque los workflows
 /// son inmutables durante la ejecución.
+#[allow(dead_code)]
 pub trait Workflow {
     /// Infiere el estado esperado tras la intervención del agente
     /// para el estado `current`.
@@ -33,20 +34,45 @@ pub trait Workflow {
 /// - `next_status()` ≡ `pipeline::next_status()`
 /// - `map_status_to_role()` ≡ `pipeline::map_status_to_role()`
 /// - `canonical_column_order()` ≡ orden usado en `board.rs`
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CanonicalWorkflow;
 
 impl Workflow for CanonicalWorkflow {
-    fn next_status(&self, _current: Status) -> Status {
-        todo!("El Developer implementará este método")
+    fn next_status(&self, current: Status) -> Status {
+        match current {
+            Status::Draft => Status::Ready,
+            Status::Ready => Status::TestsReady,
+            Status::TestsReady => Status::InReview,
+            Status::InProgress => Status::InReview,
+            Status::InReview => Status::BusinessReview,
+            Status::BusinessReview => Status::Done,
+            _ => current,
+        }
     }
 
-    fn map_status_to_role(&self, _status: Status) -> &'static str {
-        todo!("El Developer implementará este método")
+    fn map_status_to_role(&self, status: Status) -> &'static str {
+        match status {
+            Status::Draft | Status::BusinessReview => "product_owner",
+            Status::Ready => "qa_engineer",
+            Status::TestsReady | Status::InProgress => "developer",
+            Status::InReview => "reviewer",
+            _ => "product_owner",
+        }
     }
 
     fn canonical_column_order(&self) -> &[&'static str] {
-        todo!("El Developer implementará este método")
+        &[
+            "Draft",
+            "Ready",
+            "Tests Ready",
+            "In Progress",
+            "In Review",
+            "Business Review",
+            "Done",
+            "Blocked",
+            "Failed",
+        ]
     }
 }
 
@@ -108,10 +134,7 @@ mod tests {
             assert_eq!(wf.next_status(Status::Ready), Status::TestsReady);
             assert_eq!(wf.next_status(Status::TestsReady), Status::InReview);
             assert_eq!(wf.next_status(Status::InReview), Status::BusinessReview);
-            assert_eq!(
-                wf.next_status(Status::BusinessReview),
-                Status::Done
-            );
+            assert_eq!(wf.next_status(Status::BusinessReview), Status::Done);
         }
 
         /// Fix path: InProgress → InReview
@@ -339,10 +362,7 @@ mod tests {
         for _ in 0..5 {
             assert_eq!(wf.next_status(Status::Draft), Status::Ready);
             assert_eq!(wf.map_status_to_role(Status::Ready), "qa_engineer");
-            assert_eq!(
-                wf.canonical_column_order().len(),
-                9
-            );
+            assert_eq!(wf.canonical_column_order().len(), 9);
         }
     }
 }
