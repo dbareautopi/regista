@@ -1,7 +1,7 @@
 # STORY-008: Migrar `pipeline.rs` a usar `&dyn Workflow`
 
 ## Status
-**Business Review**
+**Done**
 
 ## Epic
 EPIC-03
@@ -26,3 +26,4 @@ Una vez definido el trait `Workflow` y `CanonicalWorkflow`, hay que adaptar `pip
 - 2026-05-04 | QA | Tests unitarios escritos para CA1-CA7 en src/app/pipeline.rs (mod story008). 21 tests total: 14 pasan, 7 fallan por CanonicalWorkflow.next_status(Blocked) → Blocked (debe ser → Ready). Tests compilan correctamente. Decisión documentada en .regista/decisions/STORY-008-qa-engineer-20260504.md. Avanza a Tests Ready.
 - 2026-05-04 | Dev | Implementación completada en 2 archivos: (1) src/domain/workflow.rs → añadido Status::Blocked => Status::Ready a CanonicalWorkflow::next_status() para que el desbloqueo dirija a Ready. (2) src/app/pipeline.rs → eliminadas funciones hardcodeadas next_status() y map_status_to_role(); run_real(), run_dry(), process_story() y apply_automatic_transitions() ahora reciben y usan &dyn Workflow. 216 tests pasan, 0 fallos; cargo build y cargo clippy limpios. Decisión documentada en .regista/decisions/STORY-008-dev-20260504.md. Avanza a In Review.
 - 2026-05-04 | Reviewer | DoD técnico verificado: cargo build limpio, cargo test 227 pasando (216 unitarios + 11 arquitectura), 0 fallos, cargo fmt --check sin diferencias, cargo clippy sin warnings. CAs confirmados en código: run_real() construye &CanonicalWorkflow, process_story() usa workflow.map_status_to_role(), apply_automatic_transitions() usa workflow.next_status(Blocked) para target desbloqueo, funciones hardcodeadas eliminadas. Sin regresiones. Decisión documentada en .regista/decisions/STORY-008-reviewer-20260504.md. Avanza a Business Review.
+- 2026-05-04 | PO | Validación de negocio OK. CAs 1-7 verificados en código: run_real() recibe &dyn Workflow, process_story() usa workflow.map_status_to_role(), apply_automatic_transitions() usa workflow.next_status(Status::Blocked) → Ready, funciones hardcodeadas next_status() y map_status_to_role() eliminadas de pipeline.rs. 227 tests pasan, cargo build limpio, cargo fmt ok, cargo clippy sin warnings. El valor de negocio se cumple: el pipeline es ahora extensible con workflows custom vía el trait Workflow. Historia completada.
