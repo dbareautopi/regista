@@ -11,6 +11,7 @@
 use crate::app::pipeline;
 use crate::config::Config;
 use crate::domain::story::Story;
+use crate::domain::workflow::{CanonicalWorkflow, Workflow};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
@@ -116,6 +117,18 @@ fn build_board_data(stories: &[Story]) -> BoardData {
         blocked,
         failed,
     }
+}
+
+/// Renderiza el tablero a un `String` usando el orden de columnas del workflow.
+///
+/// El Developer debe implementar:
+/// - Obtener columnas de `workflow.canonical_column_order()`  (CA2)
+/// - Omitir columnas con count = 0                          (CA3)
+/// - Formatear igual que la versión hardcodeada actual        (CA4)
+///
+/// ⚠️  PLACEHOLDER — el Developer reemplazará este `todo!()` con la lógica real.
+fn render_board(_data: &BoardData, _workflow: &dyn Workflow) -> String {
+    todo!("Developer: implementar renderizado dinámico con workflow")
 }
 
 /// Imprime el tablero en formato legible por humanos.
@@ -298,6 +311,323 @@ mod tests {
         assert_eq!(data.blocked[1].id, "STORY-005");
         assert_eq!(data.blocked[2].id, "STORY-010");
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Tests para STORY-009: columnas dinámicas según workflow
+    // ═══════════════════════════════════════════════════════════════
+
+    /// CA1: `render_board` acepta `&dyn Workflow` como parámetro.
+    /// La mera compilación de este test satisface CA1:
+    /// si el trait no fuera object-safe o la firma no aceptara `&dyn Workflow`,
+    /// este test no compilaría.
+    #[test]
+    fn render_board_accepts_dyn_workflow() {
+        let wf: &dyn Workflow = &CanonicalWorkflow;
+        let data = BoardData {
+            counts: HashMap::new(),
+            total: 0,
+            blocked: vec![],
+            failed: vec![],
+        };
+        // Debe compilar y aceptar un trait object como parámetro
+        let _output = render_board(&data, wf);
+    }
+
+    /// CA2: El orden de columnas se obtiene de `workflow.canonical_column_order()`.
+    ///
+    /// Usamos `CanonicalWorkflow` y verificamos que las columnas en la salida
+    /// respetan el orden exacto devuelto por `canonical_column_order()`.
+    #[test]
+    fn column_order_comes_from_workflow() {
+        let wf = CanonicalWorkflow;
+        let expected_order = wf.canonical_column_order();
+
+        let mut counts = HashMap::new();
+        // Poblar todas las columnas con al menos 1 para que ninguna se omita
+        for col in expected_order {
+            counts.insert(col.to_string(), 1);
+        }
+
+        let data = BoardData {
+            counts,
+            total: expected_order.len(),
+            blocked: vec![],
+            failed: vec![],
+        };
+
+        let output = render_board(&data, &wf as &dyn Workflow);
+
+        // Cada columna debe aparecer en el orden definido por canonical_column_order()
+        let positions: Vec<Option<usize>> =
+            expected_order.iter().map(|col| output.find(col)).collect();
+
+        for i in 1..positions.len() {
+            match (positions[i - 1], positions[i]) {
+                (Some(prev), Some(curr)) => {
+                    assert!(
+                        prev < curr,
+                        "'{}' debería aparecer antes que '{}' en la salida",
+                        expected_order[i - 1],
+                        expected_order[i]
+                    );
+                }
+                _ => panic!(
+                    "Columna '{}' o '{}' no encontrada en la salida",
+                    expected_order[i - 1],
+                    expected_order[i]
+                ),
+            }
+        }
+    }
+
+    /// CA3: Las columnas sin historias (count = 0) se omiten en la salida.
+    #[test]
+    fn empty_columns_are_skipped() {
+        let wf = CanonicalWorkflow;
+        let mut counts = HashMap::new();
+        counts.insert("Draft".into(), 1);
+        counts.insert("Done".into(), 2);
+        // El resto (Ready, Tests Ready, In Progress, In Review,
+        // Business Review, Blocked, Failed) tienen count = 0 implícito
+
+        let data = BoardData {
+            counts,
+            total: 3,
+            blocked: vec![],
+            failed: vec![],
+        };
+
+        let output = render_board(&data, &wf as &dyn Workflow);
+
+        // Columnas con count > 0 sí aparecen
+        assert!(
+            output.contains("Draft"),
+            "Draft (count=1) debería aparecer en la salida"
+        );
+        assert!(
+            output.contains("Done"),
+            "Done (count=2) debería aparecer en la salida"
+        );
+
+        // Columnas con count = 0 NO aparecen
+        for state in &[
+            "Ready",
+            "Tests Ready",
+            "In Progress",
+            "In Review",
+            "Business Review",
+            "Blocked",
+            "Failed",
+        ] {
+            assert!(
+                !output.contains(state),
+                "'{state}' (count=0) NO debería aparecer en la salida"
+            );
+        }
+    }
+
+    /// CA3 (borde): Si TODAS las columnas están vacías, no se muestra ninguna.
+    #[test]
+    fn all_empty_columns_shows_none() {
+        let wf = CanonicalWorkflow;
+        let data = BoardData {
+            counts: HashMap::new(),
+            total: 0,
+            blocked: vec![],
+            failed: vec![],
+        };
+
+        let output = render_board(&data, &wf as &dyn Workflow);
+
+        // Ninguna columna del workflow canónico debe aparecer
+        for col in wf.canonical_column_order() {
+            assert!(
+                !output.contains(col),
+                "Columna '{col}' con count=0 NO debería aparecer"
+            );
+        }
+    }
+
+    /// CA4: La salida para `CanonicalWorkflow` es visualmente idéntica a la actual.
+    ///
+    /// Verifica que:
+    /// - Las columnas respetan el orden canónico
+    /// - La línea de total está presente con el valor correcto
+    /// - Las secciones de bloqueadas/fallidas se renderizan correctamente
+    #[test]
+    fn canonical_workflow_output_matches_current_behavior() {
+        let wf = CanonicalWorkflow;
+        let mut counts = HashMap::new();
+        counts.insert("Draft".into(), 2);
+        counts.insert("Ready".into(), 1);
+        counts.insert("Done".into(), 3);
+
+        let data = BoardData {
+            counts,
+            total: 6,
+            blocked: vec![BlockedStory {
+                id: "STORY-005".into(),
+                blocked_by: vec!["STORY-001".into()],
+            }],
+            failed: vec![FailedStory {
+                id: "STORY-007".into(),
+                reason: Some("rechazada 3 veces".into()),
+            }],
+        };
+
+        let output = render_board(&data, &wf as &dyn Workflow);
+
+        // Cabecera tradicional
+        assert!(
+            output.contains("Story Board"),
+            "Debe contener la cabecera 'Story Board'"
+        );
+        assert!(output.contains("regista"), "Debe contener 'regista'");
+
+        // Columnas con contenido en orden canónico
+        let draft_pos = output.find("Draft").expect("Draft no encontrado");
+        let ready_pos = output.find("Ready").expect("Ready no encontrado");
+        let done_pos = output.find("Done").expect("Done no encontrado");
+        assert!(draft_pos < ready_pos, "Draft debe aparecer antes que Ready");
+        assert!(ready_pos < done_pos, "Ready debe aparecer antes que Done");
+
+        // Línea de total
+        assert!(output.contains("Total"), "Debe mostrar 'Total'");
+        assert!(output.contains("6"), "El total debe ser 6");
+
+        // Sección de bloqueadas
+        assert!(
+            output.contains("Blocked"),
+            "Debe mostrar la sección de bloqueadas"
+        );
+        assert!(output.contains("STORY-005"), "Debe listar STORY-005");
+        assert!(
+            output.contains("STORY-001"),
+            "Debe mostrar la dependencia STORY-001"
+        );
+
+        // Sección de fallidas
+        assert!(
+            output.contains("Failed"),
+            "Debe mostrar la sección de fallidas"
+        );
+        assert!(output.contains("STORY-007"), "Debe listar STORY-007");
+        assert!(
+            output.contains("rechazada 3 veces"),
+            "Debe mostrar el motivo de rechazo"
+        );
+    }
+
+    /// CA6: Si se pasa un workflow hipotético con solo 5 columnas,
+    /// el board muestra exactamente esas 5 columnas (test unitario).
+    #[test]
+    fn custom_5_column_workflow_shows_exactly_those_columns() {
+        struct FiveColumnWorkflow;
+
+        impl Workflow for FiveColumnWorkflow {
+            fn next_status(&self, current: Status) -> Status {
+                current
+            }
+            fn map_status_to_role(&self, _status: Status) -> &'static str {
+                "product_owner"
+            }
+            fn canonical_column_order(&self) -> &[&'static str] {
+                &["Alpha", "Beta", "Gamma", "Delta", "Omega"]
+            }
+        }
+
+        let wf = FiveColumnWorkflow;
+        let mut counts = HashMap::new();
+        for col in wf.canonical_column_order() {
+            counts.insert(col.to_string(), 1);
+        }
+
+        let data = BoardData {
+            counts,
+            total: 5,
+            blocked: vec![],
+            failed: vec![],
+        };
+
+        let output = render_board(&data, &wf as &dyn Workflow);
+
+        // Las 5 columnas aparecen
+        assert!(output.contains("Alpha"));
+        assert!(output.contains("Beta"));
+        assert!(output.contains("Gamma"));
+        assert!(output.contains("Delta"));
+        assert!(output.contains("Omega"));
+
+        // En el orden exacto definido por el workflow
+        let alpha = output.find("Alpha").unwrap();
+        let beta = output.find("Beta").unwrap();
+        let gamma = output.find("Gamma").unwrap();
+        let delta = output.find("Delta").unwrap();
+        let omega = output.find("Omega").unwrap();
+        assert!(alpha < beta);
+        assert!(beta < gamma);
+        assert!(gamma < delta);
+        assert!(delta < omega);
+
+        // Ninguna columna del workflow canónico se cuela
+        assert!(!output.contains("Draft"));
+        assert!(!output.contains("Ready"));
+        assert!(!output.contains("Done"));
+        assert!(!output.contains("Blocked"));
+        assert!(!output.contains("Failed"));
+    }
+
+    /// CA6 + CA3 combinados: workflow hipotético con columnas vacías
+    /// también omite las columnas count=0.
+    #[test]
+    fn custom_workflow_skips_empty_columns() {
+        struct SparseWorkflow;
+
+        impl Workflow for SparseWorkflow {
+            fn next_status(&self, current: Status) -> Status {
+                current
+            }
+            fn map_status_to_role(&self, _status: Status) -> &'static str {
+                "product_owner"
+            }
+            fn canonical_column_order(&self) -> &[&'static str] {
+                &["P1", "P2", "P3", "P4", "P5"]
+            }
+        }
+
+        let wf = SparseWorkflow;
+        let mut counts = HashMap::new();
+        counts.insert("P1".into(), 1);
+        counts.insert("P3".into(), 2);
+        counts.insert("P5".into(), 1);
+        // P2 y P4 count = 0
+
+        let data = BoardData {
+            counts,
+            total: 4,
+            blocked: vec![],
+            failed: vec![],
+        };
+
+        let output = render_board(&data, &wf as &dyn Workflow);
+
+        assert!(output.contains("P1"), "P1 (count=1) debe aparecer");
+        assert!(output.contains("P3"), "P3 (count=2) debe aparecer");
+        assert!(output.contains("P5"), "P5 (count=1) debe aparecer");
+        assert!(!output.contains("P2"), "P2 (count=0) debe omitirse");
+        assert!(!output.contains("P4"), "P4 (count=0) debe omitirse");
+
+        // El orden relativo se preserva entre las columnas visibles
+        let p1 = output.find("P1").unwrap();
+        let p3 = output.find("P3").unwrap();
+        let p5 = output.find("P5").unwrap();
+        assert!(p1 < p3, "P1 debe aparecer antes que P3");
+        assert!(p3 < p5, "P3 debe aparecer antes que P5");
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Tests existentes (pre-STORY-009)
+    // ═══════════════════════════════════════════════════════════════
 
     #[test]
     fn board_data_serializes_to_json() {
