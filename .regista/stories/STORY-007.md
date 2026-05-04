@@ -1,7 +1,7 @@
 # STORY-007: Definir trait `Workflow` + implementar `CanonicalWorkflow`
 
 ## Status
-**Draft**
+**Ready**
 
 ## Epic
 EPIC-03
@@ -26,3 +26,4 @@ El workflow actual está hardcodeado en múltiples funciones: `next_status()`, `
 
 ## Activity Log
 - 2026-05-04 | PO | Historia generada desde roadmap/AUDITORIA-ESCALABILIDAD.md (hallazgo #1, recomendación #4).
+- 2026-05-04 | PO | Refinamiento: historia validada contra DoR. Descripción clara, 7 CAs testeables, sin dependencias. Decisión documentada en .regista/decisions/story-007-refinement.md. Avanza a Ready.

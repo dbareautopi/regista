@@ -1,0 +1,8 @@
+iteration = 1
+
+[reject_cycles]
+
+[story_iterations]
+STORY-007 = 1
+
+[story_errors]
