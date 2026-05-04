@@ -1,7 +1,7 @@
 # STORY-007: Definir trait `Workflow` + implementar `CanonicalWorkflow`
 
 ## Status
-**In Review**
+**Business Review**
 
 ## Epic
 EPIC-03
@@ -29,3 +29,4 @@ El workflow actual está hardcodeado en múltiples funciones: `next_status()`, `
 - 2026-05-04 | PO | Refinamiento: historia validada contra DoR. Descripción clara, 7 CAs testeables, sin dependencias. Decisión documentada en .regista/decisions/story-007-refinement.md. Avanza a Ready.
 - 2026-05-04 | QA | Verificación de tests existentes en src/domain/workflow.rs: 20 tests unitarios cubren CA1-CA7 exhaustivamente. No se requieren tests adicionales. Decisión documentada en .regista/decisions/STORY-007-qa-engineer-20260504T230000.md. Avanza a Tests Ready.
 - 2026-05-04 | Dev | Implementación de trait Workflow + CanonicalWorkflow en src/domain/workflow.rs. Replican next_status(), map_status_to_role() y canonical_column_order() del pipeline actual. 20 tests pasan. Añadido #[allow(dead_code)] por clippy (items públicos sin uso externo aún). cargo build, cargo test (208 tests), cargo clippy y cargo fmt pasan. Decisión documentada en .regista/decisions/STORY-007-dev-20260504T233000.md. Avanza a In Review.
+- 2026-05-04 | Reviewer | Revisión técnica superada. cargo build OK, cargo test OK (208 passed, 0 failed, 1 ignored por pi no instalado), cargo clippy -- -D warnings OK (0 warnings), cargo fmt --check OK (sin diferencias). El trait Workflow + CanonicalWorkflow en src/domain/workflow.rs cumple CA1-CA7: 20 tests unitarios verifican next_status(), map_status_to_role() y canonical_column_order() contra el comportamiento canónico actual. La arquitectura de capas se respeta (11 tests de architecture OK). No hay regresiones. DoD técnico satisfecho. Decisión documentada en .regista/decisions/STORY-007-reviewer-20260504.md. Avanza a Business Review.
