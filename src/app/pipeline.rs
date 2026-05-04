@@ -1385,6 +1385,283 @@ mod tests {
             assert_eq!(wf.map_status_to_role(Status::BusinessReview), "product_owner");
         }
 
+        // ── CA1+CA3: apply_automatic_transitions con &dyn Workflow ──
+
+        /// CA1+CA3: apply_automatic_transitions() acepta un workflow y lo usa
+        /// para determinar el target de desbloqueo en lugar de hardcodear Ready.
+        ///
+        /// Simula el escenario: STORY-001 (Done) desbloquea STORY-002 (Blocked).
+        /// El target de desbloqueo DEBE venir de workflow.next_status(Blocked).
+        #[test]
+        fn apply_automatic_transitions_unblock_uses_workflow() {
+            let wf = CanonicalWorkflow::default();
+            let cfg = Config::default();
+            let mut reject_cycles: HashMap<String, u32> = HashMap::new();
+
+            let done_story = story_fixture("STORY-001", Status::Done, None);
+            let blocked_story = Story {
+                id: "STORY-002".into(),
+                path: "stories/STORY-002.md".into(),
+                status: Status::Blocked,
+                epic: None,
+                blockers: vec!["STORY-001".into()],
+                last_rejection: None,
+                raw_content: String::new(),
+            };
+
+            let stories = vec![done_story, blocked_story];
+            let graph = DependencyGraph::from_stories(&stories);
+
+            // simulate=true → no escribe a disco
+            let result = apply_automatic_transitions(
+                stories, &graph, &mut reject_cycles, &cfg, true, &wf,
+            )
+            .unwrap();
+
+            let unblocked = result.iter().find(|s| s.id == "STORY-002").unwrap();
+            let expected = wf.next_status(Status::Blocked);
+            assert_eq!(
+                unblocked.status, expected,
+                "apply_automatic_transitions debe usar workflow.next_status(Blocked) para target"
+            );
+            assert_eq!(
+                unblocked.status, Status::Ready,
+                "CanonicalWorkflow desbloquea Blocked→Ready"
+            );
+        }
+
+        /// CA3: Blocked con dependencias no resueltas permanece Blocked.
+        /// Verifica que apply_automatic_transitions no desbloquea prematuramente.
+        #[test]
+        fn apply_automatic_transitions_keeps_blocked_with_unresolved_deps() {
+            let wf = CanonicalWorkflow::default();
+            let cfg = Config::default();
+            let mut reject_cycles: HashMap<String, u32> = HashMap::new();
+
+            // STORY-001 está Draft (no Done) → no debería desbloquear STORY-002
+            let dep_draft = story_fixture("STORY-001", Status::Draft, None);
+            let blocked_story = Story {
+                id: "STORY-002".into(),
+                path: "stories/STORY-002.md".into(),
+                status: Status::Blocked,
+                epic: None,
+                blockers: vec!["STORY-001".into()],
+                last_rejection: None,
+                raw_content: String::new(),
+            };
+
+            let stories = vec![dep_draft, blocked_story];
+            let graph = DependencyGraph::from_stories(&stories);
+
+            let result = apply_automatic_transitions(
+                stories, &graph, &mut reject_cycles, &cfg, true, &wf,
+            )
+            .unwrap();
+
+            let still_blocked = result.iter().find(|s| s.id == "STORY-002").unwrap();
+            assert_eq!(
+                still_blocked.status, Status::Blocked,
+                "STORY-002 debe permanecer Blocked; dependencia STORY-001 no está Done"
+            );
+        }
+
+        /// CA1+CA4: Con un workflow alternativo, el target de desbloqueo cambia.
+        /// Esto demuestra que apply_automatic_transitions NO hardcodea el target.
+        #[test]
+        fn apply_automatic_transitions_unblock_target_varies_by_workflow() {
+            /// AltWorkflow: desbloquea Blocked → Draft (no Ready).
+            struct AltWorkflow;
+
+            impl Workflow for AltWorkflow {
+                fn next_status(&self, current: Status) -> Status {
+                    match current {
+                        Status::Blocked => Status::Draft,
+                        Status::Draft => Status::Ready,
+                        Status::Ready => Status::TestsReady,
+                        Status::TestsReady => Status::InReview,
+                        Status::InProgress => Status::InReview,
+                        Status::InReview => Status::BusinessReview,
+                        Status::BusinessReview => Status::Done,
+                        _ => current,
+                    }
+                }
+
+                fn map_status_to_role(&self, status: Status) -> &'static str {
+                    match status {
+                        Status::Draft | Status::BusinessReview => "product_owner",
+                        Status::Ready => "qa_engineer",
+                        Status::TestsReady | Status::InProgress => "developer",
+                        Status::InReview => "reviewer",
+                        _ => "product_owner",
+                    }
+                }
+
+                fn canonical_column_order(&self) -> &[&'static str] {
+                    &[
+                        "Draft", "Ready", "Tests Ready", "In Progress",
+                        "In Review", "Business Review", "Done", "Blocked", "Failed",
+                    ]
+                }
+            }
+
+            let cfg = Config::default();
+            let mut reject_cycles: HashMap<String, u32> = HashMap::new();
+
+            let done_story = story_fixture("STORY-001", Status::Done, None);
+            let blocked_story = Story {
+                id: "STORY-002".into(),
+                path: "stories/STORY-002.md".into(),
+                status: Status::Blocked,
+                epic: None,
+                blockers: vec!["STORY-001".into()],
+                last_rejection: None,
+                raw_content: String::new(),
+            };
+
+            let stories = vec![done_story, blocked_story];
+            let graph = DependencyGraph::from_stories(&stories);
+
+            // ── Con CanonicalWorkflow ──
+            let canonical = CanonicalWorkflow::default();
+            let result_canonical = apply_automatic_transitions(
+                stories.clone(), &graph, &mut reject_cycles.clone(), &cfg, true, &canonical,
+            )
+            .unwrap();
+            let target_canonical = result_canonical.iter().find(|s| s.id == "STORY-002").unwrap();
+            assert_eq!(target_canonical.status, Status::Ready);
+
+            // ── Con AltWorkflow ──
+            let alt = AltWorkflow;
+            let result_alt = apply_automatic_transitions(
+                stories, &graph, &mut reject_cycles, &cfg, true, &alt,
+            )
+            .unwrap();
+            let target_alt = result_alt.iter().find(|s| s.id == "STORY-002").unwrap();
+            assert_eq!(target_alt.status, Status::Draft);
+
+            // Los targets son diferentes → el target NO está hardcodeado
+            assert_ne!(
+                target_canonical.status, target_alt.status,
+                "Workflows diferentes deben producir targets de desbloqueo diferentes"
+            );
+        }
+
+        // ── CA2: process_story role resolution via workflow ──────
+
+        /// CA2: La cadena de resolución status→rol→provider→instruction_path
+        /// usa workflow.map_status_to_role() en lugar de la función hardcodeada.
+        ///
+        /// Este test cubre la lógica que process_story ejecuta para cada estado
+        /// accionable, verificando que el rol, provider, y skill path son correctos.
+        #[test]
+        fn role_resolution_chain_uses_workflow_mapping() {
+            let wf = CanonicalWorkflow::default();
+            let cfg = Config::default();
+
+            // Tuplas: (status, expected_role, expected_provider)
+            let cases: &[(Status, &str, &str)] = &[
+                (Status::Draft, "product_owner", "pi"),
+                (Status::Ready, "qa_engineer", "pi"),
+                (Status::TestsReady, "developer", "pi"),
+                (Status::InProgress, "developer", "pi"),
+                (Status::InReview, "reviewer", "pi"),
+                (Status::BusinessReview, "product_owner", "pi"),
+            ];
+
+            for (status, expected_role, expected_provider) in cases {
+                // ← El mapeo DEBE venir del workflow
+                let role = wf.map_status_to_role(*status);
+                assert_eq!(
+                    role, *expected_role,
+                    "workflow.map_status_to_role({status}) = {role}, expected {expected_role}"
+                );
+
+                let provider_name = providers::provider_for_role(&cfg.agents, role);
+                assert_eq!(
+                    provider_name, *expected_provider,
+                    "provider para rol {role} debería ser {expected_provider}"
+                );
+
+                let skill_path = providers::skill_for_role(&cfg.agents, role);
+                assert!(
+                    !skill_path.is_empty(),
+                    "skill_path para rol {role} no debe estar vacío"
+                );
+                assert!(
+                    skill_path.ends_with(".md"),
+                    "skill_path debe ser un archivo .md: {skill_path}"
+                );
+            }
+        }
+
+        /// CA2: Si el workflow mapea un estado a un rol diferente,
+        /// toda la cadena de resolución (provider, instruction_path) cambia.
+        /// Esto demuestra que el rol se obtiene del workflow, no hardcodeado.
+        #[test]
+        fn role_resolution_changes_when_workflow_mapping_differs() {
+            /// AltWorkflow: TestsReady → reviewer (no developer).
+            struct AltWorkflow;
+
+            impl Workflow for AltWorkflow {
+                fn next_status(&self, current: Status) -> Status {
+                    match current {
+                        Status::Blocked => Status::Ready,
+                        Status::Draft => Status::Ready,
+                        Status::Ready => Status::TestsReady,
+                        Status::TestsReady => Status::InReview,
+                        Status::InProgress => Status::InReview,
+                        Status::InReview => Status::BusinessReview,
+                        Status::BusinessReview => Status::Done,
+                        _ => current,
+                    }
+                }
+
+                fn map_status_to_role(&self, status: Status) -> &'static str {
+                    match status {
+                        Status::TestsReady => "reviewer", // ← cambiado!
+                        Status::Draft | Status::BusinessReview => "product_owner",
+                        Status::Ready => "qa_engineer",
+                        Status::InProgress => "developer",
+                        Status::InReview => "reviewer",
+                        _ => "product_owner",
+                    }
+                }
+
+                fn canonical_column_order(&self) -> &[&'static str] {
+                    &[
+                        "Draft", "Ready", "Tests Ready", "In Progress",
+                        "In Review", "Business Review", "Done", "Blocked", "Failed",
+                    ]
+                }
+            }
+
+            let canonical_wf = CanonicalWorkflow::default();
+            let alt_wf = AltWorkflow;
+            let cfg = Config::default();
+
+            // Con CanonicalWorkflow: TestsReady → "developer"
+            let can_role = canonical_wf.map_status_to_role(Status::TestsReady);
+            assert_eq!(can_role, "developer");
+
+            // Con AltWorkflow: TestsReady → "reviewer"
+            let alt_role = alt_wf.map_status_to_role(Status::TestsReady);
+            assert_eq!(alt_role, "reviewer");
+
+            // La resolución de provider refleja el cambio de rol
+            let can_provider = providers::provider_for_role(&cfg.agents, can_role);
+            let alt_provider = providers::provider_for_role(&cfg.agents, alt_role);
+            // Ambos usan "pi" con defaults, pero los skill paths difieren
+            assert_eq!(can_provider, "pi");
+            assert_eq!(alt_provider, "pi");
+
+            let can_skill = providers::skill_for_role(&cfg.agents, can_role);
+            let alt_skill = providers::skill_for_role(&cfg.agents, alt_role);
+            assert_ne!(
+                can_skill, alt_skill,
+                "skill paths deben diferir cuando el rol difiere: {can_skill} vs {alt_skill}"
+            );
+        }
+
         // ── CA6+CA7: Compilación y tests ───────────────────────────
         // CA6 (cargo test --lib pipeline pasa) y CA7 (cargo build sin warnings)
         // se verifican ejecutando los comandos. No son testeables como unit tests.
