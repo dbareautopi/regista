@@ -489,7 +489,8 @@ fn handle_auto(args: AutoArgs) {
         }
 
         // Pipeline dry-run
-        let run_options = build_run_options(&args.pipeline, args.common.quiet);
+        let mut run_options = build_run_options(&args.pipeline, args.common.quiet);
+        run_options.dry_run = true;
         match orchestrator::run(project_root, &cfg, &run_options, None) {
             Ok(report) => print_pipeline_summary(&report),
             Err(e) => {
@@ -569,7 +570,8 @@ fn handle_run(args: RunArgs) {
             args.common.config.as_deref(),
             args.common.provider.as_deref(),
         );
-        let run_options = build_run_options(&args.pipeline, args.common.quiet);
+        let mut run_options = build_run_options(&args.pipeline, args.common.quiet);
+        run_options.dry_run = true;
         match orchestrator::run(project_root, &cfg, &run_options, None) {
             Ok(report) => print_pipeline_summary(&report),
             Err(e) => {
@@ -820,7 +822,7 @@ fn build_run_options(pipeline: &PipelineArgs, quiet: bool) -> orchestrator::RunO
         story_filter: pipeline.story.clone(),
         epic_filter: pipeline.epic.clone(),
         epics_range,
-        dry_run: false, // dry_run se maneja en el handler, no se pasa al daemon
+        dry_run: false, // se sobreescribe en los handlers que usan --dry-run
         quiet,
     }
 }
