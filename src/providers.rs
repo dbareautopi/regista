@@ -151,8 +151,15 @@ impl AgentProvider for CodexProvider {
 pub struct OpenCodeProvider;
 
 impl AgentProvider for OpenCodeProvider {
+    /// En Windows, opencode se distribuye como un script PowerShell (.ps1)
+    /// que no se puede invocar directamente con CreateProcess.
+    /// Usamos powershell.exe como wrapper con -Command.
     fn binary(&self) -> &str {
-        "opencode"
+        if cfg!(windows) {
+            "powershell"
+        } else {
+            "opencode"
+        }
     }
 
     fn display_name(&self) -> &str {
@@ -179,13 +186,35 @@ impl AgentProvider for OpenCodeProvider {
             .and_then(|s| s.to_str())
             .unwrap_or("build");
 
-        vec![
-            "run".to_string(),
-            "--agent".to_string(),
-            agent_name.to_string(),
-            "--dangerously-skip-permissions".to_string(),
-            prompt.to_string(),
-        ]
+        if cfg!(windows) {
+            // Windows: opencode es un .ps1 → necesita powershell wrapper.
+            // El prompt va dentro de comillas dobles de PowerShell → escapar:
+            //   " → ""  (convención PowerShell)
+            //   ` → ``   (backtick: carácter de escape)
+            //   $ → `$   (evita expansión de variables)
+            let escaped_prompt = prompt
+                .replace('`', "``")
+                .replace('$', "`$")
+                .replace('"', "\"\"");
+            let ps_cmd = format!(
+                "opencode run --agent {agent_name} --dangerously-skip-permissions \"{escaped_prompt}\""
+            );
+            vec![
+                "-NoProfile".to_string(),
+                "-ExecutionPolicy".to_string(),
+                "Bypass".to_string(),
+                "-Command".to_string(),
+                ps_cmd,
+            ]
+        } else {
+            vec![
+                "run".to_string(),
+                "--agent".to_string(),
+                agent_name.to_string(),
+                "--dangerously-skip-permissions".to_string(),
+                prompt.to_string(),
+            ]
+        }
     }
 }
 

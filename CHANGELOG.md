@@ -7,6 +7,23 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.7.1] — 2026-05-04
+
+### Fixed
+- **Seguridad PowerShell en Windows**: el escape del prompt para el provider
+  OpenCode ahora neutraliza caracteres especiales de PowerShell (`$`, `` ` ``,
+  `"`) además de las comillas dobles. Evita inyección de comandos maliciosos.
+- **Mensaje de error condicional en `daemon::kill()`**: sugiere `taskkill /F
+  /PID` en Windows en lugar de `kill -9` (que no existe en Windows).
+
+### Changed
+- **Paths con `Path::join` en vez de `format!`**: reemplazadas concatenaciones
+  manuales de paths con separador `/` por `Path::join()`, evitando separadores
+  mixtos en Windows.
+- **Tests sin paths hardcodeados `/tmp`**: los tests de `main.rs` y `daemon.rs`
+  ahora usan paths relativos neutros en lugar de `/tmp/proj`, `/tmp/foo.log`,
+  etc.
+
 ## [0.7.0] — 2026-05-04
 
 ### Added
@@ -222,6 +239,7 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 - Dry-run, salida JSON, feedback rico en reintentos
 - Hooks post-fase y snapshots git
 
+[0.7.1]: https://github.com/dbareautopi/regista/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/dbareautopi/regista/compare/v0.6.3...v0.7.0
 [0.6.3]: https://github.com/dbareautopi/regista/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/dbareautopi/regista/compare/v0.6.1...v0.6.2

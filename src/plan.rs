@@ -107,7 +107,7 @@ pub fn run(
             plan_prompt_initial(&ctx)
         } else {
             // Validar y obtener errores de dependencias
-            let config_path = project_root.join(".regista.toml");
+            let config_path = project_root.join(".regista/config.toml");
             let config_path_opt = if config_path.exists() {
                 Some(config_path.as_path())
             } else {
