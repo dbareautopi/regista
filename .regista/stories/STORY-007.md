@@ -1,7 +1,7 @@
 # STORY-007: Definir trait `Workflow` + implementar `CanonicalWorkflow`
 
 ## Status
-**Ready**
+**Tests Ready**
 
 ## Epic
 EPIC-03
@@ -27,3 +27,4 @@ El workflow actual está hardcodeado en múltiples funciones: `next_status()`, `
 ## Activity Log
 - 2026-05-04 | PO | Historia generada desde roadmap/AUDITORIA-ESCALABILIDAD.md (hallazgo #1, recomendación #4).
 - 2026-05-04 | PO | Refinamiento: historia validada contra DoR. Descripción clara, 7 CAs testeables, sin dependencias. Decisión documentada en .regista/decisions/story-007-refinement.md. Avanza a Ready.
+- 2026-05-04 | QA | Verificación de tests existentes en src/domain/workflow.rs: 20 tests unitarios cubren CA1-CA7 exhaustivamente. No se requieren tests adicionales. Decisión documentada en .regista/decisions/STORY-007-qa-engineer-20260504T230000.md. Avanza a Tests Ready.
