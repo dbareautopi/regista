@@ -58,6 +58,7 @@ fn role_instruction_content(role: &str) -> &'static str {
 const PO_SKILL: &str = r#"---
 name: product-owner
 description: Product Owner role for regista — refines and validates user stories to ensure they deliver business value. Handles Draft→Ready and Business Review→Done transitions.
+model: opencode/minimax-m2.5-free
 ---
 
 # Product Owner Skill
@@ -95,6 +96,7 @@ Eres un **Product Owner**. Tu responsabilidad es refinar y validar historias de 
 const QA_SKILL: &str = r#"---
 name: qa-engineer
 description: QA Engineer role for regista — writes and maintains automated tests for user stories. Handles Ready→Tests Ready and Tests Ready→Tests Ready (fix) transitions.
+model: opencode/minimax-m2.5-free
 ---
 
 # QA Engineer Skill
@@ -129,6 +131,7 @@ Eres un **QA Engineer**. Tu responsabilidad es escribir y mantener tests automat
 const DEV_SKILL: &str = r#"---
 name: developer
 description: Developer role for regista — implements code to make tests pass and satisfy acceptance criteria. Handles Tests Ready→In Review and In Progress→In Review (fix) transitions.
+model: opencode/minimax-m2.5-free
 ---
 
 # Developer Skill
@@ -163,6 +166,7 @@ Eres un **Developer**. Tu responsabilidad es implementar el código que hace pas
 const REVIEWER_SKILL: &str = r#"---
 name: reviewer
 description: Reviewer role for regista — technical gate that verifies code meets standards before business validation. Handles In Review→Business Review and In Review→In Progress (reject) transitions.
+model: opencode/minimax-m2.5-free
 ---
 
 # Reviewer Skill

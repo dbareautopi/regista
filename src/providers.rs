@@ -7,6 +7,36 @@
 
 use std::path::Path;
 
+/// Lee un campo simple del YAML frontmatter de un archivo markdown.
+///
+/// Busca líneas como `campo: valor` en el bloque delimitado por `---`.
+/// Devuelve `None` si no hay frontmatter o el campo no existe.
+fn read_yaml_field(path: &Path, field: &str) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let mut in_frontmatter = false;
+    let mut count = 0u32;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed == "---" {
+            count += 1;
+            if count == 1 {
+                in_frontmatter = true;
+                continue;
+            } else if in_frontmatter {
+                // Fin del frontmatter
+                break;
+            }
+        }
+        if in_frontmatter {
+            if let Some(rest) = trimmed.strip_prefix(&format!("{field}:")) {
+                return Some(rest.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Un provider sabe cómo invocar a un agente de codificación concreto.
 ///
 /// Devuelve `Vec<String>` (args de CLI), no un `Command`, para que el
@@ -173,18 +203,25 @@ impl AgentProvider for OpenCodeProvider {
     fn instruction_dir(&self, role: &str) -> String {
         // OpenCode lee agentes desde .opencode/agents/*.md.
         // El contenido del .md se usa como system prompt del agente.
-        format!(".opencode/agents/{role}.md")
+        // Los guiones bajos se convierten a guiones para que coincidan
+        // con el campo `name` del YAML frontmatter (opencode identifica
+        // agentes por el YAML name, no por el nombre del archivo).
+        let dir_name = role.replace('_', "-");
+        format!(".opencode/agents/{dir_name}.md")
     }
 
     fn build_args(&self, instruction: &Path, prompt: &str) -> Vec<String> {
         // opencode usa subcomando "run" con mensaje posicional.
         // El nombre del agente se deriva del nombre del archivo de
-        // instrucción (sin extensión): product_owner.md → product_owner.
+        // instrucción (sin extensión): product-owner.md → product-owner.
         // --dangerously-skip-permissions: modo no-interactivo.
         let agent_name = instruction
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("build");
+
+        // Leer el modelo del archivo de instrucción (campo `model:` en YAML frontmatter)
+        let model = read_yaml_field(instruction, "model");
 
         if cfg!(windows) {
             // Windows: opencode es un .ps1 → necesita powershell wrapper.
@@ -196,8 +233,12 @@ impl AgentProvider for OpenCodeProvider {
                 .replace('`', "``")
                 .replace('$', "`$")
                 .replace('"', "\"\"");
+            let model_flag = model
+                .as_ref()
+                .map(|m| format!(" -m {m}"))
+                .unwrap_or_default();
             let ps_cmd = format!(
-                "opencode run --agent {agent_name} --dangerously-skip-permissions \"{escaped_prompt}\""
+                "opencode run --agent {agent_name}{model_flag} --dangerously-skip-permissions \"{escaped_prompt}\""
             );
             vec![
                 "-NoProfile".to_string(),
@@ -207,13 +248,18 @@ impl AgentProvider for OpenCodeProvider {
                 ps_cmd,
             ]
         } else {
-            vec![
+            let mut args = vec![
                 "run".to_string(),
                 "--agent".to_string(),
                 agent_name.to_string(),
-                "--dangerously-skip-permissions".to_string(),
-                prompt.to_string(),
-            ]
+            ];
+            if let Some(ref m) = model {
+                args.push("-m".to_string());
+                args.push(m.clone());
+            }
+            args.push("--dangerously-skip-permissions".to_string());
+            args.push(prompt.to_string());
+            args
         }
     }
 }
@@ -394,28 +440,89 @@ mod tests {
     #[test]
     fn opencode_instruction_dir() {
         let p = OpenCodeProvider;
+        // reviewer has no underscores, unchanged
         assert_eq!(
             p.instruction_dir("reviewer"),
             ".opencode/agents/reviewer.md"
+        );
+        // product_owner: underscores → hyphens (must match YAML name)
+        assert_eq!(
+            p.instruction_dir("product_owner"),
+            ".opencode/agents/product-owner.md"
+        );
+        // qa_engineer: underscores → hyphens
+        assert_eq!(
+            p.instruction_dir("qa_engineer"),
+            ".opencode/agents/qa-engineer.md"
         );
     }
 
     #[test]
     fn opencode_build_args_uses_run_with_agent() {
         let p = OpenCodeProvider;
+        // Path with hyphens (matching instruction_dir output)
         let args = p.build_args(
-            Path::new(".opencode/agents/product_owner.md"),
+            Path::new(".opencode/agents/product-owner.md"),
             "refina esta historia",
         );
         assert_eq!(args[0], "run");
         assert!(args.contains(&"--agent".to_string()));
-        assert!(args.contains(&"product_owner".to_string()));
+        assert!(args.contains(&"product-owner".to_string()));
         assert!(args.contains(&"--dangerously-skip-permissions".to_string()));
         assert!(args.contains(&"refina esta historia".to_string()));
         // No debe contener -p ni -q ni -f (eran del API anterior)
         assert!(!args.contains(&"-p".to_string()));
         assert!(!args.contains(&"-q".to_string()));
         assert!(!args.contains(&"-f".to_string()));
+        // Sin modelo en el archivo → no se pasa -m
+        assert!(!args.contains(&"-m".to_string()));
+    }
+
+    #[test]
+    fn opencode_build_args_includes_model_when_present_in_yaml() {
+        let tmp = tempfile::tempdir().unwrap();
+        let agent_file = tmp.path().join("product-owner.md");
+        std::fs::write(
+            &agent_file,
+            "---\nname: product-owner\nmodel: opencode/minimax-m2.5-free\n---\n# test",
+        )
+        .unwrap();
+
+        let p = OpenCodeProvider;
+        let args = p.build_args(&agent_file, "test prompt");
+        assert!(args.contains(&"-m".to_string()));
+        assert!(args.contains(&"opencode/minimax-m2.5-free".to_string()));
+        assert!(args.contains(&"test prompt".to_string()));
+    }
+
+    #[test]
+    fn read_yaml_field_extracts_value() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("test.md");
+        std::fs::write(
+            &file,
+            "---\nname: my-agent\nmodel: opencode/gpt-5-nano\ndescription: test agent\n---\n# Body",
+        )
+        .unwrap();
+
+        assert_eq!(read_yaml_field(&file, "model"), Some("opencode/gpt-5-nano".into()));
+        assert_eq!(read_yaml_field(&file, "name"), Some("my-agent".into()));
+        assert_eq!(read_yaml_field(&file, "description"), Some("test agent".into()));
+        assert_eq!(read_yaml_field(&file, "nonexistent"), None);
+    }
+
+    #[test]
+    fn read_yaml_field_returns_none_without_frontmatter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("no-frontmatter.md");
+        std::fs::write(&file, "# Just a markdown file\n\nNo YAML here.").unwrap();
+
+        assert_eq!(read_yaml_field(&file, "model"), None);
+    }
+
+    #[test]
+    fn read_yaml_field_returns_none_for_missing_file() {
+        assert_eq!(read_yaml_field(Path::new("/nonexistent/file.md"), "model"), None);
     }
 
     // ── supported_providers ──────────────────────────────────────────
