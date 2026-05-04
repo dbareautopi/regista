@@ -7,6 +7,27 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.7.0] — 2026-05-04
+
+### Added
+- **`regista board` (#22)**: nuevo subcomando que muestra un dashboard Kanban
+  con el conteo de historias por estado y lista las bloqueadas/fallidas con
+  detalle (qué dependencias las bloquean, motivo del último rechazo).
+  - `--json` para salida estructurada (CI/CD)
+  - `--epic` para filtrar por épica
+  - `--config` para ruta de configuración personalizada
+  - Diseñado contra strings (`HashMap<String, usize>`), no contra variantes
+    del enum `Status`, para resistir el futuro refactor de workflows
+    configurables (#04).
+- **`orchestrator::load_all_stories()`** promovida a `pub(crate)` para
+  reutilización desde `board.rs` (antes era privada del orquestador).
+
+### Changed
+- **HANDOFF.md** actualizado: sesión v0.7.0, 173 tests, módulo `board.rs`
+  documentado.
+- **README.md** actualizado: sección `regista board` con ejemplos de uso
+  y salida esperada. Arquitectura interna incluye `board.rs`.
+
 ## [0.6.3] — 2026-05-03
 
 ### Fixed
@@ -201,6 +222,7 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 - Dry-run, salida JSON, feedback rico en reintentos
 - Hooks post-fase y snapshots git
 
+[0.7.0]: https://github.com/dbareautopi/regista/compare/v0.6.3...v0.7.0
 [0.6.3]: https://github.com/dbareautopi/regista/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/dbareautopi/regista/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/dbareautopi/regista/compare/v0.6.0...v0.6.1

@@ -5,6 +5,7 @@
 //! Toda ejecución es en modo daemon (background). Usa --logs para ver el progreso.
 
 mod agent;
+mod board;
 mod checkpoint;
 mod config;
 mod daemon;
@@ -56,6 +57,8 @@ enum Commands {
     Init(InitArgs),
     /// Comprobar e instalar una nueva versión de regista desde crates.io
     Update(UpdateArgs),
+    /// Mostrar el tablero Kanban con el estado de todas las historias
+    Board(BoardArgs),
 }
 
 // ── Args compartidos ──────────────────────────────────────────────────────
@@ -230,6 +233,24 @@ struct UpdateArgs {
     yes: bool,
 }
 
+#[derive(Args, Debug)]
+struct BoardArgs {
+    #[command(flatten)]
+    repo: RepoArgs,
+
+    /// Salida JSON para CI/CD
+    #[arg(long)]
+    json: bool,
+
+    /// Ruta al archivo .regista/config.toml
+    #[arg(long)]
+    config: Option<String>,
+
+    /// Filtrar por épica (ej: EPIC-001)
+    #[arg(long)]
+    epic: Option<String>,
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // main() — dispatch
 // ═══════════════════════════════════════════════════════════════════════════
@@ -247,6 +268,7 @@ fn main() {
         Commands::Validate(args) => handle_validate(args),
         Commands::Init(args) => handle_init(args),
         Commands::Update(args) => handle_update(args),
+        Commands::Board(args) => handle_board(args),
     }
 }
 
@@ -698,6 +720,18 @@ fn handle_update(args: UpdateArgs) {
     }
 }
 
+// ── board ────────────────────────────────────────────────────────────────
+
+fn handle_board(args: BoardArgs) {
+    let project_root = Path::new(&args.repo.dir);
+    let config_path = args.config.as_deref().map(Path::new);
+
+    if let Err(e) = board::run(project_root, args.json, args.epic.as_deref(), config_path) {
+        eprintln!("Error: {e}");
+        std::process::exit(1);
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Helpers
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1109,6 +1143,52 @@ mod tests {
                 assert_eq!(i.provider, "claude");
             }
             _ => panic!("expected Init"),
+        }
+    }
+
+    #[test]
+    fn board_defaults() {
+        let args = Cli::try_parse_from(["regista", "board"]).unwrap();
+        match args.command {
+            Commands::Board(b) => {
+                assert_eq!(b.repo.dir, ".");
+                assert!(!b.json);
+                assert!(b.epic.is_none());
+                assert!(b.config.is_none());
+            }
+            _ => panic!("expected Board"),
+        }
+    }
+
+    #[test]
+    fn board_with_epic_and_json() {
+        let args = Cli::try_parse_from([
+            "regista",
+            "board",
+            "/tmp/proj",
+            "--epic",
+            "EPIC-002",
+            "--json",
+        ])
+        .unwrap();
+        match args.command {
+            Commands::Board(b) => {
+                assert_eq!(b.repo.dir, "/tmp/proj");
+                assert!(b.json);
+                assert_eq!(b.epic.unwrap(), "EPIC-002");
+            }
+            _ => panic!("expected Board"),
+        }
+    }
+
+    #[test]
+    fn board_with_config() {
+        let args = Cli::try_parse_from(["regista", "board", "--config", "custom.toml"]).unwrap();
+        match args.command {
+            Commands::Board(b) => {
+                assert_eq!(b.config.unwrap(), "custom.toml");
+            }
+            _ => panic!("expected Board"),
         }
     }
 

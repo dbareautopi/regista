@@ -103,6 +103,7 @@ Subcomandos de gestión del daemon:
 
 Subcomandos auxiliares:
   validate  [dir]    Validar configuración e historias
+  board     [dir]    Dashboard Kanban: conteo por estado, bloqueadas, fallidas
   init      [dir]    Inicializar estructura del proyecto
 ```
 
@@ -143,6 +144,41 @@ regista run --story STORY-005 --once      # una historia, una iteración
 regista run --dry-run                     # simulación síncrona
 regista run --resume                      # reanudar tras interrupción
 regista run --clean-state                 # borrar checkpoint antes
+```
+
+### `regista board` — dashboard de historias
+
+Muestra un tablero Kanban con el conteo de historias por estado y lista
+las que están bloqueadas o fallidas con detalle.
+
+```bash
+regista board                              # tablero completo del proyecto
+regista board --json                       # salida JSON para CI/CD
+regista board --epic EPIC-001              # filtrar por épica
+regista board --epic EPIC-001 --json       # JSON filtrado
+
+# Salida esperada:
+# 📊 Story Board — regista
+# ==========================
+#
+#   Draft                3
+#   Ready                2
+#   Tests Ready          1
+#   In Progress          0
+#   In Review            1
+#   Business Review      0
+#   Done                 5
+#   Blocked              2
+#   Failed               1
+#   ──────────────────────
+#   Total               15
+#
+# 🔴 Blocked (2):
+#   STORY-008 — blocked by: STORY-005
+#   STORY-012 — blocked by: STORY-003, STORY-007
+#
+# ❌ Failed (1):
+#   STORY-015 — falta cobertura de tests para CA3
 ```
 
 ### `regista logs` / `status` / `kill` — gestión del daemon
@@ -616,6 +652,7 @@ src/
 ├── validator.rs           ← validate: chequeo pre-vuelo multi-provider
 ├── init.rs                ← init: scaffolding multi-provider
 ├── plan.rs               ← plan: generación de backlog + bucle validate
+├── board.rs              ← board: dashboard Kanban de historias
 ├── hooks.rs               ← Ejecución de hooks post-fase
 ├── git.rs                 ← Snapshots + rollback
 └── daemon.rs              ← Modo daemon (detach/logs/status/kill)
