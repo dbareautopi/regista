@@ -1,0 +1,27 @@
+# STORY-001: `from_name()` devuelve `Result` + `validate` verifica binarios de providers
+
+## Status
+**Draft**
+
+## Epic
+EPIC-01
+
+## Descripción
+El método `from_name()` en `src/infra/providers.rs` actualmente hace `panic!` cuando el nombre del provider no es reconocido. Esto aborta todo el proceso sin cleanup. Hay que cambiarlo para que devuelva `anyhow::Result<Box<dyn AgentProvider>>`. Adicionalmente, el comando `validate` debe verificar que los binarios de los providers configurados (`pi`, `claude`, `codex`, `opencode`) existen en el `PATH` del sistema.
+
+## Criterios de aceptación
+- [ ] CA1: `from_name("pi")` devuelve `Ok(Box<dyn AgentProvider>)` (mismo comportamiento, distinto tipo de retorno)
+- [ ] CA2: `from_name("inventado")` devuelve `Err(...)` con mensaje descriptivo, sin hacer `panic!`
+- [ ] CA3: `from_name("claude-code")` y alias (`"claude_code"`, `"claude"`) siguen funcionando
+- [ ] CA4: `from_name("opencode")`, `"open-code"`, `"open_code"` siguen funcionando
+- [ ] CA5: Todos los callers de `from_name()` se adaptan al nuevo `Result` (usar `?` o `match`)
+- [ ] CA6: `regista validate` reporta un `Finding::Error` si el binario del provider configurado no está en `PATH`
+- [ ] CA7: `regista validate` reporta un `Finding::Warning` si el provider es `codex` y no se puede verificar (codex puede estar instalado vía npm global con nombre no estándar)
+- [ ] CA8: `cargo test --lib providers` pasa (todos los tests de providers existentes)
+- [ ] CA9: `cargo test --lib validator` pasa (tests de validate)
+
+## Dependencias
+(Ninguna)
+
+## Activity Log
+- 2026-05-04 | PO | Historia generada desde roadmap/AUDITORIA-ESCALABILIDAD.md (hallazgos #7.1, #7.2).

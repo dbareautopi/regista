@@ -1,0 +1,15 @@
+[2m2026-05-04T22:18:18.131634Z[0m [32m INFO[0m [2mregista::app::plan[0m[2m:[0m 🤖 Invocando PO para generar/corregir historias...
+[2m2026-05-04T22:18:18.131757Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   [1/5] invocando pi (./.pi/skills/product-owner/SKILL.md)
+[2m2026-05-04T22:27:18.333279Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   ✓ agente completado (intento 1)
+[2m2026-05-04T22:27:18.334231Z[0m [32m INFO[0m [2mregista::app::plan[0m[2m:[0m   📊 Generadas: 18 historias, 6 épicas
+[2m2026-05-04T22:27:18.341778Z[0m [32m INFO[0m [2mregista::app::plan[0m[2m:[0m ✅ Grafo de dependencias correcto tras 2 iteraciones.
+[2m2026-05-04T22:27:18.341843Z[0m [32m INFO[0m [2mregista::cli::handlers[0m[2m:[0m Groom completado: 18 historias, 6 épicas, deps=limpias
+[2m2026-05-04T22:27:18.343937Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m max_iterations auto: 108 (18 historias × 6)
+[2m2026-05-04T22:27:18.343972Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 1 ══════
+[2m2026-05-04T22:27:18.345170Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ⛔ STORY-008: dependencias no resueltas → Blocked
+[2m2026-05-04T22:27:18.345614Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ⛔ STORY-009: dependencias no resueltas → Blocked
+[2m2026-05-04T22:27:18.345846Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ⛔ STORY-012: dependencias no resueltas → Blocked
+[2m2026-05-04T22:27:18.346140Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ⛔ STORY-017: dependencias no resueltas → Blocked
+[2m2026-05-04T22:27:18.346428Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m 🔓 Deadlock → PO debe refinar STORY-007: en Draft — necesita refinamiento del PO (desbloquearía 2 historias)
+[2m2026-05-04T22:27:18.346463Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m 🔓 Deadlock detectado: en Draft — necesita refinamiento del PO (desbloquearía 2 historias)
+[2m2026-05-04T22:27:18.346505Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 PO (plan) (pi) | STORY-007 (Draft → Ready)
