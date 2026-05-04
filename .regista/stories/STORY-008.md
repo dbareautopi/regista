@@ -1,7 +1,7 @@
 # STORY-008: Migrar `pipeline.rs` a usar `&dyn Workflow`
 
 ## Status
-**Blocked**
+**Ready**
 
 ## Epic
 EPIC-03

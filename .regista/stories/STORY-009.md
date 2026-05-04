@@ -1,7 +1,7 @@
 # STORY-009: Adaptar `board.rs` para columnas dinámicas según workflow
 
 ## Status
-**Blocked**
+**Ready**
 
 ## Epic
 EPIC-03

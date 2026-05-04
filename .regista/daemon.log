@@ -39,3 +39,9 @@
 [2m2026-05-04T22:55:30.854421Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   ✓ agente completado (intento 1)
 [2m2026-05-04T22:55:30.855641Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 7 ══════
 [2m2026-05-04T22:55:30.857447Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 PO (validate) (pi) | STORY-007 (Business Review → Done)
+[2m2026-05-04T22:55:30.903659Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   [1/5] invocando pi (./.pi/skills/product-owner/SKILL.md)
+[2m2026-05-04T22:58:23.305422Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   ✓ agente completado (intento 1)
+[2m2026-05-04T22:58:23.306201Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 8 ══════
+[2m2026-05-04T22:58:23.307504Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m 🔓 STORY-008: dependencias resueltas → Ready
+[2m2026-05-04T22:58:23.307896Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m 🔓 STORY-009: dependencias resueltas → Ready
+[2m2026-05-04T22:58:23.308271Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 QA (tests) (pi) | STORY-008 (Ready → Tests Ready)
