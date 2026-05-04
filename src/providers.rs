@@ -505,9 +505,15 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(read_yaml_field(&file, "model"), Some("opencode/gpt-5-nano".into()));
+        assert_eq!(
+            read_yaml_field(&file, "model"),
+            Some("opencode/gpt-5-nano".into())
+        );
         assert_eq!(read_yaml_field(&file, "name"), Some("my-agent".into()));
-        assert_eq!(read_yaml_field(&file, "description"), Some("test agent".into()));
+        assert_eq!(
+            read_yaml_field(&file, "description"),
+            Some("test agent".into())
+        );
         assert_eq!(read_yaml_field(&file, "nonexistent"), None);
     }
 
@@ -522,7 +528,10 @@ mod tests {
 
     #[test]
     fn read_yaml_field_returns_none_for_missing_file() {
-        assert_eq!(read_yaml_field(Path::new("/nonexistent/file.md"), "model"), None);
+        assert_eq!(
+            read_yaml_field(Path::new("/nonexistent/file.md"), "model"),
+            None
+        );
     }
 
     // ── supported_providers ──────────────────────────────────────────

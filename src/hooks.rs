@@ -24,10 +24,7 @@ pub fn run_hook(hook: Option<&str>, label: &str) -> anyhow::Result<()> {
             .arg(cmd)
             .status()
     } else {
-        std::process::Command::new("sh")
-            .arg("-c")
-            .arg(cmd)
-            .status()
+        std::process::Command::new("sh").arg("-c").arg(cmd).status()
     }
     .map_err(|e| anyhow::anyhow!("no se pudo ejecutar hook '{cmd}': {e}"))?;
 

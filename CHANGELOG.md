@@ -7,6 +7,28 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.7.2] — 2026-05-04
+
+### Fixed
+- **OpenCode: agent name mismatch**: `instruction_dir()` ahora convierte
+  underscores a guiones (`product_owner` → `product-owner`) para que coincida
+  con el campo `name` del YAML frontmatter. Antes opencode no encontraba los
+  agentes `product_owner` ni `qa_engineer` y usaba el agente `build` por defecto.
+- **OpenCode: modelo no especificado**: `build_args()` ahora lee el campo
+  `model:` del YAML frontmatter del archivo de instrucción y lo pasa a opencode
+  vía `-m`. Los templates de `init` incluyen `model: opencode/minimax-m2.5-free`.
+- **`--dry-run` ignorado**: los handlers de `plan`, `auto` y `run` no pasaban
+  `dry_run: true` al orquestador, por lo que `--dry-run` ejecutaba agentes reales.
+  Ahora el flag se propaga correctamente a `RunOptions`.
+
+### Added
+- Función `read_yaml_field()` en `providers.rs` para extraer campos del
+  YAML frontmatter de archivos markdown (usada para leer `model:`).
+- 4 tests nuevos en `providers::tests`: underscore conversion, model en YAML,
+  y `read_yaml_field` con y sin frontmatter.
+
+---
+
 ## [0.7.1] — 2026-05-04
 
 ### Fixed
@@ -239,6 +261,7 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 - Dry-run, salida JSON, feedback rico en reintentos
 - Hooks post-fase y snapshots git
 
+[0.7.2]: https://github.com/dbareautopi/regista/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/dbareautopi/regista/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/dbareautopi/regista/compare/v0.6.3...v0.7.0
 [0.6.3]: https://github.com/dbareautopi/regista/compare/v0.6.2...v0.6.3
