@@ -498,7 +498,7 @@ pub struct StoryRecord {
 // ── helpers ──────────────────────────────────────────────────────────────
 
 /// Carga todas las historias del directorio configurado.
-fn load_all_stories(project_root: &Path, cfg: &Config) -> anyhow::Result<Vec<Story>> {
+pub(crate) fn load_all_stories(project_root: &Path, cfg: &Config) -> anyhow::Result<Vec<Story>> {
     let stories_dir = project_root.join(&cfg.project.stories_dir);
     let pattern = stories_dir.join(&cfg.project.story_pattern);
 

@@ -1,9 +1,9 @@
 # 🧠 regista — Session Handoff
 
-> **Fecha**: 2026-05-03
-> **Sesión**: v0.5.2 — #09 Prompts agnósticos al stack (StackConfig, render, header/suffix)
-> **Versión**: v0.5.2
-> **Estado**: 158 tests pasando, 0 fallos, 1 ignorado, 0 warnings.
+> **Fecha**: 2026-05-04
+> **Sesión**: v0.6.0 — #22 `regista board`: dashboard de historias (conteo por estado, bloqueadas, fallidas)
+> **Versión**: v0.6.0
+> **Estado**: 173 tests pasando, 0 fallos, 1 ignorado, 0 warnings.
 
 ---
 
@@ -33,6 +33,7 @@
 │   ├── validator.rs            ← validate(): chequeo pre-vuelo multi-provider (config, skills, historias, dependencias, git)
 │   ├── init.rs                 ← init(): scaffolding multi-provider (pi, claude, codex, opencode)
 │   ├── plan.rs                ← run(): generación de backlog (comando `plan`)
+│   ├── board.rs               ← run(): dashboard Kanban de historias (comando `board`)
 │   ├── hooks.rs                ← run_hook(): comandos post-fase
 │   ├── git.rs                  ← snapshot(), rollback()
 │   ├── daemon.rs               ← detach(), status(), kill(), follow()
@@ -83,6 +84,7 @@
 | `regista validate [dir]` | `validator.rs` | Chequeo pre-vuelo (config, instrucciones de rol, historias, dependencias, git) |
 | `regista init [dir]` | `init.rs` | Scaffolding multi-provider: .regista/config.toml + instrucciones de rol + estructura dirs |
 | `regista update` | `update.rs` | Comprobar si hay nueva versión en crates.io e instalar (`--yes` para automático) |
+| `regista board [dir]` | `board.rs` | Dashboard Kanban: conteo por estado, historias bloqueadas/fallidas (`--json` para CI) |
 
 > **Nota**: Todos los subcomandos de pipeline (`plan`, `auto`, `run`) ejecutan en modo daemon.
 > Usa `--logs` para ver el progreso en vivo, `--dry-run` para simulación sin agentes.
@@ -233,7 +235,7 @@
 ```bash
 cargo build              # Debug
 cargo build --release    # Release
-cargo test               # 158 tests, 0 fallos, 1 ignorado
+cargo test               # 173 tests, 0 fallos, 1 ignorado
 cargo check              # Verificar warnings
 cargo fmt                # Formatear
 cargo clippy -- -D warnings  # 0 issues
@@ -269,6 +271,9 @@ EPIC-XXX
 ---
 
 ## 🚧 Pendiente (roadmap)
+
+### Completado recientemente (v0.6.0)
+- **22 - `regista board`**: dashboard Kanban con conteo por estado, lista de bloqueadas/fallidas, `--json`, `--epic`. Diseñado contra strings para resistir #04 (workflows configurables). 9 tests nuevos (6 unitarios + 3 CLI).
 
 ### Media prioridad
 - **10 - Cross-story context**: agentes reciben contexto de historias relacionadas (Fase 4, ✍️ diseño definido)
