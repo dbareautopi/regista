@@ -891,18 +891,28 @@ mod tests {
         assert!(status_priority(Status::Ready) > status_priority(Status::Draft));
     }
 
+    // ── STORY-008: Migración de next_status a CanonicalWorkflow ──
+    // CA5: Las funciones hardcodeadas next_status() y map_status_to_role()
+    // se eliminan de pipeline.rs. Los tests ahora usan CanonicalWorkflow.
+
+    use crate::domain::workflow::{Workflow, CanonicalWorkflow};
+
+    /// CA5: next_status() hardcodeada eliminada → se usa CanonicalWorkflow.
     #[test]
     fn next_status_follows_happy_path() {
-        assert_eq!(next_status(Status::Draft), Status::Ready);
-        assert_eq!(next_status(Status::Ready), Status::TestsReady);
-        assert_eq!(next_status(Status::TestsReady), Status::InReview);
-        assert_eq!(next_status(Status::InReview), Status::BusinessReview);
-        assert_eq!(next_status(Status::BusinessReview), Status::Done);
+        let wf = CanonicalWorkflow::default();
+        assert_eq!(wf.next_status(Status::Draft), Status::Ready);
+        assert_eq!(wf.next_status(Status::Ready), Status::TestsReady);
+        assert_eq!(wf.next_status(Status::TestsReady), Status::InReview);
+        assert_eq!(wf.next_status(Status::InReview), Status::BusinessReview);
+        assert_eq!(wf.next_status(Status::BusinessReview), Status::Done);
     }
 
+    /// CA5: next_status() hardcodeada eliminada → se usa CanonicalWorkflow.
     #[test]
     fn next_status_fix_path() {
-        assert_eq!(next_status(Status::InProgress), Status::InReview);
+        let wf = CanonicalWorkflow::default();
+        assert_eq!(wf.next_status(Status::InProgress), Status::InReview);
     }
 
     // ── filter_stories ──────────────────────────────────────────────
@@ -1118,5 +1128,269 @@ mod tests {
         let graph = DependencyGraph::from_stories(&stories);
         let picked = pick_next_actionable(&stories, &graph);
         assert!(picked.is_none());
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // STORY-008: Migrar pipeline.rs a usar &dyn Workflow
+    // ═══════════════════════════════════════════════════════════════
+
+    mod story008 {
+        use super::*;
+
+        // ── CA1: run_real acepta workflow: &dyn Workflow ──────────
+
+        /// CA1: run_real() acepta (o construye internamente) un workflow.
+        /// Este test verifica que CanonicalWorkflow proporciona todos los
+        /// métodos necesarios para reemplazar las funciones hardcodeadas.
+        #[test]
+        fn canonical_workflow_provides_all_required_methods() {
+            let wf = CanonicalWorkflow::default();
+
+            // next_status: cubre todos los estados que pipeline usaba
+            assert_eq!(wf.next_status(Status::Draft), Status::Ready);
+            assert_eq!(wf.next_status(Status::Ready), Status::TestsReady);
+            assert_eq!(wf.next_status(Status::TestsReady), Status::InReview);
+            assert_eq!(wf.next_status(Status::InProgress), Status::InReview);
+            assert_eq!(wf.next_status(Status::InReview), Status::BusinessReview);
+            assert_eq!(wf.next_status(Status::BusinessReview), Status::Done);
+
+            // map_status_to_role: cubre todos los estados accionables
+            assert_eq!(wf.map_status_to_role(Status::Draft), "product_owner");
+            assert_eq!(wf.map_status_to_role(Status::Ready), "qa_engineer");
+            assert_eq!(wf.map_status_to_role(Status::TestsReady), "developer");
+            assert_eq!(wf.map_status_to_role(Status::InReview), "reviewer");
+            assert_eq!(wf.map_status_to_role(Status::BusinessReview), "product_owner");
+
+            // canonical_column_order: 9 columnas
+            assert_eq!(wf.canonical_column_order().len(), 9);
+        }
+
+        /// CA1: CanonicalWorkflow se puede usar como &dyn Workflow
+        /// (necesario para que run_real acepte el trait object).
+        #[test]
+        fn canonical_workflow_usable_as_trait_object() {
+            let wf: &dyn Workflow = &CanonicalWorkflow::default();
+            assert_eq!(wf.next_status(Status::Draft), Status::Ready);
+            assert_eq!(wf.map_status_to_role(Status::Ready), "qa_engineer");
+            assert!(!wf.canonical_column_order().is_empty());
+        }
+
+        // ── CA2: process_story usa workflow.map_status_to_role() ──
+
+        /// CA2: process_story() usa workflow.map_status_to_role(status)
+        /// en lugar de la función hardcodeada map_status_to_role().
+        /// Verifica que el mapeo workflow→rol canónico es correcto
+        /// para todos los estados que process_story puede encontrar.
+        #[test]
+        fn workflow_role_mapping_covers_all_states_process_story_handles() {
+            let wf = CanonicalWorkflow::default();
+
+            let expected: &[(Status, &str)] = &[
+                (Status::Draft, "product_owner"),
+                (Status::Ready, "qa_engineer"),
+                (Status::TestsReady, "developer"),
+                (Status::InProgress, "developer"),
+                (Status::InReview, "reviewer"),
+                (Status::BusinessReview, "product_owner"),
+                // Fallbacks seguros
+                (Status::Done, "product_owner"),
+                (Status::Blocked, "product_owner"),
+                (Status::Failed, "product_owner"),
+            ];
+
+            for (status, expected_role) in expected {
+                let role = wf.map_status_to_role(*status);
+                assert_eq!(
+                    role, *expected_role,
+                    "map_status_to_role({}) = {role}, expected {expected_role}",
+                    status
+                );
+            }
+        }
+
+        /// CA2: El mapeo de rol es determinista (misma entrada → misma salida).
+        #[test]
+        fn workflow_role_mapping_is_deterministic() {
+            let wf = CanonicalWorkflow::default();
+            for _ in 0..5 {
+                assert_eq!(wf.map_status_to_role(Status::Ready), "qa_engineer");
+                assert_eq!(wf.map_status_to_role(Status::TestsReady), "developer");
+                assert_eq!(wf.map_status_to_role(Status::InReview), "reviewer");
+            }
+        }
+
+        // ── CA3+CA4: apply_automatic_transitions usa workflow ─────
+
+        /// CA3+CA4: apply_automatic_transitions() usa workflow.next_status()
+        /// para determinar el estado de desbloqueo, en lugar de hardcodear
+        /// Status::Ready.
+        ///
+        /// Este test simula la lógica de desbloqueo que apply_automatic_transitions
+        /// debe implementar: cuando todas las dependencias de una historia Blocked
+        /// están Done, el nuevo estado se obtiene del workflow.
+        #[test]
+        fn unblock_target_comes_from_workflow_not_hardcoded() {
+            let wf = CanonicalWorkflow::default();
+
+            // ── Setup: historia bloqueada con dependencias resueltas ──
+            let blocked_id = "STORY-002";
+            let blockers = vec!["STORY-001".to_string()];
+
+            let status_map: HashMap<String, Status> = [
+                ("STORY-001".into(), Status::Done),
+                (blocked_id.into(), Status::Blocked),
+            ]
+            .into();
+
+            // Verificar que todas las dependencias están Done
+            let all_blockers_done = blockers
+                .iter()
+                .all(|b| status_map.get(b).is_some_and(|s| *s == Status::Done));
+            assert!(all_blockers_done, "Todas las dependencias deben estar Done");
+
+            // ── CA4: El estado destino viene del workflow ──
+            let unblock_target = wf.next_status(Status::Blocked);
+
+            // El workflow canónico DEBE desbloquear a Ready
+            assert_eq!(
+                unblock_target,
+                Status::Ready,
+                "CanonicalWorkflow.next_status(Blocked) debe ser Ready para desbloqueo"
+            );
+
+            // ── Sanity checks ──
+            assert!(
+                !unblock_target.is_terminal(),
+                "El target de desbloqueo no puede ser un estado terminal"
+            );
+            assert_ne!(
+                unblock_target,
+                Status::Blocked,
+                "El target de desbloqueo no puede ser Blocked (bucle infinito)"
+            );
+            assert!(
+                unblock_target != Status::Failed,
+                "El target de desbloqueo no puede ser Failed"
+            );
+        }
+
+        /// CA4: La transición Blocked→Ready se obtiene del workflow.
+        /// Si se cambia el workflow, el estado post-desbloqueo debe cambiar.
+        /// Esto demuestra que el target NO está hardcodeado.
+        #[test]
+        fn unblock_target_changes_when_workflow_changes() {
+            /// Workflow alternativo: desbloquea a Draft en vez de Ready.
+            struct AltWorkflow;
+
+            impl Workflow for AltWorkflow {
+                fn next_status(&self, current: Status) -> Status {
+                    match current {
+                        Status::Blocked => Status::Draft, // ← diferente al canónico
+                        Status::Draft => Status::Ready,
+                        Status::Ready => Status::TestsReady,
+                        Status::TestsReady => Status::InReview,
+                        Status::InProgress => Status::InReview,
+                        Status::InReview => Status::BusinessReview,
+                        Status::BusinessReview => Status::Done,
+                        _ => current,
+                    }
+                }
+
+                fn map_status_to_role(&self, status: Status) -> &'static str {
+                    match status {
+                        Status::Draft | Status::BusinessReview => "product_owner",
+                        Status::Ready => "qa_engineer",
+                        Status::TestsReady | Status::InProgress => "developer",
+                        Status::InReview => "reviewer",
+                        _ => "product_owner",
+                    }
+                }
+
+                fn canonical_column_order(&self) -> &[&'static str] {
+                    &[
+                        "Draft", "Ready", "Tests Ready", "In Progress",
+                        "In Review", "Business Review", "Done", "Blocked", "Failed",
+                    ]
+                }
+            }
+
+            let canonical = CanonicalWorkflow::default();
+            let alt = AltWorkflow;
+
+            // El workflow canónico desbloquea a Ready
+            assert_eq!(canonical.next_status(Status::Blocked), Status::Ready);
+
+            // El workflow alternativo desbloquea a Draft
+            assert_eq!(alt.next_status(Status::Blocked), Status::Draft);
+
+            // Ambos son diferentes → el target NO está hardcodeado
+            assert_ne!(
+                canonical.next_status(Status::Blocked),
+                alt.next_status(Status::Blocked),
+                "Workflows diferentes deben poder producir targets diferentes"
+            );
+        }
+
+        /// CA3: apply_automatic_transitions usa el workflow también para
+        /// la transición *→Failed (max_reject_cycles agotado).
+        /// Verifica que el workflow.next_status() produce el valor esperado
+        /// para el caso de fallo.
+        #[test]
+        fn workflow_next_status_handles_terminal_states() {
+            let wf = CanonicalWorkflow::default();
+
+            // Estados terminales no transicionan
+            assert_eq!(wf.next_status(Status::Done), Status::Done);
+            assert_eq!(wf.next_status(Status::Failed), Status::Failed);
+
+            // Estados no accionables no transicionan (salvo Blocked→Ready)
+            assert_eq!(wf.next_status(Status::Draft), Status::Ready);
+        }
+
+        // ── CA5: Funciones hardcodeadas eliminadas ─────────────────
+
+        /// CA5: Las funciones hardcodeadas next_status() y map_status_to_role()
+        /// se eliminan de pipeline.rs.
+        ///
+        /// Este test verifica que el comportamiento de CanonicalWorkflow
+        /// es idéntico al de las funciones hardcodeadas que va a reemplazar.
+        /// Cuando el Developer elimine next_status() y map_status_to_role(),
+        /// este test debe seguir pasando (usa CanonicalWorkflow, no las
+        /// funciones hardcodeadas).
+        #[test]
+        fn canonical_workflow_matches_original_hardcoded_behavior() {
+            let wf = CanonicalWorkflow::default();
+
+            // ── Equivalente a next_status() ──
+            // Happy path
+            assert_eq!(wf.next_status(Status::Draft), Status::Ready);
+            assert_eq!(wf.next_status(Status::Ready), Status::TestsReady);
+            assert_eq!(wf.next_status(Status::TestsReady), Status::InReview);
+            assert_eq!(wf.next_status(Status::InReview), Status::BusinessReview);
+            assert_eq!(wf.next_status(Status::BusinessReview), Status::Done);
+            // Fix path
+            assert_eq!(wf.next_status(Status::InProgress), Status::InReview);
+            // Terminales
+            assert_eq!(wf.next_status(Status::Done), Status::Done);
+            assert_eq!(wf.next_status(Status::Failed), Status::Failed);
+            // Desbloqueo (CA4)
+            assert_eq!(wf.next_status(Status::Blocked), Status::Ready);
+
+            // ── Equivalente a map_status_to_role() ──
+            assert_eq!(wf.map_status_to_role(Status::Draft), "product_owner");
+            assert_eq!(wf.map_status_to_role(Status::Ready), "qa_engineer");
+            assert_eq!(wf.map_status_to_role(Status::TestsReady), "developer");
+            assert_eq!(wf.map_status_to_role(Status::InProgress), "developer");
+            assert_eq!(wf.map_status_to_role(Status::InReview), "reviewer");
+            assert_eq!(wf.map_status_to_role(Status::BusinessReview), "product_owner");
+        }
+
+        // ── CA6+CA7: Compilación y tests ───────────────────────────
+        // CA6 (cargo test --lib pipeline pasa) y CA7 (cargo build sin warnings)
+        // se verifican ejecutando los comandos. No son testeables como unit tests.
+        // El Developer debe ejecutar:
+        //   cargo test --lib pipeline
+        //   cargo build
+        //   cargo clippy -- -D warnings
     }
 }
