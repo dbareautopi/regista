@@ -1403,37 +1403,58 @@ model = "gpt-5"
 
         /// CA3: La resolución de modelos usa AgentsConfig::model_for_role().
         /// Verifica que el header refleja exactamente lo que devuelve
-        /// model_for_role para cada rol.
+        /// model_for_role para cada rol, usando la misma resolución de
+        /// paths que format_session_header (skill path absoluto desde
+        /// project_root).
         #[test]
         fn header_uses_model_for_role_resolution() {
-            let cfg = config::Config::default();
-            let header = format_session_header(
-                &cfg,
-                "1.0.0",
-                Path::new("/tmp"),
-                0,
-                false,
-                "2026-05-05 12:00:00",
-            );
+            let tmp = tempfile::tempdir().unwrap();
+            let project_root = tmp.path();
 
-            // Para cada rol canónico, model_for_role con skill path del rol
-            // debe coincidir con lo que aparece en el header.
-            for role in config::AgentsConfig::all_roles() {
-                let skill_path = cfg.agents.skill_for_role(role);
-                let expected_model = cfg.agents.model_for_role(role, Path::new(&skill_path));
-                let role_abbr = match role {
-                    "product_owner" => "PO",
-                    "qa_engineer" => "QA",
-                    "developer" => "Dev",
-                    "reviewer" => "Reviewer",
-                    _ => role,
-                };
+            // Crear skills para los 4 roles con modelos YAML distintos
+            let role_models = [
+                ("product-owner", "po-model-v1"),
+                ("qa-engineer", "qa-model-v1"),
+                ("developer", "dev-model-v1"),
+                ("reviewer", "reviewer-model-v1"),
+            ];
+            for (role_dir, expected_model) in &role_models {
+                let skill_dir = project_root.join(".pi/skills").join(role_dir);
+                std::fs::create_dir_all(&skill_dir).unwrap();
+                std::fs::write(
+                    skill_dir.join("SKILL.md"),
+                    format!("---\nname: {role_dir}\nmodel: {expected_model}\n---\n# Skill\n"),
+                )
+                .unwrap();
+            }
+
+            let cfg = config::Config::default();
+            let header =
+                format_session_header(&cfg, "1.0.0", project_root, 0, false, "2026-05-05 12:00:00");
+
+            // Para cada rol canónico, model_for_role con el mismo skill path
+            // absoluto que usa format_session_header debe coincidir con el header.
+            for (role, role_abbr) in [
+                ("product_owner", "PO"),
+                ("qa_engineer", "QA"),
+                ("developer", "Dev"),
+                ("reviewer", "Reviewer"),
+            ] {
+                let skill_rel = cfg.agents.skill_for_role(role);
+                let skill_abs = project_root.join(&skill_rel);
+                let expected_model = cfg.agents.model_for_role(role, &skill_abs);
                 let expected_fragment = format!("{role_abbr}={expected_model}");
                 assert!(
                     header.contains(&expected_fragment),
-                    "Header debe contener '{expected_fragment}' (resolución de model_for_role)"
+                    "Header debe contener '{expected_fragment}' (resolución de model_for_role con path absoluto)"
                 );
             }
+
+            // Verificación concreta: los modelos del YAML aparecen en el header
+            assert!(header.contains("PO=po-model-v1"));
+            assert!(header.contains("QA=qa-model-v1"));
+            assert!(header.contains("Dev=dev-model-v1"));
+            assert!(header.contains("Reviewer=reviewer-model-v1"));
         }
 
         // ── CA4: Límites con max_iter efectivo ─────────────────
