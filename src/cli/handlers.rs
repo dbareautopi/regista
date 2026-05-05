@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::app;
 use crate::config;
@@ -111,6 +111,12 @@ fn handle_plan(args: PlanArgs) {
     }
 
     // Modo daemon (default)
+    let cfg = load_config(
+        project_root,
+        args.common.config.as_deref(),
+        args.common.provider.as_deref(),
+    );
+    let log_file = create_log_file(project_root, &cfg.project.log_dir);
     let child_args = build_daemon_args(
         "plan",
         &args.repo.dir,
@@ -119,9 +125,10 @@ fn handle_plan(args: PlanArgs) {
         args.plan_mode.max_stories,
         &PipelineArgs::default(),
         &args.common,
+        &log_file,
     );
 
-    spawn_and_optionally_follow(project_root, &child_args, args.common.logs);
+    spawn_and_optionally_follow(project_root, &child_args, &log_file, args.common.logs);
 }
 
 // ── auto ──────────────────────────────────────────────────────────────────
@@ -258,6 +265,12 @@ fn handle_auto(args: AutoArgs) {
     }
 
     // Modo daemon (default)
+    let cfg = load_config(
+        project_root,
+        args.common.config.as_deref(),
+        args.common.provider.as_deref(),
+    );
+    let log_file = create_log_file(project_root, &cfg.project.log_dir);
     let child_args = build_daemon_args(
         "auto",
         &args.repo.dir,
@@ -266,9 +279,10 @@ fn handle_auto(args: AutoArgs) {
         args.plan_mode.max_stories,
         &args.pipeline,
         &args.common,
+        &log_file,
     );
 
-    spawn_and_optionally_follow(project_root, &child_args, args.common.logs);
+    spawn_and_optionally_follow(project_root, &child_args, &log_file, args.common.logs);
 }
 
 // ── run ───────────────────────────────────────────────────────────────────
@@ -339,6 +353,12 @@ fn handle_run(args: RunArgs) {
     }
 
     // Modo daemon (default)
+    let cfg = load_config(
+        project_root,
+        args.common.config.as_deref(),
+        args.common.provider.as_deref(),
+    );
+    let log_file = create_log_file(project_root, &cfg.project.log_dir);
     let child_args = build_daemon_args(
         "run",
         &args.repo.dir,
@@ -347,9 +367,10 @@ fn handle_run(args: RunArgs) {
         0,
         &args.pipeline,
         &args.common,
+        &log_file,
     );
 
-    spawn_and_optionally_follow(project_root, &child_args, args.common.logs);
+    spawn_and_optionally_follow(project_root, &child_args, &log_file, args.common.logs);
 }
 
 // ── logs / status / kill ──────────────────────────────────────────────────
@@ -583,6 +604,43 @@ fn build_run_options(pipeline: &PipelineArgs, quiet: bool) -> app::pipeline::Run
     }
 }
 
+/// Crea un archivo de log con timestamp dentro de `log_dir`.
+/// Limpia logs antiguos (conserva solo los últimos 10).
+/// Retorna la ruta absoluta al nuevo archivo.
+fn create_log_file(project_root: &Path, log_dir: &str) -> PathBuf {
+    let logs_dir = project_root.join(log_dir);
+    std::fs::create_dir_all(&logs_dir).ok();
+
+    let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let log_path = logs_dir.join(format!("regista-log-{timestamp}.log"));
+
+    cleanup_old_logs(&logs_dir, 10);
+
+    log_path
+}
+
+/// Elimina los logs más antiguos, conservando solo los `keep` más recientes.
+fn cleanup_old_logs(logs_dir: &Path, keep: usize) {
+    let mut entries: Vec<_> = std::fs::read_dir(logs_dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with("regista-log-") && name.ends_with(".log")
+        })
+        .collect();
+
+    // Ordenar por nombre descendente (los timestamps son ordenables lexicográficamente)
+    entries.sort_by_key(|b| std::cmp::Reverse(b.file_name()));
+
+    for entry in entries.iter().skip(keep) {
+        let _ = std::fs::remove_file(entry.path());
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 /// Construye los argumentos para el proceso hijo daemon.
 fn build_daemon_args(
     subcommand: &str,
@@ -592,8 +650,8 @@ fn build_daemon_args(
     max_stories: u32,
     pipeline: &PipelineArgs,
     common: &CommonArgs,
+    log_file: &Path,
 ) -> Vec<String> {
-    let log_path = Path::new(dir).join(".regista/daemon.log");
     let mut args = vec![subcommand.to_string()];
 
     // Spec posicional (solo plan / auto) — va antes de dir porque es required
@@ -607,7 +665,7 @@ fn build_daemon_args(
     // Flags internos del daemon
     args.push("--daemon".to_string());
     args.push("--log-file".to_string());
-    args.push(log_path.to_string_lossy().to_string());
+    args.push(log_file.to_string_lossy().to_string());
 
     // Plan mode flags
     if replace {
@@ -655,12 +713,16 @@ fn build_daemon_args(
 }
 
 /// Spawnea el daemon y opcionalmente sigue el log.
-fn spawn_and_optionally_follow(project_root: &Path, child_args: &[String], follow_log: bool) {
+fn spawn_and_optionally_follow(
+    project_root: &Path,
+    child_args: &[String],
+    log_file: &Path,
+    follow_log: bool,
+) {
     match infra::daemon::detach(project_root, child_args, None) {
         Ok(pid) => {
-            let log_display = project_root.join(".regista/daemon.log");
             println!("🚀 Daemon lanzado (PID: {pid})");
-            println!("   Log: {}", log_display.display());
+            println!("   Log: {}", log_file.display());
             println!("   Usa: regista logs, regista status, regista kill");
 
             if follow_log {
@@ -728,13 +790,15 @@ mod tests {
             provider: Some("claude".into()),
             quiet: false,
         };
+        let log_file = Path::new(".regista/logs/regista-log-test.log");
 
-        let args = build_daemon_args("run", ".", None, false, 0, &pipeline, &common);
+        let args = build_daemon_args("run", ".", None, false, 0, &pipeline, &common, log_file);
 
-        // Verificar estructura: ["run", ".", "--daemon", "--log-file", "./.regista/daemon.log", ...]
+        // Verificar estructura: ["run", ".", "--daemon", "--log-file", ".regista/logs/regista-log-test.log", ...]
         assert_eq!(args[0], "run");
         assert_eq!(args[1], ".");
         assert!(args.contains(&"--daemon".to_string()));
+        assert!(args.contains(&"--log-file".to_string()));
         assert!(args.contains(&"--story".to_string()));
         assert!(args.contains(&"STORY-005".to_string()));
         assert!(args.contains(&"--once".to_string()));
@@ -754,6 +818,7 @@ mod tests {
             provider: None,
             quiet: true,
         };
+        let log_file = Path::new(".regista/logs/regista-log-test.log");
 
         let args = build_daemon_args(
             "plan",
@@ -763,6 +828,7 @@ mod tests {
             10,
             &pipeline,
             &common,
+            log_file,
         );
 
         assert_eq!(args[0], "plan");
