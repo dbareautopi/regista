@@ -1,7 +1,7 @@
 # STORY-010: Migrar `agent.rs` a `tokio` — eliminar busy-polling con `thread::sleep`
 
 ## Status
-**Draft**
+**Ready**
 
 ## Epic
 EPIC-04
@@ -24,3 +24,4 @@ Actualmente `invoke_once()` en `src/infra/agent.rs` usa busy-polling con `thread
 
 ## Activity Log
 - 2026-05-04 | PO | Historia generada desde roadmap/AUDITORIA-ESCALABILIDAD.md (hallazgos #2.4, #10.2; recomendación #6).
+- 2026-05-05 | PO | Historia refinada. Cumple DoR: descripción clara, 8 CAs testeables, sin dependencias. Validado contra src/infra/agent.rs — busy-polling con thread::sleep(250ms) confirmado. Tokio ausente en Cargo.toml (CA6). Movida a Ready.

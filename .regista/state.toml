@@ -1,4 +1,4 @@
-iteration = 34
+iteration = 35
 
 [reject_cycles]
 
@@ -7,6 +7,7 @@ STORY-011 = 9
 STORY-009 = 7
 STORY-007 = 7
 STORY-008 = 7
+STORY-010 = 1
 STORY-017 = 4
 
 [story_errors]
