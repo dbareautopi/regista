@@ -1,0 +1,9 @@
+[2m2026-05-05T23:27:49.380612Z[0m [32m INFO[0m [2mregista::app::plan[0m[2m:[0m 🤖 Invocando PO para generar/corregir historias...
+[2m2026-05-05T23:27:49.383283Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   [1/5] invocando pi (./.pi/skills/product-owner/SKILL.md)
+[2m2026-05-05T23:31:55.028679Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   ✓ agente completado (intento 1)
+[2m2026-05-05T23:31:55.029248Z[0m [32m INFO[0m [2mregista::app::plan[0m[2m:[0m   📊 Generadas: 28 historias, 10 épicas
+[2m2026-05-05T23:31:55.047188Z[0m [32m INFO[0m [2mregista::app::plan[0m[2m:[0m ✅ Grafo de dependencias correcto tras 2 iteraciones.
+[2m2026-05-05T23:31:55.047229Z[0m [32m INFO[0m [2mregista::cli::handlers[0m[2m:[0m Groom completado: 28 historias, 10 épicas, deps=limpias
+[2m2026-05-05T23:31:55.050322Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m max_iterations auto: 168 (28 historias × 6)
+[2m2026-05-05T23:31:55.050361Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 1 ══════
+[2m2026-05-05T23:31:55.054315Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 Dev (implement) (pi) | STORY-022 (Tests Ready → In Review)
