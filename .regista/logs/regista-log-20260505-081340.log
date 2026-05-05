@@ -1,0 +1,15 @@
+[2m2026-05-05T08:13:40.207527Z[0m [32m INFO[0m [2mregista::app::plan[0m[2m:[0m 🤖 Invocando PO para generar/corregir historias...
+[2m2026-05-05T08:13:40.208664Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   [1/5] invocando pi (./.pi/skills/product-owner/SKILL.md)
+[2m2026-05-05T08:22:15.886626Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   ✓ agente completado (intento 1)
+[2m2026-05-05T08:22:15.887261Z[0m [32m INFO[0m [2mregista::app::plan[0m[2m:[0m   📊 Generadas: 28 historias, 10 épicas
+[2m2026-05-05T08:22:15.894124Z[0m [32m INFO[0m [2mregista::app::plan[0m[2m:[0m ✅ Grafo de dependencias correcto tras 2 iteraciones.
+[2m2026-05-05T08:22:15.894156Z[0m [32m INFO[0m [2mregista::cli::handlers[0m[2m:[0m Groom completado: 28 historias, 10 épicas, deps=limpias
+[2m2026-05-05T08:22:15.898621Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m max_iterations auto: 168 (28 historias × 6)
+[2m2026-05-05T08:22:15.898693Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 1 ══════
+[2m2026-05-05T08:22:15.908188Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ⛔ STORY-021: dependencias no resueltas → Blocked
+[2m2026-05-05T08:22:15.908758Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ⛔ STORY-024: dependencias no resueltas → Blocked
+[2m2026-05-05T08:22:15.909141Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ⛔ STORY-025: dependencias no resueltas → Blocked
+[2m2026-05-05T08:22:15.909437Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ⛔ STORY-026: dependencias no resueltas → Blocked
+[2m2026-05-05T08:22:15.909820Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ⛔ STORY-027: dependencias no resueltas → Blocked
+[2m2026-05-05T08:22:15.910272Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ⛔ STORY-028: dependencias no resueltas → Blocked
+[2m2026-05-05T08:22:15.910870Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 Reviewer (pi) | STORY-002 (In Review → Business Review)

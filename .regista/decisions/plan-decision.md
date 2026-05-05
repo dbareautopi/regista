@@ -1,55 +1,62 @@
-# Plan Decision: Descomposición de Auditoría de Escalabilidad
+# Plan Decision: Logs transparentes — streaming, trazabilidad y tracking de tokens
 
-**Fecha**: 2026-05-04
-**Fuente**: `roadmap/AUDITORIA-ESCALABILIDAD.md`
-**Versión analizada**: v0.8.0
+**Fecha**: 2026-05-05
+**Fuente**: `specs/spec-logs-transparentes.md`
+**Versión analizada**: v0.9.0
 
 ---
 
 ## Decisiones de descomposición
 
-### 1. Agrupación en 6 épicas
+### 1. Agrupación en 4 épicas
 
-La auditoría cubre 14 áreas de mejora. Se agruparon en 6 épicas siguiendo el principio de **alta cohesión interna y bajo acoplamiento entre épicas**:
+La especificación cubre 7 áreas de cambio (config, domain, infra/agent, infra/daemon, cli, app/pipeline, app/health). Se agruparon en 4 épicas siguiendo el principio de **capas**: infraestructura base → infraestructura avanzada → CLI/UX → integración final.
 
-| Épica | Áreas cubiertas | Motivación |
-|-------|----------------|------------|
-| EPIC-01: Providers Robustos | #7 (from_name panic, binarios), #8 (epics_dir, side-effects), #11.2 (reubicar funciones) | Todas tocan el sistema de providers/config; comparten el mismo contexto de prueba |
-| EPIC-02: Cacheo y Optimización | #2.1 (load_all_stories), #2.2 (DependencyGraph), #2.3 (git add -A) | Las 3 optimizan el hot path de I/O del pipeline |
-| EPIC-03: Workflow Abstraído | #1 (enum vs string, next_status, map_status_to_role, apply_automatic_transitions, board) | Prepara el terreno para #04 sin romper compatibilidad |
-| EPIC-04: Async Migration | #2.4 (busy-polling), #10.2 (agent sync), #10.3 (HashMaps no Send+Sync) | Prerrequisitos directos para #01 (paralelismo) |
-| EPIC-05: Estado y Daemon | #3 (checkpoint), #6.1-6.5 (daemon polling, kill, log), #9 (formato historia) | Agrupa la robustez del estado persistente y operación continua |
-| EPIC-06: Métricas y Limpieza | #5 (PromptContext clones), #11.1 (extract_numeric), #11.3 (métricas), #11.4 (benchmarks) | Mejoras de calidad que no bloquean features mayores |
+| Épica | Módulos | Motivación |
+|-------|---------|------------|
+| EPIC-07: Infraestructura Base | config.rs, domain/state.rs, infra/agent.rs (solo parseo) | Estructuras de datos y funciones puras que todo lo demás necesita. Sin efectos secundarios complejos. |
+| EPIC-08: Streaming y Daemon | infra/agent.rs (invoke_once), infra/daemon.rs (follow) | Cambios de infraestructura con I/O real (pipes, archivos). Más riesgo, más valor visible. |
+| EPIC-09: CLI y Visibilidad | cli/args.rs, cli/handlers.rs | Capa de usuario: flags y header. Depende de EPIC-07 y EPIC-08 para ser funcional, pero se puede maquetar antes. |
+| EPIC-10: Pipeline y Reportes | app/pipeline.rs, app/health.rs | Integración final. Orquesta todas las piezas. Solo se implementa cuando EPIC-07, EPIC-08, y EPIC-09 están listos. |
 
 ### 2. Orden de implementación recomendado
 
-1. **EPIC-02** (Cacheo) — mejora inmediata de rendimiento, sin cambiar APIs públicas
-2. **EPIC-01** (Providers) — elimina panics y mejora feedback al usuario
-3. **EPIC-05** (Estado) — checkpoint y logs robustos, prerequisito para pipelines largos
-4. **EPIC-03** (Workflow) — desacopla el workflow, habilita #04
-5. **EPIC-04** (Async) — último prerequisito para #01, requiere EPIC-02 y EPIC-03 estables
-6. **EPIC-06** (Métricas) — nice-to-have, no bloquea nada
+1. **EPIC-07** (Infraestructura Base) — STORY-019, STORY-020, STORY-021 son independientes y se pueden paralelizar. Sientan las bases.
+2. **EPIC-08** (Streaming y Daemon) — STORY-022 y STORY-023, también independientes entre sí.
+3. **EPIC-09** (CLI y Visibilidad) — STORY-024 depende de STORY-022, STORY-025 depende de STORY-023, STORY-026 depende de STORY-019. Se puede empezar tras EPIC-07 + EPIC-08.
+4. **EPIC-10** (Pipeline y Reportes) — STORY-027 integra todo (depende de EPIC-07 completo + STORY-022 + STORY-026). STORY-028 cierra con health report (depende de STORY-027).
 
-### 3. Dependencias entre historias
+### 3. Grafo de dependencias entre historias
 
-- STORY-008 (adaptar pipeline a Workflow) → STORY-007 (trait Workflow)
-- STORY-009 (board dinámico) → STORY-007 (trait Workflow)
-- STORY-012 (pipeline async) → STORY-010 (agent async) + STORY-011 (Arc<RwLock<>>)
-- STORY-017 (health.rs) → STORY-011 (Arc<RwLock<>>, para entender el estado compartido)
-
-El resto de historias son independientes y se pueden implementar en paralelo dentro de su épica.
+```
+STORY-019 (model config) ─────────────────────────────┐
+STORY-020 (TokenCount) ─────────────────────────────┐ │
+STORY-021 (parse_token_count) ─────────────────────┐ │ │
+                                                     │ │ │
+STORY-022 (streaming) ──┐                           │ │ │
+STORY-023 (follow) ──┐  │                           │ │ │
+                      │  │                           │ │ │
+STORY-024 (--compact)◄┘  │                           │ │ │
+STORY-025 (--tail) ◄─────┘                           │ │ │
+STORY-026 (header) ◄─────────────────────────────────┘ │ │
+                                                        │ │
+STORY-027 (pipeline integración) ◄──────────────────────┴─┴── STORY-022, STORY-026
+                                                          │
+STORY-028 (health tokens) ◄───────────────────────────────┘
+```
 
 ### 4. Criterios de atomicidad
 
 Cada historia:
-- Modifica como máximo 2-3 módulos
-- Se puede implementar en una sesión de agente (< 200 líneas de cambio)
-- Tiene criterios de aceptación verificables con `cargo test` o `cargo build`
-- Entrega valor por sí misma (ej: STORY-001 elimina panics incluso sin el resto de EPIC-01)
+- Modifica como máximo 2-3 archivos
+- Se puede implementar en una sesión de agente
+- Tiene criterios de aceptación verificables con `cargo test`, `cargo check`, o `cargo build`
+- Entrega valor por sí misma: STORY-019 expone modelo aunque nada más lo use; STORY-021 se puede probar con strings sintéticos; STORY-023 mejora `regista logs` incluso sin el resto
 
 ### 5. Lo que NO se incluye (out of scope)
 
-- La implementación completa de #01 (paralelismo) — este backlog solo cubre los prerequisitos
-- La implementación completa de #04 (workflow configurable) — solo la abstracción del trait
-- Cambios en el contrato de formato de historia que requieran migración de historias existentes
-- Integración con sistemas externos de monitoreo (Prometheus, etc.)
+- TUI interactiva para visualización de logs (eso es #11 del roadmap)
+- Persistencia de tokens entre sesiones (solo en memoria durante la sesión actual)
+- Integración con APIs de pricing de proveedores (cost tracking real es #12 del roadmap)
+- Migración de logs existentes al nuevo formato
+- Rotación automática de archivos de log
