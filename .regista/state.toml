@@ -1,10 +1,10 @@
-iteration = 29
+iteration = 30
 
 [reject_cycles]
 
 [story_iterations]
 STORY-002 = 2
-STORY-020 = 1
+STORY-020 = 2
 STORY-019 = 7
 STORY-026 = 19
 
