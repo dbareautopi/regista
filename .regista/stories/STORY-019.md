@@ -1,7 +1,7 @@
 # STORY-019: Añadir campo `model` a configuración y función `model_for_role()`
 
 ## Status
-**Ready**
+**Tests Ready**
 
 ## Epic
 EPIC-07
@@ -27,3 +27,4 @@ Ampliar la configuración de agentes en `config.rs` para que soporte un campo `m
 ## Activity Log
 - 2026-05-05 | PO | Historia generada desde specs/spec-logs-transparentes.md (sección 7: Resolución del modelo).
 - 2026-05-05 | PO | Refinamiento completado. Historia cumple DoR: descripción clara, CAs testeables (CA1-CA10), sin dependencias. Pasada a Ready. Decisión documentada en .regista/decisions/STORY-019-po-refinement-2026-05-05.md.
+- 2026-05-05 | QA | Revisión de tests existentes en src/config.rs. 21 tests unitarios cubren los 10 CAs (CA1-CA10). Tests para CA4/CA5/CA6 fallarán contra el stub actual (esperado: Developer debe implementar la lógica). Tests para CA1/CA2/CA3/CA7/CA8/CA9 pasan ya con la estructura actual. Sin necesidad de tests nuevos. Historia pasada a Tests Ready. Decisión documentada en .regista/decisions/STORY-019-qa-review-2026-05-05.md.
