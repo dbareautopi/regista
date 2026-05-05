@@ -757,7 +757,7 @@ fn process_story(
         None
     };
 
-    let result = agent::invoke_with_retry(
+    let result = agent::invoke_with_retry_blocking(
         provider.as_ref(),
         &instruction_path,
         &prompt,

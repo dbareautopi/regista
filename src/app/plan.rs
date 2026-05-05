@@ -149,7 +149,7 @@ pub fn run(
 
         tracing::info!("🤖 Invocando PO para generar/corregir historias...");
 
-        match agent::invoke_with_retry(
+        match agent::invoke_with_retry_blocking(
             provider.as_ref(),
             &skill_path,
             &prompt,

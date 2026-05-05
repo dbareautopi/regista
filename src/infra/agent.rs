@@ -1,10 +1,15 @@
 //! Invocación de agentes `pi` con timeout, reintentos, backoff exponencial,
 //! y feedback rico (captura de stdout/stderr para trazabilidad y reintentos).
+//!
+//! Migrado a tokio: `invoke_once` usa `tokio::process::Command` con
+//! `tokio::time::timeout` en lugar de busy-polling con `thread::sleep`.
+//! `invoke_with_retry` usa `tokio::time::sleep` para backoff exponencial.
 
 use crate::config::LimitsConfig;
 use crate::infra::providers::AgentProvider;
 use std::path::{Path, PathBuf};
 use std::process::Output;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 /// Resultado de una invocación de agente.
@@ -45,7 +50,11 @@ pub struct AgentOptions {
     pub inject_feedback: bool,
 }
 
-/// Invoca un agente `pi` con reintentos con backoff exponencial.
+/// Runtime tokio global para `invoke_with_retry_blocking`.
+static RUNTIME: LazyLock<tokio::runtime::Runtime> =
+    LazyLock::new(|| tokio::runtime::Runtime::new().expect("no se pudo crear el runtime de tokio"));
+
+/// Invoca un agente con reintentos con backoff exponencial (async).
 ///
 /// # Feedback rico
 /// Si `opts.inject_feedback` es true, en cada reintento se inyecta el stderr
@@ -53,7 +62,7 @@ pub struct AgentOptions {
 ///
 /// Si `opts.decisions_dir` está presente, se guarda una traza completa de
 /// cada intento en `<decisions_dir>/<story_id>-<actor>-<timestamp>.md`.
-pub fn invoke_with_retry(
+pub async fn invoke_with_retry(
     provider: &dyn AgentProvider,
     instruction_path: &Path,
     prompt: &str,
@@ -74,7 +83,7 @@ pub fn invoke_with_retry(
             instruction_path.display()
         );
 
-        match invoke_once(provider, instruction_path, &current_prompt, timeout) {
+        match invoke_once(provider, instruction_path, &current_prompt, timeout).await {
             Ok(output) if output.status.success() => {
                 tracing::info!("  ✓ agente completado (intento {attempt})");
 
@@ -82,7 +91,7 @@ pub fn invoke_with_retry(
                 attempts.push(trace);
 
                 // Guardar decisión de éxito
-                save_agent_decision(opts, instruction_path, &attempts, true);
+                save_agent_decision(opts, instruction_path, &attempts, true).await;
 
                 return Ok(AgentResult {
                     exit_code: output.status.code().unwrap_or(0),
@@ -111,7 +120,7 @@ pub fn invoke_with_retry(
                 attempts.push(trace.clone());
 
                 // Guardar decisión de fallo parcial
-                save_agent_decision(opts, instruction_path, &attempts, false);
+                save_agent_decision(opts, instruction_path, &attempts, false).await;
 
                 // Inyectar feedback en el prompt para el siguiente intento
                 if opts.inject_feedback && attempt < max_retries {
@@ -132,7 +141,7 @@ pub fn invoke_with_retry(
                 };
                 attempts.push(trace.clone());
 
-                save_agent_decision(opts, instruction_path, &attempts, false);
+                save_agent_decision(opts, instruction_path, &attempts, false).await;
 
                 if opts.inject_feedback && attempt < max_retries {
                     current_prompt = build_feedback_prompt(prompt, &trace);
@@ -149,10 +158,30 @@ pub fn invoke_with_retry(
         }
 
         tracing::info!("  ↻ reintentando en {}s...", delay.as_secs());
-        std::thread::sleep(delay);
+        tokio::time::sleep(delay).await;
         attempt += 1;
         delay *= 2; // backoff exponencial
     }
+}
+
+/// Wrapper síncrono para `invoke_with_retry` — usa el runtime tokio global.
+///
+/// Necesario para callers síncronos (`plan.rs`, `pipeline.rs`) que todavía
+/// no se han migrado a async.
+pub fn invoke_with_retry_blocking(
+    provider: &dyn AgentProvider,
+    instruction_path: &Path,
+    prompt: &str,
+    limits: &LimitsConfig,
+    opts: &AgentOptions,
+) -> anyhow::Result<AgentResult> {
+    RUNTIME.block_on(invoke_with_retry(
+        provider,
+        instruction_path,
+        prompt,
+        limits,
+        opts,
+    ))
 }
 
 /// Construye un prompt con feedback del intento fallido.
@@ -190,8 +219,8 @@ fn build_feedback_prompt(original_prompt: &str, trace: &AttemptTrace) -> String 
     )
 }
 
-/// Guarda la traza de intentos en el directorio de decisiones.
-fn save_agent_decision(
+/// Guarda la traza de intentos en el directorio de decisiones (async).
+async fn save_agent_decision(
     opts: &AgentOptions,
     instruction_path: &Path,
     attempts: &[AttemptTrace],
@@ -204,7 +233,7 @@ fn save_agent_decision(
         return;
     };
 
-    let _ = std::fs::create_dir_all(decisions_dir);
+    let _ = tokio::fs::create_dir_all(decisions_dir).await;
 
     // Derivar el nombre del actor desde el path de instrucciones:
     // .pi/skills/product-owner/SKILL.md → "product-owner"
@@ -239,22 +268,25 @@ fn save_agent_decision(
         }
     }
 
-    if let Err(e) = std::fs::write(&path, &content) {
+    if let Err(e) = tokio::fs::write(&path, &content).await {
         tracing::warn!("  ⚠️ no se pudo guardar decisión del agente: {e}");
     } else {
         tracing::debug!("  📄 decisión guardada: {}", filename);
     }
 }
 
-/// Invoca un agente una sola vez, con timeout.
-fn invoke_once(
+/// Invoca un agente una sola vez, con timeout (async).
+///
+/// Usa `tokio::process::Command` para no bloquear el thread del runtime,
+/// y `tokio::time::timeout` para limitar la duración de la invocación.
+async fn invoke_once(
     provider: &dyn AgentProvider,
     instruction: &Path,
     prompt: &str,
     timeout: Duration,
 ) -> anyhow::Result<Output> {
     let args = provider.build_args(instruction, prompt);
-    let mut child = std::process::Command::new(provider.binary())
+    let child = tokio::process::Command::new(provider.binary())
         .args(&args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -266,32 +298,36 @@ fn invoke_once(
             )
         })?;
 
-    let start = std::time::Instant::now();
-    let poll = Duration::from_millis(250);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_status)) => {
-                // El proceso terminó. Leemos la salida capturada.
-                let output = child.wait_with_output().map_err(|e| {
-                    anyhow::anyhow!("error leyendo salida de '{}': {e}", provider.binary())
-                })?;
-                return Ok(output);
-            }
-            Ok(None) => {
-                if start.elapsed() >= timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    anyhow::bail!(
-                        "timeout ({}s) agotado esperando a '{}'",
-                        timeout.as_secs(),
-                        provider.binary()
-                    )
+    // Guardar el PID antes del move para poder matar el proceso en timeout.
+    let pid = child.id();
+
+    match tokio::time::timeout(timeout, child.wait_with_output()).await {
+        Ok(Ok(output)) => Ok(output),
+        Ok(Err(e)) => Err(anyhow::anyhow!(
+            "error leyendo salida de '{}': {e}",
+            provider.binary()
+        )),
+        Err(_elapsed) => {
+            // child ya fue movido — matamos por PID.
+            if let Some(pid) = pid {
+                #[cfg(unix)]
+                {
+                    let _ = std::process::Command::new("kill")
+                        .args(["-9", &pid.to_string()])
+                        .output();
                 }
-                std::thread::sleep(poll);
+                #[cfg(not(unix))]
+                {
+                    let _ = std::process::Command::new("taskkill")
+                        .args(["/PID", &pid.to_string(), "/F"])
+                        .output();
+                }
             }
-            Err(e) => {
-                anyhow::bail!("error esperando a '{}': {e}", provider.binary())
-            }
+            anyhow::bail!(
+                "timeout ({}s) agotado esperando a '{}'",
+                timeout.as_secs(),
+                provider.binary()
+            )
         }
     }
 }
