@@ -132,6 +132,22 @@ Modificar `invoke_once()` en `infra/agent.rs` para que, cuando `verbose = true`,
   * Solución requerida (responsabilidad del QA): `let binding = buffer.lock().unwrap(); let log_output = String::from_utf8_lossy(&binding);` en las 3 ubicaciones.
   * NO se avanza a In Review. El orquestador debe pasar el turno al QA.
   * Documentado en .regista/decisions/STORY-022-dev-verification-9-2026-05-05.md.
+- 2026-05-05 | Dev | Décima verificación de STORY-022. El código de producción sigue completo y correcto:
+  * `cargo check` (0.30s): OK, sin errores.
+  * `cargo build` (0.20s): OK, binario generado.
+  * `cargo clippy --no-deps` (0.23s): OK, 0 warnings.
+  * `cargo fmt -- --check`: OK, código formateado.
+  * `cargo test -- story022`: NO compila — 3 errores E0716.
+  * Código de producción cubre CA1-CA8, CA10-CA11.
+  * Los mismos 3 errores E0716 persisten en los tests del QA:
+    | Test | Línea | Error |
+    |------|-------|-------|
+    | `ca3_verbose_logs_lines_with_pipe_prefix` | 1763 | `String::from_utf8_lossy(&buffer.lock().unwrap())` — `MutexGuard` temporal destruido antes que el `Cow<str>` |
+    | `ca3_empty_lines_not_logged` | 1809 | `String::from_utf8_lossy(&buffer.lock().unwrap())` — mismo error E0716 |
+    | `ca5_stderr_not_streamed_to_log` | 2006 | `String::from_utf8_lossy(&buffer.lock().unwrap())` — mismo error E0716 |
+  * Solución requerida (responsabilidad del QA): `let binding = buffer.lock().unwrap(); let log_output = String::from_utf8_lossy(&binding);` en las 3 ubicaciones.
+  * NO se avanza a In Review. El orquestador debe pasar el turno al QA.
+  * Documentado en .regista/decisions/STORY-022-dev-verification-10-2026-05-05.md.
 - 2026-05-05 | Dev | Octava verificación de STORY-022. El código de producción sigue completo y correcto:
   * `cargo build` (0.15s): OK, compila sin errores.
   * `cargo clippy --no-deps` (0.23s): OK, 0 warnings.
