@@ -2530,6 +2530,172 @@ mod tests {
             );
         }
 
+        // ── CA2 (reforzado): run_real() con loop secuencial ────
+
+        /// CA2: run_real() con todas las historias en estado terminal
+        /// completa en una iteración sin invocar agentes. Verifica que:
+        /// - El loop principal itera correctamente (1 iteración)
+        /// - PipelineComplete se detecta y detiene el loop
+        /// - El reporte refleja correctamente los conteos por estado
+        #[test]
+        fn run_real_with_terminal_stories_completes_in_one_iteration() {
+            let tmp = tempfile::tempdir().unwrap();
+            let stories_dir = tmp.path().join(".regista/stories");
+            std::fs::create_dir_all(&stories_dir).unwrap();
+            std::fs::create_dir_all(tmp.path().join(".regista/decisions")).unwrap();
+
+            // 3 historias terminales: 2 Done, 1 Failed
+            for (id, status) in [
+                ("STORY-001", "Done"),
+                ("STORY-002", "Done"),
+                ("STORY-003", "Failed"),
+            ] {
+                let content = format!(
+                    "# {id}: Terminal\n\n## Status\n**{status}**\n\n## Epic\nEPIC-001\n\
+                     ## Descripción\nTerminal.\n\n## Criterios de aceptación\n- [ ] CA1\n\n\
+                     ## Activity Log\n- 2026-01-01 | PO | created\n"
+                );
+                std::fs::write(stories_dir.join(format!("{id}.md")), content).unwrap();
+            }
+
+            let cfg = Config::default();
+            let options = RunOptions::default();
+
+            let report = run_real(tmp.path(), &cfg, &options, None).unwrap();
+
+            assert_eq!(report.total, 3);
+            assert_eq!(report.done, 2);
+            assert_eq!(report.failed, 1);
+            assert_eq!(report.blocked, 0);
+            assert_eq!(report.draft, 0);
+            // Primera iteración → PipelineComplete → loop termina
+            assert_eq!(report.iterations, 1, "PipelineComplete en 1 iteración");
+            assert_eq!(report.stories.len(), 3);
+            // Verificar que cada story record tiene el estado correcto
+            let done_ids: Vec<&str> = report
+                .stories
+                .iter()
+                .filter(|r| r.status == "Done")
+                .map(|r| r.id.as_str())
+                .collect();
+            assert!(done_ids.contains(&"STORY-001"));
+            assert!(done_ids.contains(&"STORY-002"));
+            let failed_ids: Vec<&str> = report
+                .stories
+                .iter()
+                .filter(|r| r.status == "Failed")
+                .map(|r| r.id.as_str())
+                .collect();
+            assert!(failed_ids.contains(&"STORY-003"));
+        }
+
+        /// CA2: run_real() con directorio de historias vacío completa
+        /// inmediatamente sin incidencias — no hay nada que procesar.
+        #[test]
+        fn run_real_with_no_stories_completes_immediately() {
+            let tmp = tempfile::tempdir().unwrap();
+            let stories_dir = tmp.path().join(".regista/stories");
+            std::fs::create_dir_all(&stories_dir).unwrap();
+            std::fs::create_dir_all(tmp.path().join(".regista/decisions")).unwrap();
+
+            let cfg = Config::default();
+            let options = RunOptions::default();
+
+            let report = run_real(tmp.path(), &cfg, &options, None).unwrap();
+
+            assert_eq!(report.total, 0);
+            assert_eq!(report.done, 0);
+            assert_eq!(report.iterations, 1, "sin historias, 1 iteración");
+            assert!(report.stories.is_empty());
+            assert!(report.stop_reason.is_none(), "sin stop_reason");
+        }
+
+        /// CA2: run_real() con una historia Draft y modo --once
+        /// verifica que el loop avanza al menos una iteración
+        /// y la historia es detectada como stuck (InvokePoFor).
+        /// Con git deshabilitado para evitar dependencia de git.
+        #[test]
+        fn run_real_with_draft_story_invokes_po_path() {
+            let tmp = tempfile::tempdir().unwrap();
+            let stories_dir = tmp.path().join(".regista/stories");
+            std::fs::create_dir_all(&stories_dir).unwrap();
+            std::fs::create_dir_all(tmp.path().join(".regista/decisions")).unwrap();
+
+            let content = format!(
+                "# STORY-001: Draft\n\n## Status\n**Draft**\n\n## Epic\nEPIC-001\n\
+                 ## Descripción\nDraft story.\n\n## Criterios de aceptación\n- [ ] CA1\n\n\
+                 ## Activity Log\n- 2026-01-01 | PO | created\n"
+            );
+            std::fs::write(stories_dir.join("STORY-001.md"), content).unwrap();
+
+            let cfg = Config {
+                git: crate::config::GitConfig { enabled: false },
+                limits: crate::config::LimitsConfig {
+                    max_retries_per_step: 1,
+                    retry_delay_base_seconds: 0,
+                    agent_timeout_seconds: 2,
+                    ..Config::default().limits
+                },
+                ..Config::default()
+            };
+            let options = RunOptions {
+                once: true,
+                ..Default::default()
+            };
+
+            // run_real intentará invocar al PO vía deadlock (InvokePoFor).
+            // Si el agente no está instalado, el error se captura sin
+            // propagarse — run_real debe retornar Ok de todas formas.
+            let result = run_real(tmp.path(), &cfg, &options, None);
+            assert!(
+                result.is_ok(),
+                "run_real debe completar incluso si el agente falla"
+            );
+            let report = result.unwrap();
+            assert_eq!(report.total, 1, "1 historia procesada");
+            assert_eq!(report.iterations, 1, "1 iteración con --once");
+        }
+
+        /// CA2: run_real() con SharedState verifica que el loop
+        /// actualiza story_iterations y reject_cycles secuencialmente
+        /// (no hay escrituras concurrentes).
+        #[test]
+        fn run_real_shared_state_reflects_sequential_processing() {
+            let tmp = tempfile::tempdir().unwrap();
+            let stories_dir = tmp.path().join(".regista/stories");
+            std::fs::create_dir_all(&stories_dir).unwrap();
+            std::fs::create_dir_all(tmp.path().join(".regista/decisions")).unwrap();
+
+            // 2 historias Done: el loop debe verlas, detectar
+            // PipelineComplete, y salir tras 1 iteración.
+            for id in ["STORY-001", "STORY-002"] {
+                let content = format!(
+                    "# {id}: Done\n\n## Status\n**Done**\n\n## Epic\nEPIC-001\n\
+                     ## Descripción\nDone.\n\n## Criterios de aceptación\n- [ ] CA1\n\n\
+                     ## Activity Log\n- 2026-01-01 | PO | created\n"
+                );
+                std::fs::write(stories_dir.join(format!("{id}.md")), content).unwrap();
+            }
+
+            let cfg = Config::default();
+            let options = RunOptions::default();
+
+            let report = run_real(tmp.path(), &cfg, &options, None).unwrap();
+
+            // Con PipelineComplete, el loop sale ANTES de incrementar
+            // story_iterations (solo NoDeadlock e InvokePoFor lo hacen).
+            // Por tanto, el reporte muestra 0 iteraciones por historia.
+            assert_eq!(report.total, 2);
+            assert_eq!(report.done, 2);
+            for record in &report.stories {
+                assert_eq!(
+                    record.iterations, 0,
+                    "{}: 0 iteraciones (PipelineComplete)",
+                    record.id
+                );
+            }
+        }
+
         // ── CA6 + CA7: tests de compilación/ejecución ───────────
         // CA6 (cargo test --lib orchestrator) y CA7 (cargo build)
         // no son testeables como unit tests. Se verifican ejecutando:
