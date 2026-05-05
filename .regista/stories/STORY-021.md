@@ -1,7 +1,7 @@
 # STORY-021: Implementar `parse_token_count()` con patrones multi-provider
 
 ## Status
-**Ready**
+**Tests Ready**
 
 ## Epic
 EPIC-07
@@ -27,4 +27,5 @@ Implementar la función `pub fn parse_token_count(text: &str) -> Option<TokenCou
 - Bloqueado por: STORY-020
 
 ## Activity Log
+- 2026-05-05 | QA | Verificados 47 tests unitarios existentes en infra::agent::story021 — cubren los 12 CAs (6 patrones multi-provider, comas, None, LazyLock, casos límite). Sin adiciones necesarias.
 - 2026-05-05 | PO | Historia generada desde specs/spec-logs-transparentes.md (sección 6: Tracking de tokens — Parseo).
