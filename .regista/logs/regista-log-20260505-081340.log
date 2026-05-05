@@ -13,3 +13,7 @@
 [2m2026-05-05T08:22:15.909820Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ⛔ STORY-027: dependencias no resueltas → Blocked
 [2m2026-05-05T08:22:15.910272Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ⛔ STORY-028: dependencias no resueltas → Blocked
 [2m2026-05-05T08:22:15.910870Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 Reviewer (pi) | STORY-002 (In Review → Business Review)
+[2m2026-05-05T08:22:15.965655Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   [1/5] invocando pi (./.pi/skills/reviewer/SKILL.md)
+[2m2026-05-05T08:24:25.598964Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   ✓ agente completado (intento 1)
+[2m2026-05-05T08:24:25.600774Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 2 ══════
+[2m2026-05-05T08:24:25.604054Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 PO (validate) (pi) | STORY-002 (Business Review → Done)
