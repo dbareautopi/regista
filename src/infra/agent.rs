@@ -1302,4 +1302,942 @@ mod tests {
             assert_eq!(tc.output, 900);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // STORY-022: Streaming de stdout del agente + parámetro verbose
+    // ═══════════════════════════════════════════════════════════════════
+
+    mod story022 {
+        use super::*;
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+
+        // ── Test helpers ──────────────────────────────────────────────
+        //
+        // NO son "fake providers": ejecutan procesos reales (echo, printf,
+        // sh, sleep). Son el mínimo esqueleto necesario para probar el
+        // streaming de stdout sin depender de que un agente de codificación
+        // real esté instalado en el entorno de test.
+
+        /// Provider que ejecuta `echo` — para pruebas de stdout simple.
+        #[derive(Debug)]
+        struct EchoProvider;
+
+        impl AgentProvider for EchoProvider {
+            fn binary(&self) -> &str {
+                "echo"
+            }
+            fn build_args(&self, _instruction: &Path, prompt: &str) -> Vec<String> {
+                // Con `echo`, el prompt es el mensaje a imprimir.
+                // Usamos -n para evitar el newline que echo añade por defecto
+                // (así verificamos que nuestro código maneja correctamente la salida).
+                vec!["-n".to_string(), prompt.to_string()]
+            }
+            fn display_name(&self) -> &str {
+                "echo"
+            }
+            fn instruction_name(&self) -> &str {
+                "test"
+            }
+            fn instruction_dir(&self, _role: &str) -> String {
+                String::new()
+            }
+        }
+
+        /// Provider que ejecuta `printf` — respeta secuencias de escape.
+        #[derive(Debug)]
+        struct PrintfProvider;
+
+        impl AgentProvider for PrintfProvider {
+            fn binary(&self) -> &str {
+                "printf"
+            }
+            fn build_args(&self, _instruction: &Path, prompt: &str) -> Vec<String> {
+                vec![prompt.to_string()]
+            }
+            fn display_name(&self) -> &str {
+                "printf"
+            }
+            fn instruction_name(&self) -> &str {
+                "test"
+            }
+            fn instruction_dir(&self, _role: &str) -> String {
+                String::new()
+            }
+        }
+
+        /// Provider que ejecuta `sh -c '<script>'` — permite redirigir a stderr.
+        #[derive(Debug)]
+        struct ShProvider;
+
+        impl AgentProvider for ShProvider {
+            fn binary(&self) -> &str {
+                "sh"
+            }
+            fn build_args(&self, _instruction: &Path, prompt: &str) -> Vec<String> {
+                vec!["-c".to_string(), prompt.to_string()]
+            }
+            fn display_name(&self) -> &str {
+                "shell"
+            }
+            fn instruction_name(&self) -> &str {
+                "test"
+            }
+            fn instruction_dir(&self, _role: &str) -> String {
+                String::new()
+            }
+        }
+
+        /// Provider que ejecuta `sleep` — para pruebas de timeout.
+        #[derive(Debug)]
+        struct SleepProvider;
+
+        impl AgentProvider for SleepProvider {
+            fn binary(&self) -> &str {
+                "sleep"
+            }
+            fn build_args(&self, _instruction: &Path, prompt: &str) -> Vec<String> {
+                vec![prompt.to_string()]
+            }
+            fn display_name(&self) -> &str {
+                "sleep"
+            }
+            fn instruction_name(&self) -> &str {
+                "test"
+            }
+            fn instruction_dir(&self, _role: &str) -> String {
+                String::new()
+            }
+        }
+
+        // ── Writer capturable para tests de tracing ──────────────────
+
+        /// Writer que almacena todo en un `Arc<Mutex<Vec<u8>>>`.
+        /// Se usa con `tracing_subscriber::fmt().with_writer(...)` para
+        /// verificar que los mensajes de log contienen el prefijo esperado.
+        struct CaptureWriter {
+            buf: Arc<Mutex<Vec<u8>>>,
+        }
+
+        impl Write for CaptureWriter {
+            fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+                self.buf.lock().unwrap().extend_from_slice(data);
+                Ok(data.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // CA1: invoke_with_retry() acepta verbose: bool como último
+        //      argumento
+        // ═══════════════════════════════════════════════════════════
+
+        /// CA1: invoke_with_retry compila y funciona con verbose=false.
+        #[tokio::test]
+        async fn ca1_invoke_with_retry_accepts_verbose_false() {
+            let limits = LimitsConfig {
+                max_retries_per_step: 1,
+                retry_delay_base_seconds: 0,
+                agent_timeout_seconds: 2,
+                ..Default::default()
+            };
+            let opts = AgentOptions::default();
+            let provider = EchoProvider;
+
+            let result = invoke_with_retry(
+                &provider,
+                Path::new("/dev/null"),
+                "hello-verbose-false",
+                &limits,
+                &opts,
+                false,
+            )
+            .await;
+
+            assert!(
+                result.is_ok(),
+                "verbose=false con echo debería funcionar"
+            );
+            let agent_result = result.unwrap();
+            assert!(
+                agent_result.stdout.contains("hello-verbose-false"),
+                "stdout debe contener el mensaje enviado"
+            );
+        }
+
+        /// CA1: invoke_with_retry compila y funciona con verbose=true.
+        #[tokio::test]
+        async fn ca1_invoke_with_retry_accepts_verbose_true() {
+            let limits = LimitsConfig {
+                max_retries_per_step: 1,
+                retry_delay_base_seconds: 0,
+                agent_timeout_seconds: 2,
+                ..Default::default()
+            };
+            let opts = AgentOptions::default();
+            let provider = EchoProvider;
+
+            let result = invoke_with_retry(
+                &provider,
+                Path::new("/dev/null"),
+                "hello-verbose-true",
+                &limits,
+                &opts,
+                true,
+            )
+            .await;
+
+            assert!(
+                result.is_ok(),
+                "verbose=true con echo debería funcionar"
+            );
+            let agent_result = result.unwrap();
+            assert!(
+                agent_result.stdout.contains("hello-verbose-true"),
+                "stdout debe contener el mensaje enviado"
+            );
+        }
+
+        /// CA1: invoke_with_retry_blocking también acepta verbose.
+        #[test]
+        fn ca1_invoke_with_retry_blocking_accepts_verbose() {
+            let limits = LimitsConfig {
+                max_retries_per_step: 1,
+                retry_delay_base_seconds: 0,
+                agent_timeout_seconds: 2,
+                ..Default::default()
+            };
+            let opts = AgentOptions::default();
+            let provider = EchoProvider;
+
+            let result = invoke_with_retry_blocking(
+                &provider,
+                Path::new("/dev/null"),
+                "hello-blocking",
+                &limits,
+                &opts,
+                false,
+            );
+
+            assert!(
+                result.is_ok(),
+                "invoke_with_retry_blocking con verbose=false debería funcionar"
+            );
+            assert!(result.unwrap().stdout.contains("hello-blocking"));
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // CA2: Cuando verbose=true, invoke_once() usa
+        //      child.stdout.take() + BufReader::new() + read_line()
+        //      en un bucle async
+        // ═══════════════════════════════════════════════════════════
+
+        /// CA2: Con verbose=true, invoke_once procesa múltiples líneas de
+        ///      stdout correctamente.
+        #[tokio::test]
+        async fn ca2_verbose_true_handles_multiline_output() {
+            let provider = PrintfProvider;
+            // printf interpreta \n como saltos de línea reales
+            let result = invoke_once(
+                &provider,
+                Path::new("/dev/null"),
+                "line1\\nline2\\nline3\\n",
+                Duration::from_secs(5),
+                true,
+            )
+            .await;
+
+            assert!(
+                result.is_ok(),
+                "invoke_once con verbose=true no debería fallar"
+            );
+            let output = result.unwrap();
+            assert!(output.status.success(), "el proceso debería salir con 0");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                stdout.contains("line1"),
+                "stdout debe contener 'line1', pero es: '{stdout}'"
+            );
+            assert!(stdout.contains("line2"), "stdout debe contener 'line2'");
+            assert!(stdout.contains("line3"), "stdout debe contener 'line3'");
+        }
+
+        /// CA2: Con verbose=true y salida de una sola línea.
+        #[tokio::test]
+        async fn ca2_verbose_true_handles_single_line() {
+            let provider = EchoProvider;
+            let result = invoke_once(
+                &provider,
+                Path::new("/dev/null"),
+                "una-sola-linea",
+                Duration::from_secs(5),
+                true,
+            )
+            .await;
+
+            assert!(result.is_ok(), "modo verbose con una línea debe funcionar");
+            let output = result.unwrap();
+            assert!(output.status.success());
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(stdout.contains("una-sola-linea"));
+        }
+
+        /// CA2: Con verbose=true y salida vacía (proceso sin stdout).
+        #[tokio::test]
+        async fn ca2_verbose_true_handles_empty_output() {
+            let provider = ShProvider;
+            // `true` es un comando que no produce salida y sale con 0
+            let result = invoke_once(
+                &provider,
+                Path::new("/dev/null"),
+                "true",
+                Duration::from_secs(5),
+                true,
+            )
+            .await;
+
+            assert!(
+                result.is_ok(),
+                "comando sin stdout debería funcionar en verbose"
+            );
+            let output = result.unwrap();
+            assert!(output.status.success());
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(stdout.trim().is_empty(), "stdout debería estar vacío: '{stdout}'");
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // CA3: Cada línea no vacía de stdout se loguea con
+        //      tracing::info!("  │ {}", trimmed)
+        // ═══════════════════════════════════════════════════════════
+
+        /// CA3: Verifica que las líneas de stdout se emiten al log con
+        ///      el prefijo "  │ ".
+        ///
+        /// Instala un subscriber que captura la salida de tracing en un
+        /// buffer, ejecuta invoke_once con verbose=true, y verifica que
+        /// los mensajes capturados contienen el prefijo esperado.
+        #[tokio::test]
+        async fn ca3_verbose_logs_lines_with_pipe_prefix() {
+            let buffer: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+            let buffer2 = buffer.clone();
+
+            let make_writer = move || CaptureWriter {
+                buf: buffer2.clone(),
+            };
+
+            let subscriber = tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::INFO)
+                .with_writer(make_writer)
+                .with_ansi(false)
+                .with_target(false)
+                .finish();
+
+            // Guard mantiene el subscriber activo durante el await
+            let _guard = tracing::subscriber::set_default(subscriber);
+
+            let provider = PrintfProvider;
+            let _ = invoke_once(
+                &provider,
+                Path::new("/dev/null"),
+                "alfa\\nbeta\\ngamma\\n",
+                Duration::from_secs(5),
+                true,
+            )
+            .await;
+
+            let log_output = String::from_utf8_lossy(&buffer.lock().unwrap());
+
+            // Debe contener líneas con el prefijo "  │ "
+            assert!(
+                log_output.contains("  │ "),
+                "el log debe contener líneas con prefijo '  │ '. Log capturado:\n{log_output}"
+            );
+            assert!(
+                log_output.contains("alfa"),
+                "el log debe contener 'alfa'. Log capturado:\n{log_output}"
+            );
+            assert!(
+                log_output.contains("beta"),
+                "el log debe contener 'beta'"
+            );
+            assert!(
+                log_output.contains("gamma"),
+                "el log debe contener 'gamma'"
+            );
+        }
+
+        /// CA3: Las líneas vacías NO deben generar entradas "  │ " solas.
+        ///      Usamos un script con líneas en blanco entre medias.
+        #[tokio::test]
+        async fn ca3_empty_lines_not_logged() {
+            let buffer: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+            let buffer2 = buffer.clone();
+
+            let make_writer = move || CaptureWriter {
+                buf: buffer2.clone(),
+            };
+
+            let subscriber = tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::INFO)
+                .with_writer(make_writer)
+                .with_ansi(false)
+                .with_target(false)
+                .finish();
+
+            let _guard = tracing::subscriber::set_default(subscriber);
+
+            // printf con líneas no vacías y una línea vacía entre medias
+            let provider = PrintfProvider;
+            let _ = invoke_once(
+                &provider,
+                Path::new("/dev/null"),
+                "AAA\\n\\nBBB\\n",
+                Duration::from_secs(5),
+                true,
+            )
+            .await;
+
+            let log_output = String::from_utf8_lossy(&buffer.lock().unwrap());
+
+            // Debe loguear las líneas no vacías
+            assert!(log_output.contains("AAA"), "debe loguear 'AAA'");
+            assert!(log_output.contains("BBB"), "debe loguear 'BBB'");
+
+            // Las líneas vacías NO deben aparecer como "  │ " seguidas de vacío.
+            // Verificamos que no hay una entrada "  │ " que esté sola (sin contenido después).
+            // Contamos cuántas líneas del log contienen "  │ " y verificamos
+            // que cada una tiene contenido no vacío después del prefijo.
+            let pipe_lines: Vec<&str> = log_output
+                .lines()
+                .filter(|l| l.contains("  │ "))
+                .collect();
+
+            for line in &pipe_lines {
+                // Después de "  │ " debe haber contenido no vacío
+                if let Some(pos) = line.find("  │ ") {
+                    let after = line[pos + "  │ ".len()..].trim();
+                    assert!(
+                        !after.is_empty(),
+                        "entrada de log con prefijo '  │ ' no debe estar vacía: '{line}'"
+                    );
+                }
+            }
+
+            // Debe haber al menos 2 entradas (AAA y BBB)
+            assert!(
+                pipe_lines.len() >= 2,
+                "debe haber al menos 2 líneas con prefijo '  │ ', hay {}",
+                pipe_lines.len()
+            );
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // CA4: El stdout completo se acumula en un Vec<u8> y se
+        //      devuelve como parte del resultado
+        // ═══════════════════════════════════════════════════════════
+
+        /// CA4: En verbose=true, el stdout acumulado está disponible en el
+        ///      Output (como Vec<u8>).
+        #[tokio::test]
+        async fn ca4_verbose_accumulates_full_stdout_in_output() {
+            let provider = PrintfProvider;
+            let result = invoke_once(
+                &provider,
+                Path::new("/dev/null"),
+                "X\\nY\\nZ\\n",
+                Duration::from_secs(5),
+                true,
+            )
+            .await;
+
+            assert!(result.is_ok());
+            let output = result.unwrap();
+            assert!(output.status.success());
+            // stdout es Vec<u8>
+            assert!(!output.stdout.is_empty(), "stdout no debe estar vacío");
+            let stdout_str = String::from_utf8_lossy(&output.stdout);
+            assert!(stdout_str.contains('X'));
+            assert!(stdout_str.contains('Y'));
+            assert!(stdout_str.contains('Z'));
+        }
+
+        /// CA4: El AgentResult devuelto por invoke_with_retry contiene el
+        ///      stdout del proceso cuando verbose=true.
+        #[tokio::test]
+        async fn ca4_agent_result_contains_stdout_verbose_true() {
+            let limits = LimitsConfig {
+                max_retries_per_step: 1,
+                retry_delay_base_seconds: 0,
+                agent_timeout_seconds: 2,
+                ..Default::default()
+            };
+            let opts = AgentOptions::default();
+            let provider = EchoProvider;
+
+            let result = invoke_with_retry(
+                &provider,
+                Path::new("/dev/null"),
+                "contenido-esperado-022",
+                &limits,
+                &opts,
+                true,
+            )
+            .await;
+
+            assert!(result.is_ok());
+            let agent_result = result.unwrap();
+            assert!(
+                agent_result.stdout.contains("contenido-esperado-022"),
+                "AgentResult.stdout debe contener la salida del proceso, pero es: '{}'",
+                agent_result.stdout
+            );
+            assert_eq!(agent_result.exit_code, 0);
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // CA5: stderr se lee en una tarea tokio::spawn separada, sin
+        //      streaming al log, acumulado en Vec<u8>
+        // ═══════════════════════════════════════════════════════════
+
+        /// CA5: stderr se captura correctamente en el Output cuando
+        ///      verbose=true.
+        #[tokio::test]
+        async fn ca5_stderr_captured_in_verbose_mode() {
+            let provider = ShProvider;
+            let result = invoke_once(
+                &provider,
+                Path::new("/dev/null"),
+                "echo to-stderr-verbose >&2",
+                Duration::from_secs(5),
+                true,
+            )
+            .await;
+
+            assert!(result.is_ok(), "proceso con stderr debería funcionar");
+            let output = result.unwrap();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains("to-stderr-verbose"),
+                "stderr debe contener 'to-stderr-verbose', pero es: '{stderr}'"
+            );
+        }
+
+        /// CA5: stderr se captura también con verbose=false.
+        #[tokio::test]
+        async fn ca5_stderr_captured_in_non_verbose_mode() {
+            let provider = ShProvider;
+            let result = invoke_once(
+                &provider,
+                Path::new("/dev/null"),
+                "echo to-stderr-nonverbose >&2",
+                Duration::from_secs(5),
+                false,
+            )
+            .await;
+
+            assert!(result.is_ok());
+            let output = result.unwrap();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains("to-stderr-nonverbose"),
+                "stderr en modo no-verbose debe contener 'to-stderr-nonverbose'"
+            );
+        }
+
+        /// CA5: stderr vacío cuando el proceso no escribe a stderr.
+        #[tokio::test]
+        async fn ca5_stderr_empty_when_no_stderr_output() {
+            let provider = EchoProvider;
+            let result = invoke_once(
+                &provider,
+                Path::new("/dev/null"),
+                "solo-stdout",
+                Duration::from_secs(5),
+                true,
+            )
+            .await;
+
+            assert!(result.is_ok());
+            let output = result.unwrap();
+            let stderr_str = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr_str.trim().is_empty(),
+                "stderr debería estar vacío, pero es: '{stderr_str}'"
+            );
+        }
+
+        /// CA5: stderr NO se stremea al log (no aparece con prefijo "  │ ").
+        ///      Verificamos que el log no contiene el prefijo con contenido de stderr.
+        #[tokio::test]
+        async fn ca5_stderr_not_streamed_to_log() {
+            let buffer: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+            let buffer2 = buffer.clone();
+
+            let make_writer = move || CaptureWriter {
+                buf: buffer2.clone(),
+            };
+
+            let subscriber = tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::INFO)
+                .with_writer(make_writer)
+                .with_ansi(false)
+                .with_target(false)
+                .finish();
+
+            let _guard = tracing::subscriber::set_default(subscriber);
+
+            let provider = ShProvider;
+            let script = "echo stdout-line && echo stderr-line >&2";
+            let _ = invoke_once(
+                &provider,
+                Path::new("/dev/null"),
+                script,
+                Duration::from_secs(5),
+                true,
+            )
+            .await;
+
+            let log_output = String::from_utf8_lossy(&buffer.lock().unwrap());
+
+            // stdout DEBE aparecer en el log con prefijo
+            assert!(
+                log_output.contains("stdout-line"),
+                "stdout debe aparecer en el log. Log:\n{log_output}"
+            );
+
+            // stderr NO debe aparecer en el log con el prefijo "  │ "
+            // (la implementación actual puede loguear stderr sin prefijo como warning)
+            // Verificamos que "stderr-line" no aparece junto al prefijo de streaming
+            let stderr_with_pipe = log_output
+                .lines()
+                .filter(|l| l.contains("  │ ") && l.contains("stderr-line"))
+                .count();
+            assert_eq!(
+                stderr_with_pipe, 0,
+                "stderr NO debe aparecer con prefijo '  │ ' en el log. Log:\n{log_output}"
+            );
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // CA6: Cuando verbose=false, invoke_once() usa
+        //      wait_with_output() (comportamiento actual)
+        // ═══════════════════════════════════════════════════════════
+
+        /// CA6: verbose=false funciona correctamente (comportamiento actual).
+        #[tokio::test]
+        async fn ca6_non_verbose_works_correctly() {
+            let provider = EchoProvider;
+            let result = invoke_once(
+                &provider,
+                Path::new("/dev/null"),
+                "non-verbose-test",
+                Duration::from_secs(5),
+                false,
+            )
+            .await;
+
+            assert!(result.is_ok(), "modo no-verbose debe funcionar");
+            let output = result.unwrap();
+            assert!(output.status.success());
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(stdout.contains("non-verbose-test"));
+        }
+
+        /// CA6: verbose=false y verbose=true producen el mismo stdout
+        ///      para un mismo proceso.
+        #[tokio::test]
+        async fn ca6_both_modes_produce_same_stdout() {
+            let msg = "mismo-output";
+
+            let provider = EchoProvider;
+            let r1 = invoke_once(
+                &provider,
+                Path::new("/dev/null"),
+                msg,
+                Duration::from_secs(5),
+                false,
+            )
+            .await
+            .unwrap();
+            let r2 = invoke_once(
+                &provider,
+                Path::new("/dev/null"),
+                msg,
+                Duration::from_secs(5),
+                true,
+            )
+            .await
+            .unwrap();
+
+            let s1 = String::from_utf8_lossy(&r1.stdout);
+            let s2 = String::from_utf8_lossy(&r2.stdout);
+            assert_eq!(
+                s1.trim(),
+                s2.trim(),
+                "verbose=false y verbose=true deben devolver el mismo stdout.\n\
+                 verbose=false: '{s1}'\n\
+                 verbose=true:  '{s2}'"
+            );
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // CA7: El timeout sigue funcionando en ambos modos
+        // ═══════════════════════════════════════════════════════════
+
+        /// CA7: timeout en modo verbose mata el proceso y devuelve error.
+        #[tokio::test]
+        async fn ca7_timeout_in_verbose_mode() {
+            let provider = SleepProvider;
+            let start = std::time::Instant::now();
+            let result = invoke_once(
+                &provider,
+                Path::new("/dev/null"),
+                "10", // sleep 10s — mucho más que el timeout de 100ms
+                Duration::from_millis(100),
+                true,
+            )
+            .await;
+            let elapsed = start.elapsed();
+
+            assert!(
+                result.is_err(),
+                "timeout debería causar error en modo verbose"
+            );
+            let err_msg = result.unwrap_err().to_string();
+            assert!(
+                err_msg.to_lowercase().contains("timeout"),
+                "el error debe mencionar timeout: {err_msg}"
+            );
+            // No debe tardar más de 5s (margen generoso)
+            assert!(
+                elapsed < Duration::from_secs(5),
+                "el timeout debería ser rápido, tardó {:?}",
+                elapsed
+            );
+        }
+
+        /// CA7: timeout en modo no-verbose también funciona.
+        #[tokio::test]
+        async fn ca7_timeout_in_non_verbose_mode() {
+            let provider = SleepProvider;
+            let start = std::time::Instant::now();
+            let result = invoke_once(
+                &provider,
+                Path::new("/dev/null"),
+                "10",
+                Duration::from_millis(100),
+                false,
+            )
+            .await;
+            let elapsed = start.elapsed();
+
+            assert!(
+                result.is_err(),
+                "timeout debería causar error en modo no-verbose"
+            );
+            let err_msg = result.unwrap_err().to_string();
+            assert!(
+                err_msg.to_lowercase().contains("timeout"),
+                "el error debe mencionar timeout: {err_msg}"
+            );
+            assert!(
+                elapsed < Duration::from_secs(5),
+                "el timeout debería ser rápido, tardó {:?}",
+                elapsed
+            );
+        }
+
+        /// CA7: Sin timeout (margen suficiente), el proceso completa OK
+        ///      en modo verbose.
+        #[tokio::test]
+        async fn ca7_no_timeout_completes_in_verbose_mode() {
+            let provider = SleepProvider;
+            let start = std::time::Instant::now();
+            let result = invoke_once(
+                &provider,
+                Path::new("/dev/null"),
+                "0.1", // sleep 0.1s — menor que el timeout de 5s
+                Duration::from_secs(5),
+                true,
+            )
+            .await;
+            let elapsed = start.elapsed();
+
+            assert!(
+                result.is_ok(),
+                "sin timeout excedido, el proceso debería completar OK en verbose"
+            );
+            assert!(
+                elapsed < Duration::from_secs(3),
+                "debería completar rápido, tardó {:?}",
+                elapsed
+            );
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // CA8: cargo check --lib compila sin errores
+        //      → verificado por el Developer al ejecutar build
+        // CA9: cargo test --lib infra::agent pasa todos los tests
+        //      existentes
+        //      → verificado por el Developer al ejecutar tests
+        // ═══════════════════════════════════════════════════════════
+
+        // ═══════════════════════════════════════════════════════════
+        // CA10: Todos los call sites existentes de
+        //       invoke_with_retry() se actualizan con verbose
+        // ═══════════════════════════════════════════════════════════
+
+        /// CA10: Verifica que invoke_with_retry se puede llamar con el
+        ///       parámetro verbose desde un contexto similar al de
+        ///       pipeline.rs (async, con PiProvider).
+        ///
+        /// Si los call sites en pipeline.rs y plan.rs no se actualizan,
+        /// el proyecto no compilará. Este test simplemente demuestra la
+        /// firma esperada.
+        #[tokio::test]
+        async fn ca10_call_signature_matches_pipeline_usage() {
+            let provider = PiProvider;
+            let limits = LimitsConfig::default();
+            let opts = AgentOptions {
+                story_id: Some("STORY-022".into()),
+                decisions_dir: None,
+                inject_feedback: false,
+            };
+
+            // Misma firma que usa pipeline.rs (process_story)
+            let result = invoke_with_retry(
+                &provider,
+                Path::new("/nonexistent/skill.md"),
+                "test-pipeline-signature",
+                &limits,
+                &opts,
+                false,
+            )
+            .await;
+
+            // Pi puede no estar instalado — no importa, verificamos la firma
+            let _ = result;
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // CA11: AgentResult sigue conteniendo stdout, stderr, y
+        //       exit_code
+        // ═══════════════════════════════════════════════════════════
+
+        /// CA11: AgentResult tiene los tres campos requeridos:
+        ///       stdout (String), stderr (String), exit_code (i32).
+        #[test]
+        fn ca11_agent_result_has_stdout_stderr_exit_code() {
+            let result = AgentResult {
+                exit_code: 42,
+                stdout: "salida estándar".to_string(),
+                stderr: "salida de error".to_string(),
+                elapsed: Duration::from_secs(10),
+                attempt: 2,
+                attempts: vec![],
+            };
+
+            assert_eq!(result.exit_code, 42);
+            assert_eq!(result.stdout, "salida estándar");
+            assert_eq!(result.stderr, "salida de error");
+        }
+
+        /// CA11: stdout es String (no Vec<u8>, no Option).
+        #[test]
+        fn ca11_agent_result_stdout_is_owned_string() {
+            let result = AgentResult {
+                exit_code: 0,
+                stdout: String::from("línea1\nlínea2"),
+                stderr: String::new(),
+                elapsed: Duration::default(),
+                attempt: 1,
+                attempts: vec![],
+            };
+
+            // Verificar que stdout es accesible como String con .lines()
+            let lines: Vec<&str> = result.stdout.lines().collect();
+            assert_eq!(lines.len(), 2);
+            assert_eq!(lines[0], "línea1");
+            assert_eq!(lines[1], "línea2");
+        }
+
+        /// CA11: stderr se preserva correctamente aunque esté vacío.
+        #[test]
+        fn ca11_agent_result_stderr_is_string() {
+            let with_stderr = AgentResult {
+                exit_code: 1,
+                stdout: String::new(),
+                stderr: "error crítico".to_string(),
+                elapsed: Duration::default(),
+                attempt: 1,
+                attempts: vec![],
+            };
+            assert_eq!(with_stderr.stderr, "error crítico");
+
+            let without_stderr = AgentResult {
+                exit_code: 0,
+                stdout: "ok".to_string(),
+                stderr: String::new(),
+                elapsed: Duration::default(),
+                attempt: 1,
+                attempts: vec![],
+            };
+            assert!(without_stderr.stderr.is_empty());
+        }
+
+        /// CA11: exit_code es i32 (permite códigos negativos para errores).
+        #[test]
+        fn ca11_agent_result_exit_code_is_i32() {
+            let result = AgentResult {
+                exit_code: -1,
+                stdout: String::new(),
+                stderr: String::new(),
+                elapsed: Duration::default(),
+                attempt: 1,
+                attempts: vec![],
+            };
+            assert_eq!(result.exit_code, -1);
+
+            let result_zero = AgentResult {
+                exit_code: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+                elapsed: Duration::default(),
+                attempt: 1,
+                attempts: vec![],
+            };
+            assert_eq!(result_zero.exit_code, 0);
+        }
+
+        /// CA11: AgentResult se puede construir y todos los campos son
+        ///       accesibles públicamente.
+        #[test]
+        fn ca11_agent_result_all_fields_publicly_accessible() {
+            let result = AgentResult {
+                exit_code: 0,
+                stdout: "hello".into(),
+                stderr: "world".into(),
+                elapsed: Duration::from_millis(500),
+                attempt: 3,
+                attempts: vec![AttemptTrace {
+                    attempt: 1,
+                    exit_code: 1,
+                    stdout: "try1".into(),
+                    stderr: "err1".into(),
+                }],
+            };
+
+            // Todos los campos accesibles
+            assert_eq!(result.exit_code, 0);
+            assert_eq!(result.stdout, "hello");
+            assert_eq!(result.stderr, "world");
+            assert_eq!(result.elapsed, Duration::from_millis(500));
+            assert_eq!(result.attempt, 3);
+            assert_eq!(result.attempts.len(), 1);
+            assert_eq!(result.attempts[0].stdout, "try1");
+        }
+    }
 }
