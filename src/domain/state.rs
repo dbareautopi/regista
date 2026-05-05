@@ -84,6 +84,22 @@ pub struct SharedState {
     pub story_errors: Arc<RwLock<HashMap<String, String>>>,
 }
 
+impl SharedState {
+    /// Construye un SharedState a partir de mapas ya poblados.
+    /// Útil al reanudar desde un checkpoint.
+    pub fn new(
+        reject_cycles: HashMap<String, u32>,
+        story_iterations: HashMap<String, u32>,
+        story_errors: HashMap<String, String>,
+    ) -> Self {
+        Self {
+            reject_cycles: Arc::new(RwLock::new(reject_cycles)),
+            story_iterations: Arc::new(RwLock::new(story_iterations)),
+            story_errors: Arc::new(RwLock::new(story_errors)),
+        }
+    }
+}
+
 // ── Transiciones canónicas ──────────────────────────────────────────────
 
 impl Status {
@@ -399,11 +415,7 @@ mod tests {
         #[test]
         fn shared_state_clone_shares_data() {
             let state = SharedState::default();
-            state
-                .reject_cycles
-                .write()
-                .unwrap()
-                .insert("S1".into(), 5);
+            state.reject_cycles.write().unwrap().insert("S1".into(), 5);
 
             let clone = state.clone();
             assert_eq!(clone.reject_cycles.read().unwrap().get("S1"), Some(&5));
@@ -414,10 +426,7 @@ mod tests {
                 .write()
                 .unwrap()
                 .insert("S1".into(), 10);
-            assert_eq!(
-                state.story_iterations.read().unwrap().get("S1"),
-                Some(&10)
-            );
+            assert_eq!(state.story_iterations.read().unwrap().get("S1"), Some(&10));
         }
 
         // ══════════════════════════════════════════════════════════
@@ -481,11 +490,7 @@ mod tests {
         #[test]
         fn multiple_readers_allowed() {
             let state = SharedState::default();
-            state
-                .reject_cycles
-                .write()
-                .unwrap()
-                .insert("X".into(), 99);
+            state.reject_cycles.write().unwrap().insert("X".into(), 99);
 
             // Dos read locks simultáneos deben ser posibles
             let r1 = state.reject_cycles.read().unwrap();

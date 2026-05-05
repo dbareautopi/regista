@@ -159,8 +159,7 @@ mod tests {
 
         // Simular SharedState con datos
         let reject_cycles = Arc::new(RwLock::new(HashMap::from([("STORY-001".into(), 2u32)])));
-        let story_iterations =
-            Arc::new(RwLock::new(HashMap::from([("STORY-001".into(), 3u32)])));
+        let story_iterations = Arc::new(RwLock::new(HashMap::from([("STORY-001".into(), 3u32)])));
         let story_errors = Arc::new(RwLock::new(HashMap::from([(
             "STORY-002".into(),
             "timeout".to_string(),

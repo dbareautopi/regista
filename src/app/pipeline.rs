@@ -7,7 +7,7 @@ use crate::config::Config;
 use crate::domain::deadlock::{self, DeadlockResolution};
 use crate::domain::graph::DependencyGraph;
 use crate::domain::prompts::{DomainStackConfig, PromptContext};
-use crate::domain::state::Status;
+use crate::domain::state::{SharedState, Status};
 use crate::domain::story::Story;
 use crate::domain::workflow::{CanonicalWorkflow, Workflow};
 use crate::infra::agent::{self, AgentOptions};
@@ -88,21 +88,23 @@ fn run_real(
     let start = Instant::now();
     let max_wall = std::time::Duration::from_secs(cfg.limits.max_wall_time_seconds);
 
-    let (mut reject_cycles, mut story_iterations, mut story_errors, start_iteration) =
-        if let Some(state) = resume_state {
-            tracing::info!(
-                "📂 Reanudando desde checkpoint: iteración {}",
-                state.iteration
-            );
-            (
-                state.reject_cycles,
-                state.story_iterations,
-                state.story_errors,
-                state.iteration,
-            )
-        } else {
-            (HashMap::new(), HashMap::new(), HashMap::new(), 0u32)
-        };
+    let (state, start_iteration) = if let Some(resume) = resume_state {
+        tracing::info!(
+            "📂 Reanudando desde checkpoint: iteración {}",
+            resume.iteration
+        );
+        let iteration = resume.iteration;
+        (
+            SharedState::new(
+                resume.reject_cycles,
+                resume.story_iterations,
+                resume.story_errors,
+            ),
+            iteration,
+        )
+    } else {
+        (SharedState::default(), 0u32)
+    };
 
     let mut iteration: u32 = start_iteration;
     let mut stop_reason: Option<String> = None;
@@ -142,14 +144,8 @@ fn run_real(
         let full_graph = DependencyGraph::from_stories(&stories);
 
         // 2. Aplicar transiciones automáticas sobre TODAS las historias
-        let stories = apply_automatic_transitions(
-            stories,
-            &full_graph,
-            &mut reject_cycles,
-            cfg,
-            false,
-            workflow,
-        )?;
+        let stories =
+            apply_automatic_transitions(stories, &full_graph, &state, cfg, false, workflow)?;
 
         // 3. Filtrar historias según opciones de ejecución (--story, --epic, --epics)
         let stories = filter_stories(stories, options);
@@ -177,55 +173,45 @@ fn run_real(
                     tracing::info!("🔓 Deadlock detectado: {reason}");
                 }
                 let story = stories.iter().find(|s| s.id == *story_id).unwrap();
-                let iter = story_iterations.entry(story.id.clone()).or_insert(0);
-                *iter += 1;
+                {
+                    let mut guard = state.story_iterations.write().unwrap();
+                    let iter = guard.entry(story.id.clone()).or_insert(0);
+                    *iter += 1;
+                }
                 let agent_opts = build_agent_opts(story, cfg);
-                if let Err(e) = process_story(
-                    story,
-                    project_root,
-                    cfg,
-                    &mut reject_cycles,
-                    &agent_opts,
-                    workflow,
-                ) {
-                    story_errors
+                if let Err(e) =
+                    process_story(story, project_root, cfg, &state, &agent_opts, workflow)
+                {
+                    state
+                        .story_errors
+                        .write()
+                        .unwrap()
                         .entry(story.id.clone())
                         .or_insert_with(|| e.to_string());
                 }
-                save_checkpoint(
-                    project_root,
-                    iteration,
-                    &reject_cycles,
-                    &story_iterations,
-                    &story_errors,
-                );
+                save_checkpoint(project_root, iteration, &state);
             }
             DeadlockResolution::NoDeadlock => {
                 // 5. Procesar la historia de mayor prioridad en el flujo normal
                 if let Some(story) = pick_next_actionable(&stories, &graph) {
                     let id = story.id.clone();
-                    let iter = story_iterations.entry(id.clone()).or_insert(0);
-                    *iter += 1;
+                    {
+                        let mut guard = state.story_iterations.write().unwrap();
+                        let iter = guard.entry(id.clone()).or_insert(0);
+                        *iter += 1;
+                    }
                     let agent_opts = build_agent_opts(story, cfg);
-                    if let Err(e) = process_story(
-                        story,
-                        project_root,
-                        cfg,
-                        &mut reject_cycles,
-                        &agent_opts,
-                        workflow,
-                    ) {
-                        story_errors
+                    if let Err(e) =
+                        process_story(story, project_root, cfg, &state, &agent_opts, workflow)
+                    {
+                        state
+                            .story_errors
+                            .write()
+                            .unwrap()
                             .entry(id.clone())
                             .or_insert_with(|| e.to_string());
                     }
-                    save_checkpoint(
-                        project_root,
-                        iteration,
-                        &reject_cycles,
-                        &story_iterations,
-                        &story_errors,
-                    );
+                    save_checkpoint(project_root, iteration, &state);
                 }
             }
             DeadlockResolution::PipelineComplete => {
@@ -247,15 +233,16 @@ fn run_real(
 
     // Generar reporte final
     let stories = filter_stories(load_all_stories(project_root, cfg)?, options);
-    build_report(
+    let report = build_report(
         &stories,
         iteration,
         start.elapsed(),
-        &story_iterations,
-        &reject_cycles,
-        &story_errors,
+        &state.story_iterations.read().unwrap(),
+        &state.reject_cycles.read().unwrap(),
+        &state.story_errors.read().unwrap(),
         stop_reason,
-    )
+    );
+    report
 }
 
 /// Ejecución simulada del pipeline (dry-run).
@@ -541,7 +528,7 @@ pub(crate) fn load_all_stories(project_root: &Path, cfg: &Config) -> anyhow::Res
 fn apply_automatic_transitions(
     stories: Vec<Story>,
     _graph: &DependencyGraph,
-    reject_cycles: &mut HashMap<String, u32>,
+    state: &SharedState,
     cfg: &Config,
     simulate: bool,
     workflow: &dyn Workflow,
@@ -553,7 +540,13 @@ fn apply_automatic_transitions(
         if story.status.is_terminal() {
             continue;
         }
-        let cycles = reject_cycles.get(&story.id).copied().unwrap_or(0);
+        let cycles = state
+            .reject_cycles
+            .read()
+            .unwrap()
+            .get(&story.id)
+            .copied()
+            .unwrap_or(0);
         if cycles >= cfg.limits.max_reject_cycles {
             tracing::warn!(
                 "❌ {}: {} ciclos de rechazo agotados → Failed",
@@ -693,7 +686,7 @@ fn process_story(
     story: &Story,
     project_root: &Path,
     cfg: &Config,
-    reject_cycles: &mut HashMap<String, u32>,
+    state: &SharedState,
     agent_opts: &AgentOptions,
     workflow: &dyn Workflow,
 ) -> anyhow::Result<()> {
@@ -786,12 +779,15 @@ fn process_story(
                 && (story.status == Status::InReview || story.status == Status::BusinessReview)
             {
                 // El agente rechazó: incrementar contador
-                let cycles = reject_cycles.entry(story.id.clone()).or_insert(0);
+                let mut guard = state.reject_cycles.write().unwrap();
+                let cycles = guard.entry(story.id.clone()).or_insert(0);
                 *cycles += 1;
+                let current_cycles = *cycles;
+                drop(guard);
                 tracing::info!(
                     "  📊 {}: ciclo de rechazo {}/{}",
                     story.id,
-                    cycles,
+                    current_cycles,
                     cfg.limits.max_reject_cycles
                 );
             }
@@ -863,20 +859,14 @@ fn build_agent_opts(story: &Story, cfg: &Config) -> AgentOptions {
 }
 
 /// Guarda el checkpoint del orquestador.
-fn save_checkpoint(
-    project_root: &Path,
-    iteration: u32,
-    reject_cycles: &HashMap<String, u32>,
-    story_iterations: &HashMap<String, u32>,
-    story_errors: &HashMap<String, String>,
-) {
-    let state = OrchestratorState {
+fn save_checkpoint(project_root: &Path, iteration: u32, state: &SharedState) {
+    let checkpoint = OrchestratorState {
         iteration,
-        reject_cycles: reject_cycles.clone(),
-        story_iterations: story_iterations.clone(),
-        story_errors: story_errors.clone(),
+        reject_cycles: state.reject_cycles.read().unwrap().clone(),
+        story_iterations: state.story_iterations.read().unwrap().clone(),
+        story_errors: state.story_errors.read().unwrap().clone(),
     };
-    if let Err(e) = state.save(project_root) {
+    if let Err(e) = checkpoint.save(project_root) {
         tracing::warn!("⚠️  no se pudo guardar el checkpoint: {e}");
     }
 }
@@ -1429,7 +1419,7 @@ mod tests {
         fn apply_automatic_transitions_unblock_uses_workflow_target() {
             let wf = CanonicalWorkflow::default();
             let cfg = Config::default();
-            let mut reject_cycles: HashMap<String, u32> = HashMap::new();
+            let state = SharedState::default();
 
             let done_story = story_fixture("STORY-001", Status::Done, None);
             let blocked_story = Story {
@@ -1447,8 +1437,7 @@ mod tests {
 
             // simulate=true → no escribe a disco
             let result =
-                apply_automatic_transitions(stories, &graph, &mut reject_cycles, &cfg, true, &wf)
-                    .unwrap();
+                apply_automatic_transitions(stories, &graph, &state, &cfg, true, &wf).unwrap();
 
             let unblocked = result.iter().find(|s| s.id == "STORY-002").unwrap();
             let expected = wf.next_status(Status::Blocked);
@@ -1473,7 +1462,7 @@ mod tests {
         fn apply_automatic_transitions_keeps_blocked_with_unresolved_deps() {
             let wf = CanonicalWorkflow::default();
             let cfg = Config::default();
-            let mut reject_cycles: HashMap<String, u32> = HashMap::new();
+            let state = SharedState::default();
 
             // STORY-001 está Draft (no Done) → no debería desbloquear STORY-002
             let dep_draft = story_fixture("STORY-001", Status::Draft, None);
@@ -1491,8 +1480,7 @@ mod tests {
             let graph = DependencyGraph::from_stories(&stories);
 
             let result =
-                apply_automatic_transitions(stories, &graph, &mut reject_cycles, &cfg, true, &wf)
-                    .unwrap();
+                apply_automatic_transitions(stories, &graph, &state, &cfg, true, &wf).unwrap();
 
             let still_blocked = result.iter().find(|s| s.id == "STORY-002").unwrap();
             assert_eq!(
@@ -1859,8 +1847,7 @@ mod tests {
             };
 
             // Done → retorna temprano sin invocar agente
-            let result =
-                process_story(&story, tmp.path(), &cfg, &state, &agent_opts, &workflow);
+            let result = process_story(&story, tmp.path(), &cfg, &state, &agent_opts, &workflow);
             assert!(result.is_ok(), "process_story con Done debe retornar Ok");
         }
 
@@ -1882,8 +1869,7 @@ mod tests {
                 inject_feedback: false,
             };
 
-            let result =
-                process_story(&story, tmp.path(), &cfg, &state, &agent_opts, &workflow);
+            let result = process_story(&story, tmp.path(), &cfg, &state, &agent_opts, &workflow);
             assert!(result.is_ok(), "process_story con Blocked debe retornar Ok");
         }
 
@@ -1904,8 +1890,7 @@ mod tests {
                 inject_feedback: false,
             };
 
-            let result =
-                process_story(&story, tmp.path(), &cfg, &state, &agent_opts, &workflow);
+            let result = process_story(&story, tmp.path(), &cfg, &state, &agent_opts, &workflow);
             assert!(result.is_ok(), "process_story con Failed debe retornar Ok");
         }
 
@@ -1971,7 +1956,8 @@ mod tests {
                 "STORY-001 con 5 ciclos NO debe marcarse Failed"
             );
             assert_eq!(
-                story_after.status, Status::InReview,
+                story_after.status,
+                Status::InReview,
                 "STORY-001 debe permanecer en InReview"
             );
         }
@@ -2105,11 +2091,7 @@ mod tests {
             std::fs::create_dir_all(tmp.path().join(".regista")).unwrap();
 
             let state = SharedState::default();
-            state
-                .reject_cycles
-                .write()
-                .unwrap()
-                .insert("X".into(), 1);
+            state.reject_cycles.write().unwrap().insert("X".into(), 1);
 
             // Adquirir un read lock externo ANTES de save_checkpoint
             let external_read = state.story_iterations.read().unwrap();
