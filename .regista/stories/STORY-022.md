@@ -109,6 +109,29 @@ Modificar `invoke_once()` en `infra/agent.rs` para que, cuando `verbose = true`,
     - Solución requerida: `let binding = buffer.lock().unwrap(); let log_output = String::from_utf8_lossy(&binding);`
   * NO se avanza a In Review — el orquestador debe pasar el turno al QA.
   * Documentado en .regista/decisions/STORY-022-dev-verification-7-2026-05-05.md.
+- 2026-05-05 | Dev | Novena verificación de STORY-022. Verificación completa actualizada:
+  * `cargo check` (0.16s): OK, sin errores.
+  * `cargo clippy --no-deps` (0.28s): OK, 0 warnings.
+  * `cargo build`: OK, binario generado.
+  * Código de producción completo y correcto:
+    - `invoke_once()` con parámetro `verbose: bool` + rama `invoke_once_verbose()` (CA2, CA6).
+    - `BufReader::new()` + `read_line()` en bucle async para streaming (CA2).
+    - `tracing::info!("  │ {}", trimmed)` para líneas no vacías (CA3).
+    - stdout acumulado en `Vec<u8>` y devuelto en `Output` (CA4).
+    - stderr en `tokio::spawn` separado con `read_to_end()`, sin streaming (CA5).
+    - `kill_process_by_pid()` para timeout cross-platform (CA7).
+    - `invoke_with_retry()` y `invoke_with_retry_blocking()` con `verbose: bool` (CA1, CA10).
+    - Call sites en `app/plan.rs:152` y `app/pipeline.rs:774` pasan `false` (CA10).
+    - `AgentResult` mantiene `stdout: String`, `stderr: String`, `exit_code: i32` (CA11).
+  * Los mismos 3 errores E0716 persisten en `mod story022` del QA:
+    | Test | Línea | Error |
+    |------|-------|-------|
+    | `ca3_verbose_logs_lines_with_pipe_prefix` | 1763 | `String::from_utf8_lossy(&buffer.lock().unwrap())` — `MutexGuard` temporal destruido antes que el `Cow<str>` |
+    | `ca3_empty_lines_not_logged` | 1809 | `String::from_utf8_lossy(&buffer.lock().unwrap())` — mismo error E0716 |
+    | `ca5_stderr_not_streamed_to_log` | 2006 | `String::from_utf8_lossy(&buffer.lock().unwrap())` — mismo error E0716 |
+  * Solución requerida (responsabilidad del QA): `let binding = buffer.lock().unwrap(); let log_output = String::from_utf8_lossy(&binding);` en las 3 ubicaciones.
+  * NO se avanza a In Review. El orquestador debe pasar el turno al QA.
+  * Documentado en .regista/decisions/STORY-022-dev-verification-9-2026-05-05.md.
 - 2026-05-05 | Dev | Octava verificación de STORY-022. El código de producción sigue completo y correcto:
   * `cargo build` (0.15s): OK, compila sin errores.
   * `cargo clippy --no-deps` (0.23s): OK, 0 warnings.
