@@ -227,7 +227,10 @@ mod tests {
         std::fs::write(root.join("test.txt"), "hello").unwrap();
 
         let hash = snapshot(root, "test-snapshot");
-        assert!(hash.is_some(), "snapshot debe retornar Some<hash> con cambios");
+        assert!(
+            hash.is_some(),
+            "snapshot debe retornar Some<hash> con cambios"
+        );
         let hash = hash.unwrap();
         assert!(!hash.is_empty(), "hash no debe estar vacío");
         // hash SHA1 típico tiene 40 caracteres
@@ -260,7 +263,10 @@ mod tests {
 
         // snapshot sin nuevos cambios
         let hash = snapshot(root, "no-changes");
-        assert!(hash.is_some(), "snapshot sin cambios debe retornar Some<hash>");
+        assert!(
+            hash.is_some(),
+            "snapshot sin cambios debe retornar Some<hash>"
+        );
         assert_eq!(
             hash.unwrap(),
             initial_hash,
@@ -290,7 +296,10 @@ mod tests {
 
         // Verificar que el archivo volvió a version-1
         let content = std::fs::read_to_string(root.join("file.txt")).unwrap();
-        assert_eq!(content, "version-1", "rollback debe restaurar el contenido original");
+        assert_eq!(
+            content, "version-1",
+            "rollback debe restaurar el contenido original"
+        );
     }
 
     /// CA5: rollback() con hash inválido retorna false.
@@ -336,14 +345,16 @@ mod tests {
         });
 
         let hash = snap_handle.await.unwrap();
-        assert!(hash.is_some(), "snapshot desde spawn_blocking debe funcionar");
+        assert!(
+            hash.is_some(),
+            "snapshot desde spawn_blocking debe funcionar"
+        );
 
         // rollback desde async también
         let hash = hash.unwrap();
         let root_clone2 = root.clone();
-        let rollback_handle = tokio::task::spawn_blocking(move || {
-            rollback(&root_clone2, &hash, "async-rollback")
-        });
+        let rollback_handle =
+            tokio::task::spawn_blocking(move || rollback(&root_clone2, &hash, "async-rollback"));
 
         let success = rollback_handle.await.unwrap();
         assert!(success, "rollback desde spawn_blocking debe funcionar");
@@ -367,9 +378,8 @@ mod tests {
         let mut handles = vec![];
         for i in 0..3 {
             let r = root.clone();
-            let handle = tokio::task::spawn_blocking(move || {
-                snapshot(&r, &format!("concurrent-{i}"))
-            });
+            let handle =
+                tokio::task::spawn_blocking(move || snapshot(&r, &format!("concurrent-{i}")));
             handles.push(handle);
         }
 

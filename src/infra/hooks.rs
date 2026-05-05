@@ -23,15 +23,26 @@ pub fn run_hook(hook: Option<&str>, label: &str) -> anyhow::Result<()> {
     };
 
     tracing::info!("  🔍 {label}: ejecutando hook...");
-    let status = if cfg!(windows) {
-        std::process::Command::new("cmd")
-            .arg("/c")
-            .arg(cmd)
-            .status()
-    } else {
-        std::process::Command::new("sh").arg("-c").arg(cmd).status()
-    }
-    .map_err(|e| anyhow::anyhow!("no se pudo ejecutar hook '{cmd}': {e}"))?;
+
+    // Usar tokio::process::Command con el runtime global para no bloquear
+    // el event loop cuando se llama desde contextos async.
+    let status = crate::infra::agent::RUNTIME
+        .block_on(async {
+            if cfg!(windows) {
+                tokio::process::Command::new("cmd")
+                    .arg("/c")
+                    .arg(cmd)
+                    .status()
+                    .await
+            } else {
+                tokio::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(cmd)
+                    .status()
+                    .await
+            }
+        })
+        .map_err(|e| anyhow::anyhow!("no se pudo ejecutar hook '{cmd}': {e}"))?;
 
     if status.success() {
         tracing::info!("  ✓ hook {label} OK");
@@ -65,10 +76,7 @@ mod tests {
     #[test]
     fn run_hook_executes_valid_command() {
         let result = run_hook(Some("true"), "test_valid");
-        assert!(
-            result.is_ok(),
-            "hook con comando válido debe retornar Ok"
-        );
+        assert!(result.is_ok(), "hook con comando válido debe retornar Ok");
     }
 
     /// CA4: run_hook con un comando que falla retorna Err.
@@ -76,7 +84,10 @@ mod tests {
     #[test]
     fn run_hook_fails_with_invalid_command() {
         let result = run_hook(Some("exit 42"), "test_fail");
-        assert!(result.is_err(), "hook con comando fallido debe retornar Err");
+        assert!(
+            result.is_err(),
+            "hook con comando fallido debe retornar Err"
+        );
         let err = result.unwrap_err().to_string();
         assert!(
             err.contains("test_fail"),
@@ -124,6 +135,9 @@ mod tests {
         // causar problemas en el scheduler de tokio.
         let handle = tokio::spawn(async { run_hook(Some("true"), "async_hook") });
         let result = handle.await.unwrap();
-        assert!(result.is_ok(), "hook debe completar desde async sin bloquear");
+        assert!(
+            result.is_ok(),
+            "hook debe completar desde async sin bloquear"
+        );
     }
 }

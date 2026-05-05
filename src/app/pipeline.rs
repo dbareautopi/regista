@@ -75,11 +75,16 @@ pub fn run(
     if options.dry_run {
         return run_dry(project_root, cfg, options);
     }
-    run_real(project_root, cfg, options, resume_state)
+    // run_real es async: usar el runtime global de tokio para bloquear
+    // hasta que el pipeline completo termine.
+    crate::infra::agent::RUNTIME.block_on(run_real(project_root, cfg, options, resume_state))
 }
 
 /// Ejecución real del pipeline (invocando agentes).
-fn run_real(
+///
+/// Migrado a async (STORY-012): usa `process_story(...).await` secuencialmente
+/// en el loop principal. Cada historia se procesa de una en una (sin `tokio::spawn`).
+async fn run_real(
     project_root: &Path,
     cfg: &Config,
     options: &RunOptions,
@@ -180,7 +185,7 @@ fn run_real(
                 }
                 let agent_opts = build_agent_opts(story, cfg);
                 if let Err(e) =
-                    process_story(story, project_root, cfg, &state, &agent_opts, workflow)
+                    process_story(story, project_root, cfg, &state, &agent_opts, workflow).await
                 {
                     state
                         .story_errors
@@ -202,7 +207,7 @@ fn run_real(
                     }
                     let agent_opts = build_agent_opts(story, cfg);
                     if let Err(e) =
-                        process_story(story, project_root, cfg, &state, &agent_opts, workflow)
+                        process_story(story, project_root, cfg, &state, &agent_opts, workflow).await
                     {
                         state
                             .story_errors
@@ -681,8 +686,12 @@ fn status_priority(status: Status) -> u32 {
     }
 }
 
-/// Procesa una historia individual: dispara el agente correspondiente.
-fn process_story(
+/// Procesa una historia individual: dispara el agente correspondiente (async).
+///
+/// Migrado a async (STORY-012): usa `invoke_with_retry(...).await` en lugar
+/// de `invoke_with_retry_blocking(...)`. Las operaciones git se ejecutan con
+/// `spawn_blocking` para no bloquear el runtime.
+async fn process_story(
     story: &Story,
     project_root: &Path,
     cfg: &Config,
@@ -750,20 +759,26 @@ fn process_story(
         ctx.to
     );
 
-    // Snapshot git antes de la invocación (si está habilitado)
+    // Snapshot git antes de la invocación (si está habilitado).
+    // Ejecutar con spawn_blocking para no bloquear el runtime async.
     let prev_hash = if cfg.git.enabled {
-        crate::infra::git::snapshot(project_root, &format!("{label}-{}", story.id))
+        let root = project_root.to_path_buf();
+        let snapshot_label = format!("{label}-{}", story.id);
+        tokio::task::spawn_blocking(move || crate::infra::git::snapshot(&root, &snapshot_label))
+            .await
+            .unwrap_or(None)
     } else {
         None
     };
 
-    let result = agent::invoke_with_retry_blocking(
+    let result = agent::invoke_with_retry(
         provider.as_ref(),
         &instruction_path,
         &prompt,
         &cfg.limits,
         agent_opts,
-    );
+    )
+    .await;
 
     match result {
         Ok(_) => {
@@ -810,7 +825,14 @@ fn process_story(
             if let Err(e) = hook_result {
                 tracing::warn!("  ❌ hook falló: {e}");
                 if let Some(ref hash) = prev_hash {
-                    crate::infra::git::rollback(project_root, hash, label);
+                    let root = project_root.to_path_buf();
+                    let hash = hash.clone();
+                    let label = label.to_string();
+                    tokio::task::spawn_blocking(move || {
+                        crate::infra::git::rollback(&root, &hash, &label)
+                    })
+                    .await
+                    .unwrap_or(false);
                 }
             }
         }
@@ -818,7 +840,14 @@ fn process_story(
             tracing::error!("  ❌ {}: falló la invocación del agente: {e}", story.id);
             // Rollback si hay snapshot
             if let Some(ref hash) = prev_hash {
-                crate::infra::git::rollback(project_root, hash, label);
+                let root = project_root.to_path_buf();
+                let hash = hash.clone();
+                let label = label.to_string();
+                tokio::task::spawn_blocking(move || {
+                    crate::infra::git::rollback(&root, &hash, &label)
+                })
+                .await
+                .unwrap_or(false);
             }
         }
     }
@@ -2212,15 +2241,8 @@ mod tests {
             // Todos los estados no-procesables deben retornar Ok temprano
             for status in [Status::Blocked, Status::Failed, Status::Done] {
                 let story = story_fixture("STORY-001", status, None);
-                let result = process_story(
-                    &story,
-                    tmp.path(),
-                    &cfg,
-                    &state,
-                    &agent_opts,
-                    &workflow,
-                )
-                .await;
+                let result =
+                    process_story(&story, tmp.path(), &cfg, &state, &agent_opts, &workflow).await;
                 assert!(
                     result.is_ok(),
                     "process_story con {status} debe retornar Ok en async"
@@ -2375,10 +2397,7 @@ mod tests {
             // CA3: run_dry debe ser invocable sin #[tokio::test]
             // (es un test normal, no async)
             let report = run_dry(tmp.path(), &cfg, &options);
-            assert!(
-                report.is_ok(),
-                "run_dry debe ejecutarse sin tokio runtime"
-            );
+            assert!(report.is_ok(), "run_dry debe ejecutarse sin tokio runtime");
             let report = report.unwrap();
             assert_eq!(report.total, 0, "sin historias, total debe ser 0");
         }
@@ -2424,7 +2443,10 @@ mod tests {
                 report.done + report.failed + report.blocked + report.draft == report.total,
                 "done + failed + blocked + draft = total"
             );
-            assert!(report.iterations > 0, "dry-run debe iterar al menos una vez");
+            assert!(
+                report.iterations > 0,
+                "dry-run debe iterar al menos una vez"
+            );
             assert_eq!(report.stories.len(), 2, "2 story records");
 
             // elapsed_seconds es consistente con elapsed
@@ -2468,13 +2490,15 @@ mod tests {
             assert_eq!(report.elapsed.as_secs(), report.elapsed_seconds);
 
             // Serialización JSON funciona (compatibilidad CI/CD)
-            let json =
-                serde_json::to_string(&report).expect("RunReport debe serializarse a JSON");
+            let json = serde_json::to_string(&report).expect("RunReport debe serializarse a JSON");
             assert!(json.contains("\"done\":4"), "JSON contiene done count");
             assert!(json.contains("\"total\":10"), "JSON contiene total");
             assert!(json.contains("STORY-001"), "JSON contiene story ID");
             // elapsed (Duration) se omite con #[serde(skip)]
-            assert!(!json.contains("\"elapsed\""), "elapsed Duration se omite en JSON");
+            assert!(
+                !json.contains("\"elapsed\""),
+                "elapsed Duration se omite en JSON"
+            );
             assert!(
                 json.contains("elapsed_seconds"),
                 "elapsed_seconds está en JSON"
@@ -2497,8 +2521,7 @@ mod tests {
                 stop_reason: Some("max_iterations (100)".into()),
             };
 
-            let json =
-                serde_json::to_string(&report).expect("RunReport debe serializarse a JSON");
+            let json = serde_json::to_string(&report).expect("RunReport debe serializarse a JSON");
             assert!(json.contains("stop_reason"), "stop_reason presente en JSON");
             assert!(
                 json.contains("max_iterations"),
@@ -2522,8 +2545,7 @@ mod tests {
                 stop_reason: None,
             };
 
-            let json =
-                serde_json::to_string(&report).expect("RunReport debe serializarse a JSON");
+            let json = serde_json::to_string(&report).expect("RunReport debe serializarse a JSON");
             assert!(
                 !json.contains("stop_reason"),
                 "stop_reason se omite cuando es None"

@@ -50,8 +50,8 @@ pub struct AgentOptions {
     pub inject_feedback: bool,
 }
 
-/// Runtime tokio global para `invoke_with_retry_blocking`.
-static RUNTIME: LazyLock<tokio::runtime::Runtime> =
+/// Runtime tokio global compartido para operaciones async desde contextos síncronos.
+pub(crate) static RUNTIME: LazyLock<tokio::runtime::Runtime> =
     LazyLock::new(|| tokio::runtime::Runtime::new().expect("no se pudo crear el runtime de tokio"));
 
 /// Invoca un agente con reintentos con backoff exponencial (async).
