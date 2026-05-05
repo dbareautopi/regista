@@ -1012,6 +1012,81 @@ mod tests {
             );
         }
 
+        /// CA1: El campo Provider muestra el nombre del provider global
+        /// (no solo "pi" — debe funcionar con cualquier provider).
+        #[test]
+        fn detailed_header_shows_configured_provider_name() {
+            for provider_name in ["claude", "codex", "opencode"] {
+                let toml = format!(
+                    "[agents]\nprovider = \"{provider_name}\"\n"
+                );
+                let cfg: config::Config = toml::from_str(&toml).unwrap();
+                let header = format_session_header(
+                    &cfg,
+                    "1.0.0",
+                    Path::new("/tmp"),
+                    0,
+                    false,
+                    "2026-05-05 12:00:00",
+                );
+
+                assert!(
+                    header.contains(&format!("Provider    : {provider_name}"))
+                        || header.contains(&format!("Provider: {provider_name}")),
+                    "Header debe mostrar provider '{provider_name}' en el campo Provider"
+                );
+            }
+        }
+
+        /// CA1: La línea de Modelos usa el formato exacto con comas:
+        /// "PO=X, QA=Y, Dev=Z, Reviewer=W".
+        #[test]
+        fn detailed_header_models_line_has_comma_separated_format() {
+            let toml = r#"
+[agents]
+provider = "pi"
+model = "gpt-5"
+"#;
+            let cfg: config::Config = toml::from_str(toml).unwrap();
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                0,
+                false,
+                "2026-05-05 12:00:00",
+            );
+
+            // La línea de modelos debe contener los 4 roles separados por ", "
+            let models_line = header
+                .lines()
+                .find(|l| l.contains("Modelos"))
+                .expect("Debe existir una línea 'Modelos'");
+
+            assert!(
+                models_line.contains("PO="),
+                "Línea de Modelos debe contener PO="
+            );
+            assert!(
+                models_line.contains("QA="),
+                "Línea de Modelos debe contener QA="
+            );
+            assert!(
+                models_line.contains("Dev="),
+                "Línea de Modelos debe contener Dev="
+            );
+            assert!(
+                models_line.contains("Reviewer="),
+                "Línea de Modelos debe contener Reviewer="
+            );
+            // Debe haber al menos 3 comas (separando los 4 roles)
+            let commas = models_line.matches(',').count();
+            assert!(
+                commas >= 3,
+                "Línea de Modelos debe tener al menos 3 comas (4 roles), tiene {commas}"
+            );
+        }
+
         // ── CA2: Header compacto ───────────────────────────────
 
         /// CA2: En modo compacto, el header es una sola línea.
@@ -1517,6 +1592,152 @@ post_reviewer = "npm run lint"
             );
             // Si compila y no paniquea, el header se puede integrar
             // en el flujo daemon: setup_daemon_tracing(...); tracing::info!("{}", header);
+        }
+
+        // ── CA3 (extensión): YAML frontmatter ─────────────────
+
+        /// CA3: Cuando no hay modelo en config pero el skill tiene
+        /// modelo en YAML frontmatter, el header refleja ese modelo.
+        ///
+        /// Este test crea la estructura de skills esperada dentro de
+        /// un directorio temporal usado como project_root, para que
+        /// model_for_role pueda leer el YAML frontmatter.
+        #[test]
+        fn header_reflects_yaml_frontmatter_model() {
+            let tmp = tempfile::tempdir().unwrap();
+            let project_root = tmp.path();
+
+            // Crear estructura de skill de pi para developer
+            let skill_dir = project_root.join(".pi/skills/developer");
+            std::fs::create_dir_all(&skill_dir).unwrap();
+            let skill_file = skill_dir.join("SKILL.md");
+            std::fs::write(
+                &skill_file,
+                "---\nname: developer\nmodel: opencode/gpt-5-nano\n---\n# Developer skill\n",
+            )
+            .unwrap();
+
+            // Config sin modelo: el modelo debe venir del YAML
+            let cfg = config::Config::default();
+
+            // El header debe contener Dev=opencode/gpt-5-nano
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                project_root,
+                0,
+                false,
+                "2026-05-05 12:00:00",
+            );
+            assert!(
+                header.contains("Dev=opencode/gpt-5-nano"),
+                "Header debe reflejar el modelo del YAML frontmatter: Dev=opencode/gpt-5-nano"
+            );
+        }
+
+        // ── CA6 (extensión): solo hooks configurados ───────────
+
+        /// CA6: Cuando solo un hook está configurado (post_reviewer),
+        /// el header lista SOLO ese hook, no los otros.
+        #[test]
+        fn hooks_lists_only_configured_hook_not_all() {
+            let toml = r#"
+[hooks]
+post_reviewer = "cargo clippy -- -D warnings"
+"#;
+            let cfg: config::Config = toml::from_str(toml).unwrap();
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                0,
+                false,
+                "2026-05-05 12:00:00",
+            );
+
+            assert!(
+                header.contains("post_reviewer"),
+                "Debe listar post_reviewer porque está configurado"
+            );
+            // Los hooks no configurados NO deben aparecer
+            assert!(
+                !header.contains("post_qa"),
+                "post_qa NO debe aparecer porque no está configurado"
+            );
+            assert!(
+                !header.contains("post_dev"),
+                "post_dev NO debe aparecer porque no está configurado"
+            );
+        }
+
+        /// CA6: Con hooks parcialmente configurados (solo post_dev),
+        /// el header lista solo post_dev, no menciona los otros.
+        #[test]
+        fn hooks_lists_only_post_dev_when_its_the_only_one_configured() {
+            let toml = r#"
+[hooks]
+post_dev = "npm run build"
+"#;
+            let cfg: config::Config = toml::from_str(toml).unwrap();
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                0,
+                false,
+                "2026-05-05 12:00:00",
+            );
+
+            assert!(
+                header.contains("post_dev"),
+                "Debe listar post_dev"
+            );
+            assert!(
+                !header.contains("post_qa"),
+                "post_qa NO debe aparecer"
+            );
+            assert!(
+                !header.contains("post_reviewer"),
+                "post_reviewer NO debe aparecer"
+            );
+        }
+
+        // ── CA4 (extensión): notación "stories × 6" ────────────
+
+        /// CA4: Cuando max_iter es auto-calculado (max_iterations=0),
+        /// la línea de Límites incluye la notación "(M stories × 6)"
+        /// para mostrar cómo se obtuvo el valor.
+        #[test]
+        fn limits_line_shows_stories_multiplier_notation_when_auto() {
+            let cfg = config::Config::default(); // max_iterations = 0
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                7,
+                false,
+                "2026-05-05 12:00:00",
+            );
+
+            let limits_line = header
+                .lines()
+                .find(|l| l.contains("Límites") || l.contains("Limites"))
+                .expect("Debe existir una línea de Límites");
+
+            // Debe contener max_iter=42 (7 × 6)
+            assert!(
+                limits_line.contains("max_iter=42"),
+                "Límites debe mostrar max_iter=42 para 7 historias"
+            );
+
+            // Debe mostrar la notación de cómo se calculó
+            let has_multiplier = limits_line.contains("7") && limits_line.contains('×')
+                || limits_line.contains("7 stories")
+                || limits_line.contains("7 historias");
+            assert!(
+                has_multiplier,
+                "Límites debe indicar que max_iter se calculó como 7 stories × 6"
+            );
         }
 
         // ── Sanity / regresión ─────────────────────────────────
