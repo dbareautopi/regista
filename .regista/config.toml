@@ -1,0 +1,28 @@
+# regista — AI agent director configuration
+# Todos los campos son opcionales (se usan los defaults mostrados aquí).
+
+[project]
+stories_dir = ".regista/stories"
+story_pattern = "STORY-*.md"
+epics_dir = ".regista/epics"
+decisions_dir = ".regista/decisions"
+log_dir = ".regista/logs"
+
+[agents]
+provider = "pi"
+
+[limits]
+max_iterations = 0  # 0 = auto: nº de historias × 6
+max_retries_per_step = 5
+max_reject_cycles = 8
+agent_timeout_seconds = 1800
+max_wall_time_seconds = 28800
+retry_delay_base_seconds = 10
+
+[hooks]
+# post_qa = "echo 'QA phase verified'"
+# post_dev = "echo 'Dev phase verified'"
+# post_reviewer = "echo 'Reviewer phase verified'"
+
+[git]
+enabled = true

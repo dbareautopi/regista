@@ -1,100 +1,217 @@
 # 🧠 regista — Session Handoff
 
-> **Fecha**: 2026-05-04
-> **Sesión**: v0.6.0 — #22 `regista board`: dashboard de historias (conteo por estado, bloqueadas, fallidas)
-> **Versión**: v0.6.0
-> **Estado**: 173 tests pasando, 0 fallos, 1 ignorado, 0 warnings.
+> **Fecha**: 2026-05-05
+> **Sesión**: v0.9.0 — Reestructuración arquitectónica, migración a tokio, Workflow trait, Health metrics
+> **Versión**: v0.9.0
+> **Estado**: 357 tests pasando, 0 fallos, 1 ignorado, 0 warnings.
 
 ---
 
 ## 📍 Estructura actual
 
+Arquitectura en **4 capas** con dependencias unidireccionales verificadas por `tests/architecture.rs`:
+
 ```
 /root/repos/regista/
-├── Cargo.toml
+├── Cargo.toml                 ← v0.9.0
 ├── Cargo.lock
-├── README.md                   ← Actualizado
-├── DESIGN.md                   ← Actualizado
-├── AGENTS.md                   ← Guía para agentes
-├── HANDOFF.md                  ← Este documento
+├── README.md                  ← Actualizado
+├── DESIGN.md                  ← Actualizado
+├── AGENTS.md                  ← Actualizado (nueva arquitectura)
+├── HANDOFF.md                 ← Este documento
 ├── .gitignore
 ├── src/
-│   ├── main.rs                 ← CLI (clap Subcommand), 9 subcomandos (plan/auto/run/logs/status/kill/validate/init/update), --version
-│   ├── config.rs               ← Config, AgentsConfig + AgentRoleConfig, provider_for_role(), skill_for_role(), carga TOML
-│   ├── state.rs                ← Status (9), Actor (5), Transition, can_transition_to()
-│   ├── story.rs                ← Story, parseo .md, set_status(), advance_status_in_memory()
-│   ├── dependency_graph.rs     ← Grafo, ciclo DFS, has_any_cycle(), blocks_count()
-│   ├── deadlock.rs             ← analyze(), DeadlockResolution, priorización
-│   ├── providers.rs            ← trait AgentProvider + PiProvider/ClaudeCodeProvider/CodexProvider/OpenCodeProvider + factory from_name()
-│   ├── agent.rs                ← invoke_with_retry(provider: &dyn AgentProvider, …), AgentOptions, feedback rico, guardado decisiones
-│   ├── prompts.rs              ← PromptContext, 7 prompts stack-agnósticos, StackConfig::render(), header/suffix
-│   ├── orchestrator.rs         ← run(), run_real(), run_dry(), process_story() con resolución de provider por rol
-│   ├── checkpoint.rs           ← OrchestratorState: save/load/remove (.regista/state.toml)
-│   ├── validator.rs            ← validate(): chequeo pre-vuelo multi-provider (config, skills, historias, dependencias, git)
-│   ├── init.rs                 ← init(): scaffolding multi-provider (pi, claude, codex, opencode)
-│   ├── plan.rs                ← run(): generación de backlog (comando `plan`)
-│   ├── board.rs               ← run(): dashboard Kanban de historias (comando `board`)
-│   ├── hooks.rs                ← run_hook(): comandos post-fase
-│   ├── git.rs                  ← snapshot(), rollback()
-│   ├── daemon.rs               ← detach(), status(), kill(), follow()
-│   └── update.rs                ← check() + run(): auto-update desde crates.io
-├── roadmap/
-│   ├── ROADMAP.md              ← Índice general con estado de cada feature y orden de implementación
-│   ├── 01-paralelismo.md       ← Diseño detallado (Fase 7, último, pendiente)
-│   ├── 02-salida-json-ci-cd.md        ← ✅ IMPLEMENTADO
-│   ├── 03-dry-run.md                  ← ✅ IMPLEMENTADO
-│   ├── 04-workflow-configurable.md    ← Diseño detallado (Fase 5, pendiente)
-│   ├── 05-validate.md                 ← ✅ IMPLEMENTADO
-│   ├── 06-init-scaffold.md            ← ✅ IMPLEMENTADO
-│   ├── 07-checkpoint-resume.md        ← ✅ IMPLEMENTADO
-│   ├── 08-feedback-agentes.md         ← ✅ IMPLEMENTADO
-│   ├── 09-prompts-agnosticos.md       ← ✅ IMPLEMENTADO (Fase 2)
-│   ├── 10-cross-story-context.md      ← ✍️  Diseño definido (Fase 4)
-│   ├── 13-groom-generacion-historias.md ← ✅ IMPLEMENTADO (comando `plan`)
-│   ├── 14-groom-from-dir.md           ← Pendiente (`plan --from-dir`, Fase 3)
-│   ├── 15-groom-interactive.md        ← Pendiente (`plan --interactive`, Fase 6)
-│   ├── 20-multi-provider.md           ← ✅ IMPLEMENTADO
-│   └── 20-implementacion.md           ← Detalle técnico de la implementación
-└── tests/fixtures/
-    ├── story_draft.md
-    ├── story_blocked.md
-    └── story_business_review.md
+│   ├── main.rs                ← entry point: mod app, cli, config, domain, infra
+│   ├── config.rs              ← Config, AgentsConfig + AgentRoleConfig, StackConfig, carga TOML
+│   │
+│   ├── cli/                   ← 🟢 CLI: args + handlers (capa exterior)
+│   │   ├── args.rs            ← Cli, Commands (Plan/Auto/Run/Logs/Status/Kill/Validate/Init/Update/Board)
+│   │   └── handlers.rs        ← dispatch(), handlers, daemon, tracing, exit codes
+│   │
+│   ├── app/                   ← 🟡 Aplicación: casos de uso (importa domain + infra + config)
+│   │   ├── board.rs           ← Dashboard Kanban: conteo por estado, bloqueadas/fallidas, --json, --epic
+│   │   ├── health.rs          ← HealthReport: métricas pipeline (iteraciones/hora, coste, tasa rechazo)
+│   │   ├── init.rs            ← Scaffolding multi-provider con skills inline (YAML frontmatter)
+│   │   ├── pipeline.rs        ← Loop principal (async): run_real(), run_dry(), process_story()
+│   │   ├── plan.rs            ← Generación de backlog + bucle plan→validate
+│   │   ├── update.rs          ← Auto-update desde crates.io
+│   │   └── validate.rs        ← Chequeo pre-vuelo: config, skills, providers (PATH), historias, git
+│   │
+│   ├── domain/                ← 🔴 Dominio: lógica pura (NO importa otras capas)
+│   │   ├── state.rs           ← Status, Actor, Transition (14), SharedState (Arc<RwLock<>>)
+│   │   ├── story.rs           ← Story, parseo .md, set_status() atómico, advance_status_in_memory()
+│   │   ├── graph.rs           ← DependencyGraph, DFS ciclos, blocks_count()
+│   │   ├── deadlock.rs        ← analyze(), DeadlockResolution, priorización
+│   │   ├── prompts.rs         ← PromptContext, DomainStackConfig, 7 prompts stack-agnósticos
+│   │   └── workflow.rs        ← Trait Workflow + CanonicalWorkflow (extensible para #04)
+│   │
+│   └── infra/                 ← 🔵 Infraestructura: I/O, procesos (importa solo config)
+│       ├── providers.rs       ← trait AgentProvider + Pi/ClaudeCode/Codex/OpenCode + factory
+│       ├── agent.rs           ← invoke_with_retry() async, tokio::process::Command, feedback
+│       ├── checkpoint.rs      ← OrchestratorState: save/load/remove (.regista/state.toml)
+│       ├── daemon.rs          ← detach(), status(), kill(), follow(), PidCleanup
+│       ├── git.rs             ← snapshot(), rollback() con spawn_blocking
+│       └── hooks.rs           ← run_hook(): comandos shell con tokio::process::Command
+│
+├── tests/
+│   ├── architecture.rs        ← 11 tests: verifica reglas R1-R5 de dependencias entre capas
+│   └── fixtures/
+│       ├── story_draft.md
+│       ├── story_blocked.md
+│       └── story_business_review.md
+│
+└── roadmap/
+    ├── ROADMAP.md
+    ├── 01-paralelismo.md
+    ├── 04-workflow-configurable.md
+    └── ...
 ```
+
+---
+
+## 🆕 Novedades en v0.9.0 (desde v0.7.2)
+
+### 🏗️ Reestructuración arquitectónica (commit `245065e`)
+
+Migración de estructura plana a **arquitectura en capas**:
+
+| Antes (v0.7.x) | Ahora (v0.9.0) |
+|---|---|
+| `src/state.rs` | `src/domain/state.rs` |
+| `src/story.rs` | `src/domain/story.rs` |
+| `src/dependency_graph.rs` | `src/domain/graph.rs` |
+| `src/deadlock.rs` | `src/domain/deadlock.rs` |
+| `src/prompts.rs` | `src/domain/prompts.rs` |
+| — | `src/domain/workflow.rs` ✨ nuevo |
+| `src/providers.rs` | `src/infra/providers.rs` |
+| `src/agent.rs` | `src/infra/agent.rs` |
+| `src/checkpoint.rs` | `src/infra/checkpoint.rs` |
+| `src/daemon.rs` | `src/infra/daemon.rs` |
+| `src/git.rs` | `src/infra/git.rs` |
+| `src/hooks.rs` | `src/infra/hooks.rs` |
+| `src/orchestrator.rs` | `src/app/pipeline.rs` |
+| `src/plan.rs` | `src/app/plan.rs` |
+| `src/validator.rs` | `src/app/validate.rs` |
+| `src/init.rs` | `src/app/init.rs` |
+| `src/board.rs` | `src/app/board.rs` |
+| `src/update.rs` | `src/app/update.rs` |
+| — | `src/app/health.rs` ✨ nuevo |
+| — | `src/cli/args.rs` ✨ nuevo (extraído de main.rs) |
+| — | `src/cli/handlers.rs` ✨ nuevo (extraído de main.rs) |
+| — | `tests/architecture.rs` ✨ nuevo |
+
+**Reglas verificadas automáticamente** (11 tests):
+- **R1**: `domain/` solo importa std + crates externos
+- **R2**: `infra/` solo importa `config` + otros módulos `infra/`
+- **R3**: `app/` solo importa `domain/` + `infra/` + `config`
+- **R4**: `cli/` puede importar cualquier capa
+- **R5**: `config` no importa nada del crate
+
+### ⚡ Migración a tokio (async/await)
+
+- `agent.rs`: `invoke_with_retry()` → `async fn` con `tokio::time::sleep`
+- `invoke_once()` usa `tokio::process::Command` + `tokio::time::timeout`
+- Timeout real mata el proceso por PID (zero zombies)
+- `save_agent_decision()` usa `tokio::fs`
+- `pipeline.rs`: `run_real()` y `process_story()` → `async fn`
+- Git y hooks usan `spawn_blocking()` para no bloquear el runtime
+- `RUNTIME`: `LazyLock<tokio::runtime::Runtime>` global para callers síncronos
+- `invoke_with_retry_blocking()`: wrapper síncrono para `plan.rs`
+
+### 🧩 Nuevo: `domain/workflow.rs` — Trait `Workflow`
+
+```rust
+pub trait Workflow: Sync {
+    fn next_status(&self, current: Status) -> Status;
+    fn map_status_to_role(&self, status: Status) -> &'static str;
+    fn canonical_column_order(&self) -> &[&'static str];
+}
+```
+
+- `CanonicalWorkflow` implementa las 14 transiciones canónicas
+- `pipeline.rs` usa `&dyn Workflow` en lugar de funciones hardcodeadas
+- `board.rs` usa `workflow.canonical_column_order()` para columnas dinámicas
+- Prepara el terreno para #04 (workflows configurables)
+- 35 tests dedicados
+
+### 🔒 Nuevo: `SharedState` en `domain/state.rs`
+
+- `Arc<RwLock<HashMap<String, u32>>>` para `reject_cycles`, `story_iterations`
+- `Arc<RwLock<HashMap<String, String>>>` para `story_errors`
+- `Clone` comparte el mismo `Arc` — seguro entre tareas
+- `read()` concurrente, `write()` exclusivo
+- Prepara el terreno para #01 (paralelismo con `tokio::spawn`)
+
+### 📊 Nuevo: `app/health.rs` — Health & Metrics
+
+- `HealthReport`: iteraciones/hora, tiempo medio agente, tasa rechazo, throughput, coste
+- `generate_report()`: cálculo puro desde datos crudos
+- `is_health_checkpoint()`: disparo cada N iteraciones (default 10)
+- `write_health_json()`: escritura atómica `.tmp → rename`
+- 19 tests
+
+### 🔧 Mejoras en providers
+
+**OpenCodeProvider**:
+- Usa `opencode run --agent <name> --dangerously-skip-permissions` (API corregida)
+- Soporte `-m <model>` leído del YAML frontmatter del archivo de instrucción
+- `read_yaml_field()` para parsear frontmatter
+- Windows: wrapper con `powershell.exe` + escapado correcto (`"`, `$`, `` ` ``)
+
+**CodexProvider**:
+- `validate_providers()` genera Warning (no Error) si codex no está en PATH
+  (puede instalarse vía npm con nombres no estándar)
+
+### 🧪 Tests de arquitectura (`tests/architecture.rs`)
+
+- 11 tests que verifican dependencias entre capas
+- Extrae imports `use crate::X` y verifica contra reglas R1-R5
+- Omite imports dentro de `#[cfg(test)]` (deps de test son libres)
+- Funciona tanto con estructura plana (legacy) como con directorios (target)
+
+### 🔢 Otras mejoras
+
+- `max_reject_cycles`: 3 → **8** (más tolerante a iteraciones)
+- Skills inline en `init.rs` incluyen YAML frontmatter completo (`name`, `model`, `description`)
+- `validate_providers()`: verifica binarios de todos los providers en PATH
+- `board.rs`: columnas dinámicas según `workflow.canonical_column_order()`, omite vacías
+- `qa_tests()`: prompt incluye reglas estrictas (NO crear módulos, NO implementar, solo tests)
+- `dev_implement()`: prompt incluye manejo de tests rotos (reportar, no corregir)
 
 ---
 
 ## ⚙️ Funcionalidades implementadas
 
 ### Pipeline base
-- Loop principal con máquina de estados (Draft → Ready → Tests Ready → In Review → Business Review → Done)
-- 14 transiciones canónicas (12 por agentes + 3 automáticas)
+- Loop principal async con máquina de estados (Draft → Ready → Tests Ready → In Review → Business Review → Done)
+- 14 transiciones canónicas (11 por agentes + 3 automáticas)
 - Detección de deadlocks con priorización (mayor desbloqueo → menor ID)
 - QA fix automático: si Dev reporta tests rotos, se dispara QA en vez de Dev
+- `SharedState` con `Arc<RwLock<>>` para estado compartido entre tareas
 
 ### Subcomandos
 
 | Comando | Módulo | Función |
 |---------|--------|---------|
-| `regista plan <spec>` | `plan.rs` | Generar historias desde una especificación (daemon) |
-| `regista auto <spec>` | `main.rs` | `plan` + `run` en un solo paso (daemon) |
-| `regista run [dir]` | `orchestrator.rs` | Pipeline sobre historias existentes (daemon) |
-| `regista logs [dir]` | `daemon.rs` | Ver el log del daemon en vivo (`tail -f`) |
-| `regista status [dir]` | `daemon.rs` | Consultar si el daemon está corriendo |
-| `regista kill [dir]` | `daemon.rs` | Detener el daemon |
-| `regista validate [dir]` | `validator.rs` | Chequeo pre-vuelo (config, instrucciones de rol, historias, dependencias, git) |
-| `regista init [dir]` | `init.rs` | Scaffolding multi-provider: .regista/config.toml + instrucciones de rol + estructura dirs |
-| `regista update` | `update.rs` | Comprobar si hay nueva versión en crates.io e instalar (`--yes` para automático) |
-| `regista board [dir]` | `board.rs` | Dashboard Kanban: conteo por estado, historias bloqueadas/fallidas (`--json` para CI) |
+| `regista plan <spec>` | `app/plan.rs` | Generar historias desde una especificación (daemon) |
+| `regista auto <spec>` | `cli/handlers.rs` | `plan` + `run` en un solo paso (daemon) |
+| `regista run [dir]` | `app/pipeline.rs` | Pipeline sobre historias existentes (daemon) |
+| `regista logs [dir]` | `infra/daemon.rs` | Ver el log del daemon en vivo (`tail -f`) |
+| `regista status [dir]` | `infra/daemon.rs` | Consultar si el daemon está corriendo |
+| `regista kill [dir]` | `infra/daemon.rs` | Detener el daemon |
+| `regista validate [dir]` | `app/validate.rs` | Chequeo pre-vuelo (config, skills, providers, historias, git) |
+| `regista init [dir]` | `app/init.rs` | Scaffolding multi-provider: config + instrucciones + dirs |
+| `regista update` | `app/update.rs` | Comprobar e instalar nueva versión desde crates.io |
+| `regista board [dir]` | `app/board.rs` | Dashboard Kanban: conteo por estado, bloqueadas/fallidas |
 
-> **Nota**: Todos los subcomandos de pipeline (`plan`, `auto`, `run`) ejecutan en modo daemon.
-> Usa `--logs` para ver el progreso en vivo, `--dry-run` para simulación sin agentes.
+> **Nota**: `plan`, `auto`, `run` ejecutan en modo daemon. Usa `--logs` para seguir el progreso.
 
 ### Flags comunes (plan / auto / run)
 
 | Flag | Descripción |
 |------|-------------|
 | `--logs` | Hacer `tail -f` del log tras lanzar el daemon |
-| `--dry-run` | Simulación en memoria sin agentes ni coste |
+| `--dry-run` | Simulación síncrona (sin agentes, sin coste) |
 | `--config <path>` | Ruta alternativa al archivo `.regista/config.toml` |
 | `--provider <NAME>` | Seleccionar provider (pi, claude, codex, opencode) |
 | `--quiet` | Suprimir logs de progreso (solo errores) |
@@ -133,100 +250,13 @@
 | `--config <path>` | Ruta alternativa al archivo `.regista/config.toml` |
 | `--provider <NAME>` | Provider de agente |
 
-### JSON / CI-CD (`02`)
-- `RunReport` con `Serialize`, incluye `StoryRecord` por historia
-- Exit codes: 0 = OK, 2 = tiene Failed, 3 = parada temprana (límite)
-- `regista validate --json` para CI (GitHub Actions/GitLab CI)
-- El pipeline daemon escribe el resultado en el log (`--logs` para seguirlo)
+### Flags de board
 
-### Dry-run (`03`)
-- `run_dry()`: simula iteraciones en memoria, sin `pi` ni escritura a disco
-- `Story::advance_status_in_memory()` para mutar sin tocar archivos
-- Muestra desbloqueos, estima tiempo (~5 min/iteración)
-- Compatible con `--json`, `--once`
-
-### Validate (`05`)
-- Valida: config parseable, stories_dir existe, skills existen, historias parseables, dependencias sin referencias rotas ni ciclos, git repo
-- `--json` para CI, exit codes: 0=OK, 1=errores, 2=warnings
-
-### Init (`06`) — multi-provider
-- Genera `.regista/config.toml` con el provider especificado
-- 4 instrucciones de rol en el directorio del provider:
-  - `pi` → `.pi/skills/<rol>/SKILL.md`
-  - `claude` → `.claude/agents/<rol>.md`
-  - `codex` → `.agents/skills/<rol>/SKILL.md`
-  - `opencode` → `.opencode/commands/<rol>.md`
-- `.regista/stories/`, `.regista/epics/`, `.regista/decisions/`, `.regista/logs/`
-- No pisa archivos existentes
-- `--provider` flag (default: pi)
-- `--light`: solo config, sin instrucciones de rol
-- `--with-example`: incluye historia y épica de ejemplo
-- `max_iterations = 0` por defecto (auto-escalado)
-
-### Plan / Groom (`13`)
-- `regista plan <spec.md>`: PO descompone spec en historias y épicas
-- **Bucle de validación**: plan → validate dependencias → si errores → feedback al PO → corregir → repetir (máx `plan_max_iterations`=5)
-- `--max-stories` (0 = sin límite), `--replace`
-- El módulo sigue llamándose `plan.rs` internamente
-
-### Checkpoint / Resume (`07`)
-- `checkpoint.rs`: `OrchestratorState` guardado en `.regista/state.toml` tras cada iteración
-- Auto-crea el directorio `.regista/` si no existe
-- `--resume`: restaura `iteration`, `reject_cycles`, `story_iterations`, `story_errors`
-- Se limpia automáticamente en `PipelineComplete`
-- `--clean-state` para borrado manual
-
-### Feedback rico (`08`)
-- `AgentOptions` con `inject_feedback`, `decisions_dir`, `story_id`
-- Fallos: guarda `.regista/decisions/<STORY>-<actor>-<ts>.md` con stdout/stderr
-- Reintentos: prompt aumentado con «Tu intento anterior falló: [error]. Corrígelo.»
-- `AgentResult` incluye `attempts: Vec<AttemptTrace>`
-- Configurable: `inject_feedback_on_retry` (default true)
-
-### v0.5.2 — Prompts agnósticos al stack (#09)
-- **StackConfig**: struct con `build_command`, `test_command`, `lint_command`, `fmt_command`, `src_dir` (todos opcionales)
-- **`StackConfig::render()`**: genera bloque de comandos para el prompt o instrucción genérica
-- **`PromptContext::header()` / `suffix()`**: helpers para componer prompts sin repetir el esqueleto
-- **7 prompts refactorizados**: `reviewer()`, `dev_implement()` y `dev_fix()` usan `stack.render()`;
-  `qa_tests()` usa `stack.src_dir` para placeholders; PO/QA fix prompts son stack-agnósticos
-- **Retrocompatibilidad total**: sin `[stack]` en TOML → `render()` devuelve instrucción genérica
-- **Preparado para #04**: `header()`/`suffix()` y `StackConfig` son bloques reutilizables por transiciones custom
-- **Config**: nueva sección `[stack]` en `.regista/config.toml`, parseo con serde(default)
-
-### v0.5.0 — CLI refactor, daemon, update, --version
-- **CLI con clap Subcommand**: `plan`, `auto`, `run`, `logs`, `status`, `kill`, `validate`, `init`, `update`
-- **Modo daemon**: `plan`, `auto`, `run` spawnean un proceso hijo; `logs`/`status`/`kill` lo gestionan
-- **`auto`**: combina `plan` + `run` en un solo paso
-- **`update`**: comprueba crates.io e instala con `cargo install` (`--yes` para automático)
-- **`--version` / `-V`**: muestra la versión instalada (nativo de clap)
-- **`--logs`**: hace `tail -f` del log del daemon tras lanzarlo
-
-### v0.2.0 — Migración a `.regista/` y multi-provider
-- **Comando `help`**: `regista help` lista todos los comandos y flags
-- **Migración a `.regista/`**: todos los paths viven bajo `.regista/`:
-  `config.toml`, `stories/`, `epics/`, `decisions/`, `logs/`,
-  `state.toml` (checkpoint), `daemon.pid`, `daemon.log`
-- **Auto-escalado de `max_iterations`**: cuando es 0, calcula `max(10, stories × 6)`
-- **Exit code 3**: parada temprana por límite de iteraciones o wall time
-- **`stop_reason`**: `RunReport` incluye razón de parada (`None` = completado)
-- **README refinado**: quick start, badges, ejemplos JSON, estructura de proyecto
-- Sin retrocompatibilidad con rutas antiguas
-
-#### Multi-provider (#20)
-- **Nuevo módulo `providers.rs`**: trait `AgentProvider` + 4 implementaciones
-- **PiProvider**: `pi -p "..." --skill <path> --no-session`
-- **ClaudeCodeProvider**: `claude -p "..." --append-system-prompt-file <path> --permission-mode bypassPermissions`
-- **CodexProvider**: `codex exec --sandbox workspace-write "..."` (auto-descubre `.agents/skills/`)
-- **OpenCodeProvider**: `opencode -p "..." -q`
-- **Config**: `AgentsConfig.provider` global + `AgentRoleConfig` por rol (provider + skill)
-- **Resolución**: `provider_for_role()` y `skill_for_role()` en `AgentsConfig`
-- **Factory**: `providers::from_name("claude")` con alias (claude-code, open-code, etc.)
-- **Agent**: `invoke_with_retry` recibe `&dyn AgentProvider` en vez de hardcodear `pi`
-- **Orquestador**: `process_story` resuelve provider e instrucciones por rol vía config
-- **Init**: genera instrucciones en directorio del provider (`--provider`)
-- **Validator**: chequea instrucciones de rol multi-provider
-- **CLI**: flag `--provider` para sobreescribir provider global
-- **Breaking changes: NINGUNO** — si no se especifica provider, default `"pi"`
+| Flag | Descripción |
+|------|-------------|
+| `--json` | Salida JSON para CI/CD |
+| `--epic <ID>` | Filtrar por épica |
+| `--config <path>` | Ruta alternativa al archivo `.regista/config.toml` |
 
 ---
 
@@ -235,10 +265,11 @@
 ```bash
 cargo build              # Debug
 cargo build --release    # Release
-cargo test               # 173 tests, 0 fallos, 1 ignorado
-cargo check              # Verificar warnings
-cargo fmt                # Formatear
+cargo test               # 357 tests: 346 lib + 11 architecture
+cargo test --lib domain  # Solo tests de dominio
 cargo clippy -- -D warnings  # 0 issues
+cargo fmt --check        # 0 issues
+cargo test --test architecture  # Solo tests de arquitectura
 ```
 
 ---
@@ -272,11 +303,8 @@ EPIC-XXX
 
 ## 🚧 Pendiente (roadmap)
 
-### Completado recientemente (v0.6.0)
-- **22 - `regista board`**: dashboard Kanban con conteo por estado, lista de bloqueadas/fallidas, `--json`, `--epic`. Diseñado contra strings para resistir #04 (workflows configurables). 9 tests nuevos (6 unitarios + 3 CLI).
-
 ### Media prioridad
-- **10 - Cross-story context**: agentes reciben contexto de historias relacionadas (Fase 4, ✍️ diseño definido)
+- **10 - Cross-story context**: agentes reciben contexto de historias relacionadas (Fase 4)
 - **04 - Workflow configurable**: transiciones definibles en `.regista/config.toml` (Fase 5)
 - **11 - TUI / dashboard**: visualización en vivo del progreso (Fase 6)
 - **12 - Cost tracking**: límite de gasto en llamadas LLM (Fase 6)
@@ -290,39 +318,42 @@ EPIC-XXX
 
 ## 🔑 Decisiones de diseño
 
-1. **Agnóstico al proyecto**: regista no sabe de Rust, cargo, ni nada.
-   Solo invoca el provider configurado con prompts genéricos.
+1. **Arquitectura en capas**: `cli → app → domain/infra → config`.  
+   `tests/architecture.rs` verifica automáticamente.
 
-2. **Workflow fijo**: las 14 transiciones son canónicas e inmutables.
+2. **Agnóstico al proyecto**: regista no sabe de Rust, cargo, ni nada.
 
-3. **Trait `AgentProvider` devuelve `Vec<String>`**: no `Command`, para ser
-   compatible con ejecución síncrona y asíncrona (paralelismo #01).
+3. **Workflow fijo e inmutable**: 14 transiciones canónicas.
 
-4. **Shell `true` en hooks**: `hooks.rs` ejecuta con `sh -c`.
+4. **Trait `AgentProvider` devuelve `Vec<String>`**: compatible sync/async.
 
-5. **Backoff exponencial**: `agent.rs` duplica el delay entre reintentos.
+5. **Async runtime tokio**: `agent.rs` y `pipeline.rs` usan async/await.  
+   Timeout real mata procesos por PID.
 
-6. **`set_status()` con backup atómico**: escribe → re-parsea → si falla, restaura `.bak`.
+6. **`SharedState` con `Arc<RwLock<>>`**: preparado para paralelismo (#01).
 
-7. **CLI con clap Subcommand**: la CLI usa `#[derive(Subcommand)]` de clap 4.
-   Los subcomandos son `plan`, `auto`, `run`, `logs`, `status`, `kill`,
-   `validate`, `init`, `update`. `--version` y `--help` son nativos de clap.
+7. **Trait `Workflow`**: abstrae máquina de estados para workflows configurables (#04).
 
-8. **Dry-run en memoria**: `advance_status_in_memory()` muta `Story.status` y
-   `raw_content` sin tocar el filesystem.
+8. **Shell `true` en hooks**: `hooks.rs` ejecuta con `sh -c`.
 
-9. **Plan con bucle validate**: el PO recibe feedback concreto de errores de
-   dependencias y corrige hasta que el grafo está limpio.
+9. **Backoff exponencial**: `agent.rs` duplica delay entre reintentos.
 
-10. **Checkpoint TOML**: mismo formato que el resto del proyecto, legible y
-    editable manualmente si es necesario.
+10. **`set_status()` con backup atómico**: write → verify → restore .bak si falla.
 
-11. **Feedback truncado a 2000 bytes**: para no desbordar la ventana de contexto
-    del LLM en reintentos.
+11. **CLI con clap Subcommand**: 10 subcomandos, `--version`/`--help` nativos.
 
-12. **`max_iterations = 0` por defecto**: el orquestador escala automáticamente
-    el límite según `nº de historias × 6`, con un mínimo de 10.
+12. **Dry-run en memoria**: `advance_status_in_memory()` sin tocar filesystem.
 
-13. **Provider por defecto `"pi"`**: retrocompatibilidad total. Si no se
-    especifica provider en config ni CLI, se usa pi. Projects existentes
-    siguen funcionando sin cambios.
+13. **Plan con bucle validate**: feedback concreto de errores de dependencias.
+
+14. **Checkpoint TOML**: mismo formato que el proyecto, legible.
+
+15. **Feedback truncado a 2000 bytes**: no desborda ventana de contexto.
+
+16. **`max_iterations = 0`**: auto-escala a `max(10, historias × 6)`.
+
+17. **`max_reject_cycles = 8`**: más tolerante que el anterior 3.
+
+18. **Provider por defecto `"pi"`**: retrocompatibilidad total.
+
+19. **Skills inline con YAML frontmatter**: `name`, `model`, `description`.

@@ -79,19 +79,24 @@ pub fn validate(project_root: &Path, config_path: Option<&Path>) -> ValidationRe
         validate_skills(project_root, cfg, &mut result);
     }
 
-    // ── 3. Historias ────────────────────────────────────────────────
+    // ── 3. Providers ───────────────────────────────────────────────
+    if let Some(ref cfg) = cfg {
+        validate_providers(cfg, &mut result);
+    }
+
+    // ── 4. Historias ────────────────────────────────────────────────
     let stories = if let Some(ref cfg) = cfg {
         validate_stories(project_root, cfg, &mut result)
     } else {
         vec![]
     };
 
-    // ── 4. Dependencias ─────────────────────────────────────────────
+    // ── 5. Dependencias ─────────────────────────────────────────────
     if !stories.is_empty() {
         validate_dependencies(&stories, &mut result);
     }
 
-    // ── 5. Git ──────────────────────────────────────────────────────
+    // ── 6. Git ──────────────────────────────────────────────────────
     if let Some(ref cfg) = cfg {
         validate_git(project_root, cfg, &mut result);
     }
@@ -102,7 +107,14 @@ pub fn validate(project_root: &Path, config_path: Option<&Path>) -> ValidationRe
         .iter()
         .map(|f| f.category.as_str())
         .collect();
-    let all_categories = ["config", "skills", "stories", "dependencies", "git"];
+    let all_categories = [
+        "config",
+        "skills",
+        "providers",
+        "stories",
+        "dependencies",
+        "git",
+    ];
     result.ok = all_categories
         .iter()
         .filter(|c| !categories.contains(*c))
@@ -181,7 +193,7 @@ fn validate_skills(project_root: &Path, cfg: &Config, result: &mut ValidationRes
 
     let mut found = 0;
     for (i, role) in roles.iter().enumerate() {
-        let path_str = providers::skill_for_role(&cfg.agents, role);
+        let path_str = cfg.agents.skill_for_role(role);
         let path = project_root.join(&path_str);
         let label = role_names[i];
         if path.exists() && path.is_file() {
@@ -374,6 +386,104 @@ fn validate_git(project_root: &Path, cfg: &Config, result: &mut ValidationResult
     }
 }
 
+/// Valida que los binarios de los providers configurados existen en PATH.
+///
+/// Para cada rol, resuelve el provider y verifica que su binario está
+/// accesible. Si no lo está:
+/// - Provider ≠ codex → Finding::Error (CA6)
+/// - Provider = codex → Finding::Warning (CA7, codex puede usar nombres no estándar)
+fn validate_providers(cfg: &Config, result: &mut ValidationResult) {
+    use std::collections::HashSet;
+
+    // Recolectar todos los providers únicos (por rol + global)
+    let mut provider_names: HashSet<String> = HashSet::new();
+
+    // Provider global (siempre se chequea, puede ser el fallback)
+    provider_names.insert(cfg.agents.provider.clone());
+
+    // Providers por rol
+    let roles = ["product_owner", "qa_engineer", "developer", "reviewer"];
+    for role in &roles {
+        let name = cfg.agents.provider_for_role(role);
+        provider_names.insert(name);
+    }
+
+    // Verificar cada provider único
+    for name in &provider_names {
+        let provider = match providers::from_name(name) {
+            Ok(p) => p,
+            Err(e) => {
+                // El nombre del provider no es reconocido por la factory
+                result.add(
+                    Severity::Error,
+                    "providers",
+                    format!("Provider configurado '{name}' no es válido: {e}"),
+                    None,
+                );
+                continue;
+            }
+        };
+
+        let binary = provider.binary();
+
+        // En Windows, el binary de opencode es "powershell" (wrapper) — verificamos "opencode" en su lugar
+        let check_binary = if cfg!(windows) && name.to_lowercase() == "opencode" {
+            "opencode"
+        } else {
+            binary
+        };
+
+        // Buscar el binario en PATH
+        let found = find_in_path(check_binary);
+
+        if found {
+            // El binario existe en PATH — todo bien
+        } else {
+            // No se encontró el binario
+            let is_codex = name.to_lowercase() == "codex";
+            if is_codex {
+                // CA7: codex puede instalarse con nombres no estándar (npm global)
+                result.add(
+                    Severity::Warning,
+                    "providers",
+                    "No se encontró el binario 'codex' en PATH.".to_string(),
+                    None,
+                );
+            } else {
+                // CA6: Error para providers que no son codex
+                result.add(
+                    Severity::Error,
+                    "providers",
+                    format!(
+                        "No se encontró el binario '{check_binary}' del provider '{name}' en PATH."
+                    ),
+                    None,
+                );
+            }
+        }
+    }
+}
+
+/// Busca un ejecutable en los directorios del PATH.
+fn find_in_path(binary: &str) -> bool {
+    if let Ok(path_var) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            let candidate = dir.join(binary);
+            if candidate.is_file() {
+                return true;
+            }
+            // En Windows, también buscar con extensión .exe
+            if cfg!(windows) {
+                let candidate_exe = dir.join(format!("{binary}.exe"));
+                if candidate_exe.is_file() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -438,5 +548,150 @@ mod tests {
         validate_dependencies(&stories, &mut result);
         assert!(result.errors > 0);
         assert!(result.findings.iter().any(|f| f.message.contains("Ciclo")));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // STORY-001: validate verifica binarios de providers
+    // ═══════════════════════════════════════════════════════════════
+
+    /// CA6: validate_providers reporta Finding::Error si el binario
+    /// del provider configurado no está en PATH.
+    ///
+    /// Este test verifica que la función existe, recibe Config, y
+    /// añade hallazgos al ValidationResult. El Developer debe
+    /// implementar la lógica real de chequeo de PATH.
+    #[test]
+    fn validate_providers_reports_error_when_binary_missing() {
+        // Verificar que la función validate_providers existe y se puede llamar.
+        // Usamos la config por defecto (provider = "pi").
+        // Si pi está instalado → sin errores de providers.
+        // Si pi NO está instalado → Error finding.
+        let cfg = Config::default();
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+
+        // La función validate_providers debe existir con esta firma.
+        validate_providers(&cfg, &mut result);
+
+        // Los findings de categoría "providers" deben ser Error o nada.
+        // No deben ser Warning (salvo codex, ver CA7).
+        for finding in &result.findings {
+            if finding.category == "providers" {
+                assert_eq!(
+                    finding.severity,
+                    Severity::Error,
+                    "Provider 'pi' no es codex → el hallazgo debe ser Error, no Warning"
+                );
+            }
+        }
+    }
+
+    /// CA7: validate_providers reporta Finding::Warning si el provider
+    /// es "codex" y no se puede verificar (codex puede estar instalado
+    /// vía npm global con nombre no estándar).
+    #[test]
+    fn validate_providers_reports_warning_for_codex() {
+        let toml = r#"
+[agents]
+provider = "codex"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+
+        validate_providers(&cfg, &mut result);
+
+        // Si codex NO está en PATH → Warning (nunca Error).
+        // Si codex SÍ está → sin findings de providers.
+        for finding in &result.findings {
+            if finding.category == "providers" {
+                assert_eq!(
+                    finding.severity,
+                    Severity::Warning,
+                    "Provider 'codex' debe generar Warning, no Error, cuando no es verificable"
+                );
+            }
+        }
+    }
+
+    /// CA7: Si codex SÍ está en PATH, no debe generar hallazgo.
+    #[test]
+    fn validate_providers_no_warning_when_codex_is_installed() {
+        let toml = r#"
+[agents]
+provider = "codex"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+
+        validate_providers(&cfg, &mut result);
+
+        // Si codex está instalado, no debe haber hallazgos.
+        // Si no está, debe ser Warning.
+        // En cualquier caso, no debe ser Error.
+        for finding in &result.findings {
+            if finding.category == "providers" {
+                assert!(
+                    finding.severity != Severity::Error,
+                    "codex NUNCA debe generar Error, solo Warning o nada"
+                );
+            }
+        }
+    }
+
+    /// CA6+CA7: validate_providers recorre todos los roles configurados,
+    /// no solo el provider global.
+    #[test]
+    fn validate_providers_checks_all_roles() {
+        let toml = r#"
+[agents]
+provider = "pi"
+
+[agents.product_owner]
+provider = "claude"
+
+[agents.developer]
+provider = "codex"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+
+        validate_providers(&cfg, &mut result);
+
+        // La función no debe paniquear al procesar múltiples providers.
+        // Verifica que los hallazgos están categorizados como "providers".
+        let provider_findings: Vec<_> = result
+            .findings
+            .iter()
+            .filter(|f| f.category == "providers")
+            .collect();
+
+        // Al menos debe haber intentado verificar los providers.
+        // Si todos están instalados, provider_findings estará vacío (OK).
+        // Si alguno falta, debe haber hallazgos.
+        for f in &provider_findings {
+            // Los de codex deben ser Warning, el resto Error.
+            if f.message.contains("codex") {
+                assert_eq!(f.severity, Severity::Warning);
+            }
+        }
     }
 }

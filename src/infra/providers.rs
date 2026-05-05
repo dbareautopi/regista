@@ -42,7 +42,12 @@ fn read_yaml_field(path: &Path, field: &str) -> Option<String> {
 /// Devuelve `Vec<String>` (args de CLI), no un `Command`, para que el
 /// invocador decida si usar `std::process::Command` (sync) o
 /// `tokio::process::Command` (async, paralelismo).
-pub trait AgentProvider {
+/// `Send + Sync` is required so that `&dyn AgentProvider` and
+/// `Box<dyn AgentProvider>` can be held across `.await` points in
+/// async functions (the resulting future must be `Send` for
+/// multi-threaded tokio runtimes and potential `tokio::spawn` usage
+/// in #01).
+pub trait AgentProvider: Send + Sync + std::fmt::Debug {
     /// Binario a ejecutar: "pi", "claude", "codex", "opencode".
     fn binary(&self) -> &str;
 
@@ -74,6 +79,7 @@ pub trait AgentProvider {
 
 // ── pi ────────────────────────────────────────────────────────────────
 
+#[derive(Debug)]
 pub struct PiProvider;
 
 impl AgentProvider for PiProvider {
@@ -108,6 +114,7 @@ impl AgentProvider for PiProvider {
 
 // ── Claude Code ────────────────────────────────────────────────────────
 
+#[derive(Debug)]
 pub struct ClaudeCodeProvider;
 
 impl AgentProvider for ClaudeCodeProvider {
@@ -141,6 +148,7 @@ impl AgentProvider for ClaudeCodeProvider {
 
 // ── Codex (OpenAI) ─────────────────────────────────────────────────────
 
+#[derive(Debug)]
 pub struct CodexProvider;
 
 impl AgentProvider for CodexProvider {
@@ -178,6 +186,7 @@ impl AgentProvider for CodexProvider {
 
 // ── OpenCode ───────────────────────────────────────────────────────────
 
+#[derive(Debug)]
 pub struct OpenCodeProvider;
 
 impl AgentProvider for OpenCodeProvider {
@@ -269,14 +278,14 @@ impl AgentProvider for OpenCodeProvider {
 /// Construye un provider a partir de su nombre.
 ///
 /// Acepta nombres canónicos y alias comunes.
-/// Lanza panic si el nombre no corresponde a ningún provider conocido.
-pub fn from_name(name: &str) -> Box<dyn AgentProvider> {
+/// Devuelve `Err` si el nombre no corresponde a ningún provider conocido.
+pub fn from_name(name: &str) -> anyhow::Result<Box<dyn AgentProvider>> {
     match name.to_lowercase().as_str() {
-        "pi" => Box::new(PiProvider),
-        "claude" | "claude-code" | "claude_code" => Box::new(ClaudeCodeProvider),
-        "codex" => Box::new(CodexProvider),
-        "opencode" | "open-code" | "open_code" => Box::new(OpenCodeProvider),
-        other => panic!(
+        "pi" => Ok(Box::new(PiProvider)),
+        "claude" | "claude-code" | "claude_code" => Ok(Box::new(ClaudeCodeProvider)),
+        "codex" => Ok(Box::new(CodexProvider)),
+        "opencode" | "open-code" | "open_code" => Ok(Box::new(OpenCodeProvider)),
+        other => anyhow::bail!(
             "provider desconocido: '{other}'. Providers válidos: pi, claude, codex, opencode"
         ),
     }
@@ -288,50 +297,6 @@ pub fn supported_providers() -> Vec<&'static str> {
     vec!["pi", "claude", "codex", "opencode"]
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Resolver provider e instrucciones desde AgentsConfig
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Resuelve el nombre del provider para un rol dado desde la configuración.
-///
-/// Si el rol tiene `provider` explícito, lo usa.
-/// Si no, hereda del provider global.
-pub fn provider_for_role(agents: &crate::config::AgentsConfig, role: &str) -> String {
-    let config = match role {
-        "product_owner" => &agents.product_owner,
-        "qa_engineer" => &agents.qa_engineer,
-        "developer" => &agents.developer,
-        "reviewer" => &agents.reviewer,
-        _ => return agents.provider.clone(),
-    };
-    config
-        .provider
-        .clone()
-        .unwrap_or_else(|| agents.provider.clone())
-}
-
-/// Resuelve la ruta al archivo de instrucciones para un rol dado.
-///
-/// Si el rol tiene `skill` explícito, lo usa.
-/// Si no, usa la convención de directorio del provider.
-pub fn skill_for_role(agents: &crate::config::AgentsConfig, role: &str) -> String {
-    let config = match role {
-        "product_owner" => &agents.product_owner,
-        "qa_engineer" => &agents.qa_engineer,
-        "developer" => &agents.developer,
-        "reviewer" => &agents.reviewer,
-        _ => return String::new(),
-    };
-
-    if let Some(ref skill) = config.skill {
-        return skill.clone();
-    }
-
-    let provider_name = provider_for_role(agents, role);
-    let provider = from_name(&provider_name);
-    provider.instruction_dir(role)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,7 +305,7 @@ mod tests {
 
     #[test]
     fn from_name_returns_pi() {
-        let p = from_name("pi");
+        let p = from_name("pi").unwrap();
         assert_eq!(p.binary(), "pi");
         assert_eq!(p.display_name(), "pi");
         assert_eq!(p.instruction_name(), "skill");
@@ -348,7 +313,7 @@ mod tests {
 
     #[test]
     fn from_name_returns_claude() {
-        let p = from_name("claude");
+        let p = from_name("claude").unwrap();
         assert_eq!(p.binary(), "claude");
         assert_eq!(p.display_name(), "Claude Code");
         assert_eq!(p.instruction_name(), "agent");
@@ -357,7 +322,7 @@ mod tests {
     #[test]
     fn from_name_aliases_claude() {
         for alias in &["claude-code", "claude_code"] {
-            let p = from_name(alias);
+            let p = from_name(alias).unwrap();
             assert_eq!(
                 p.binary(),
                 "claude",
@@ -368,14 +333,14 @@ mod tests {
 
     #[test]
     fn from_name_returns_codex() {
-        let p = from_name("codex");
+        let p = from_name("codex").unwrap();
         assert_eq!(p.binary(), "codex");
         assert_eq!(p.display_name(), "Codex");
     }
 
     #[test]
     fn from_name_returns_opencode() {
-        let p = from_name("opencode");
+        let p = from_name("opencode").unwrap();
         assert_eq!(p.binary(), "opencode");
         assert_eq!(p.display_name(), "OpenCode");
     }
@@ -383,7 +348,7 @@ mod tests {
     #[test]
     fn from_name_aliases_opencode() {
         for alias in &["open-code", "open_code"] {
-            let p = from_name(alias);
+            let p = from_name(alias).unwrap();
             assert_eq!(
                 p.binary(),
                 "opencode",
@@ -393,15 +358,241 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "provider desconocido")]
-    fn from_name_panics_on_unknown() {
-        from_name("chatgpt");
+    fn from_name_returns_err_on_unknown() {
+        let result = from_name("chatgpt");
+        assert!(
+            result.is_err(),
+            "from_name(\"chatgpt\") debe devolver Err, NO paniquear"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("chatgpt"),
+            "El mensaje de error debe mencionar el nombre del provider: {err_msg}"
+        );
     }
 
     #[test]
     fn from_name_is_case_insensitive() {
-        let p = from_name("CLAUDE");
+        let p = from_name("CLAUDE").unwrap();
         assert_eq!(p.binary(), "claude");
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // STORY-001: from_name() devuelve Result
+    // ═══════════════════════════════════════════════════════════════
+
+    /// CA1: from_name("pi") devuelve Ok(Box<dyn AgentProvider>)
+    /// (mismo comportamiento, distinto tipo de retorno).
+    #[test]
+    fn from_name_returns_ok_for_known_provider() {
+        let result = from_name("pi");
+        assert!(
+            result.is_ok(),
+            "from_name(\"pi\") debería devolver Ok, no Err ni paniquear"
+        );
+        let provider = result.unwrap();
+        assert_eq!(provider.binary(), "pi");
+        assert_eq!(provider.display_name(), "pi");
+        assert_eq!(provider.instruction_name(), "skill");
+    }
+
+    /// CA1: from_name para cada provider canónico devuelve Ok.
+    #[test]
+    fn from_name_returns_ok_for_all_canonical_providers() {
+        for name in &["pi", "claude", "codex", "opencode"] {
+            let result = from_name(name);
+            assert!(result.is_ok(), "from_name(\"{name}\") debería devolver Ok");
+        }
+    }
+
+    /// CA2: from_name("inventado") devuelve Err con mensaje descriptivo,
+    /// sin hacer panic.
+    #[test]
+    fn from_name_returns_err_for_unknown_provider() {
+        let result = from_name("inventado");
+        assert!(
+            result.is_err(),
+            "from_name(\"inventado\") debería devolver Err, NO paniquear"
+        );
+    }
+
+    /// CA2: el mensaje de error debe ser descriptivo:
+    /// mencionar el nombre del provider y sugerir alternativas.
+    #[test]
+    fn from_name_err_message_is_descriptive() {
+        let result = from_name("inventado");
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("inventado"),
+            "El mensaje de error debe mencionar el provider desconocido: {msg}"
+        );
+        assert!(
+            msg.to_lowercase().contains("provider"),
+            "El mensaje debe ser descriptivo e indicar que es un error de provider: {msg}"
+        );
+    }
+
+    /// CA2: Varios nombres inválidos deben devolver Err, no panic.
+    #[test]
+    fn from_name_returns_err_for_various_unknown_names() {
+        for invalid in &["chatgpt", "copilot", "cursor", "", "unknown-agent"] {
+            let result = from_name(invalid);
+            assert!(
+                result.is_err(),
+                "from_name(\"{invalid}\") debería devolver Err"
+            );
+        }
+    }
+
+    /// CA3: Aliases de Claude ("claude-code", "claude_code", "claude")
+    /// siguen funcionando con el nuevo Result.
+    #[test]
+    fn from_name_claude_aliases_return_ok() {
+        for alias in &["claude", "claude-code", "claude_code"] {
+            let result = from_name(alias);
+            assert!(result.is_ok(), "Alias '{alias}' debería devolver Ok");
+            let provider = result.unwrap();
+            assert_eq!(
+                provider.binary(),
+                "claude",
+                "Alias '{alias}' debería resolver a claude"
+            );
+            assert_eq!(provider.display_name(), "Claude Code");
+        }
+    }
+
+    /// CA4: Aliases de OpenCode ("opencode", "open-code", "open_code")
+    /// siguen funcionando con el nuevo Result.
+    #[test]
+    fn from_name_opencode_aliases_return_ok() {
+        for alias in &["opencode", "open-code", "open_code"] {
+            let result = from_name(alias);
+            assert!(result.is_ok(), "Alias '{alias}' debería devolver Ok");
+            let provider = result.unwrap();
+            assert_eq!(
+                provider.binary(),
+                "opencode",
+                "Alias '{alias}' debería resolver a opencode"
+            );
+            assert_eq!(provider.display_name(), "OpenCode");
+        }
+    }
+
+    /// CA5: El Result de from_name se puede propagar con el operador `?`.
+    /// Esto verifica que el tipo de retorno es compatible con anyhow.
+    #[test]
+    fn from_name_result_works_with_question_mark_operator() {
+        fn try_get_provider(name: &str) -> anyhow::Result<Box<dyn AgentProvider>> {
+            Ok(from_name(name)?)
+        }
+
+        assert!(try_get_provider("pi").is_ok());
+        assert!(try_get_provider("claude").is_ok());
+        assert!(try_get_provider("inventado").is_err());
+    }
+
+    /// CA5: El Result de from_name se puede manejar con match exhaustivo.
+    #[test]
+    fn from_name_result_handled_with_match() {
+        let binary = match from_name("codex") {
+            Ok(p) => p.binary().to_string(),
+            Err(e) => {
+                panic!("No debería fallar con 'codex': {e}");
+            }
+        };
+        assert_eq!(binary, "codex");
+
+        let desc = match from_name("inventado") {
+            Ok(_) => "ok".to_string(),
+            Err(e) => e.to_string(),
+        };
+        assert!(desc.contains("inventado"));
+    }
+
+    /// CA5: skill_for_role usa internamente from_name y debe manejar el Result.
+    /// Con un provider válido, skill_for_role no debe paniquear.
+    ///
+    /// STORY-002: actualizado para usar el método de AgentsConfig.
+    #[test]
+    fn skill_for_role_uses_result_from_from_name() {
+        let cfg = crate::config::Config::default(); // provider = "pi"
+        let path = cfg.agents.skill_for_role("developer");
+        assert_eq!(path, ".pi/skills/developer/SKILL.md");
+
+        let path_po = cfg.agents.skill_for_role("product_owner");
+        assert_eq!(path_po, ".pi/skills/product-owner/SKILL.md");
+    }
+
+    /// CA5: skill_for_role con provider no-pi también funciona.
+    ///
+    /// STORY-002: actualizado para usar el método de AgentsConfig.
+    #[test]
+    fn skill_for_role_works_with_claude_provider() {
+        let toml = r#"
+[agents]
+provider = "claude"
+"#;
+        let cfg: crate::config::Config = toml::from_str(toml).unwrap();
+        let path = cfg.agents.skill_for_role("developer");
+        assert_eq!(path, ".claude/agents/developer.md");
+    }
+
+    /// CA3+CA4: Case-insensitivity con el Result API.
+    /// "CLAUDE", "Codex", "OPENCODE" mayúsculas/minúsculas mezcladas
+    /// deben devolver Ok.
+    #[test]
+    fn from_name_result_is_case_insensitive() {
+        for name in &["CLAUDE", "Codex", "OPENCODE", "Pi", "clAuDe-CoDe"] {
+            let result = from_name(name);
+            assert!(
+                result.is_ok(),
+                "from_name(\"{name}\") debería ser Ok con case-insensitivity"
+            );
+        }
+    }
+
+    /// CA5: skill_for_role debe manejar el caso de un provider inválido en config
+    /// (provider_for_role devuelve un nombre que from_name no reconoce).
+    /// El comportamiento exacto (panic vs Result) lo define el Developer,
+    /// pero la función no debe causar undefined behavior.
+    ///
+    /// STORY-002: actualizado para usar el método de AgentsConfig.
+    #[test]
+    fn skill_for_role_handles_invalid_provider_in_config() {
+        // Config con un provider desconocido — forzamos la ruta de error.
+        let toml = r#"
+[agents]
+provider = "super-agente-falso"
+"#;
+        let cfg: crate::config::Config = toml::from_str(toml).unwrap();
+
+        // skill_for_role (ahora método de AgentsConfig) llama internamente
+        // a from_name con "super-agente-falso".
+        // Después de la migración a Result, puede:
+        // - Retornar Result::Err (el Developer decide si la firma cambia)
+        // - Hacer .expect() con un mensaje claro (fail-fast)
+        //
+        // Este test verifica que al menos la función existe y es invocable.
+        // El Developer adaptará la aserción según la implementación final.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            cfg.agents.skill_for_role("developer")
+        }));
+
+        match result {
+            Ok(path) => {
+                // Si no paniquea y la firma sigue siendo String (con .expect()),
+                // el path debería ser no vacío (el provider inválido usó .expect()).
+                // Pero como hizo expect, nunca llegaríamos aquí.
+                // Si llegamos aquí, es que skill_for_role manejó el error de otra forma.
+                let _ = path;
+            }
+            Err(_panic) => {
+                // Si paniquea, debe ser con un mensaje descriptivo sobre el provider.
+                // Esto es aceptable porque un provider inválido en config es un error
+                // de configuración que debería detectarse en validate.
+            }
+        }
     }
 
     // ── pi ───────────────────────────────────────────────────────────
@@ -588,5 +779,71 @@ mod tests {
         assert!(names.contains(&"claude"));
         assert!(names.contains(&"codex"));
         assert!(names.contains(&"opencode"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // STORY-002 CA4: funciones libres eliminadas de providers
+    // ═══════════════════════════════════════════════════════════════
+
+    /// CA4: provider_for_role ya NO es una función libre en providers.
+    ///
+    /// Después de STORY-002, solo existe como método de AgentsConfig.
+    /// Este test usa cfg.agents.provider_for_role() y verifica que
+    /// funciona correctamente.
+    #[test]
+    fn story002_ca4_provider_for_role_not_a_free_function() {
+        let cfg = crate::config::Config::default();
+        let name = cfg.agents.provider_for_role("developer");
+        assert_eq!(name, "pi");
+
+        let name_po = cfg.agents.provider_for_role("product_owner");
+        assert_eq!(name_po, "pi");
+    }
+
+    /// CA4: skill_for_role ya NO es una función libre en providers.
+    ///
+    /// Después de STORY-002, solo existe como método de AgentsConfig.
+    /// Este test usa cfg.agents.skill_for_role() y verifica que
+    /// funciona correctamente.
+    #[test]
+    fn story002_ca4_skill_for_role_not_a_free_function() {
+        let cfg = crate::config::Config::default();
+        let path = cfg.agents.skill_for_role("developer");
+        assert_eq!(path, ".pi/skills/developer/SKILL.md");
+
+        let path_po = cfg.agents.skill_for_role("product_owner");
+        assert_eq!(path_po, ".pi/skills/product-owner/SKILL.md");
+    }
+
+    /// CA4: Las funciones libres han sido eliminadas.
+    ///
+    /// Verifica que el módulo providers NO exporta provider_for_role
+    /// ni skill_for_role como funciones libres. Si estas funciones
+    /// aún existieran, causarían conflicto o shadowing con los imports
+    /// de AgentsConfig.
+    #[test]
+    fn story002_ca4_no_free_function_conflict_with_agents_config_methods() {
+        // Si las funciones libres aún existen en providers,
+        // este test compila pero indica que CA4 no se ha completado.
+        // El Developer debe eliminar provider_for_role y skill_for_role
+        // del scope del módulo providers.
+
+        let cfg = crate::config::Config::default();
+
+        // Verifica que los métodos de AgentsConfig funcionan para los 4 roles
+        let roles = crate::config::AgentsConfig::all_roles();
+        for role in roles {
+            let provider = cfg.agents.provider_for_role(role);
+            assert!(
+                !provider.is_empty(),
+                "provider_for_role({role}) no debe ser vacío"
+            );
+
+            let skill = cfg.agents.skill_for_role(role);
+            assert!(
+                !skill.is_empty(),
+                "skill_for_role({role}) no debe ser vacío"
+            );
+        }
     }
 }

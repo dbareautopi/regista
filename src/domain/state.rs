@@ -5,6 +5,8 @@
 //! son válidas desde cada estado.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
 /// Estados del workflow de una historia de usuario.
 ///
@@ -64,6 +66,37 @@ impl Transition {
     #[allow(dead_code)]
     pub const fn new(from: Status, to: Status, actor: Actor) -> Self {
         Self { from, to, actor }
+    }
+}
+
+/// Estado compartido del orquestador protegido por RwLock para acceso concurrente.
+///
+/// Agrupa los contadores que antes se pasaban como `&mut HashMap<...>`
+/// a través de la pila de llamadas. Con `Arc` se puede compartir entre
+/// múltiples tareas de tokio (paralelismo #01).
+#[derive(Debug, Clone, Default)]
+pub struct SharedState {
+    /// Contador de ciclos de rechazo por historia.
+    pub reject_cycles: Arc<RwLock<HashMap<String, u32>>>,
+    /// Contador de iteraciones del agente por historia.
+    pub story_iterations: Arc<RwLock<HashMap<String, u32>>>,
+    /// Último error registrado por historia.
+    pub story_errors: Arc<RwLock<HashMap<String, String>>>,
+}
+
+impl SharedState {
+    /// Construye un SharedState a partir de mapas ya poblados.
+    /// Útil al reanudar desde un checkpoint.
+    pub fn new(
+        reject_cycles: HashMap<String, u32>,
+        story_iterations: HashMap<String, u32>,
+        story_errors: HashMap<String, String>,
+    ) -> Self {
+        Self {
+            reject_cycles: Arc::new(RwLock::new(reject_cycles)),
+            story_iterations: Arc::new(RwLock::new(story_iterations)),
+            story_errors: Arc::new(RwLock::new(story_errors)),
+        }
     }
 }
 
@@ -344,5 +377,149 @@ mod tests {
         assert_eq!(Status::BusinessReview.to_string(), "Business Review");
         assert_eq!(Actor::ProductOwner.to_string(), "PO");
         assert_eq!(Actor::Orchestrator.to_string(), "Orchestrator");
+    }
+
+    // ── STORY-011: SharedState con Arc<RwLock<>> ──
+
+    mod story011 {
+        use super::*;
+        use std::collections::HashMap;
+        use std::sync::{Arc, RwLock};
+
+        // ══════════════════════════════════════════════════════════
+        // CA1: SharedState agrupa los contadores
+        // ══════════════════════════════════════════════════════════
+
+        /// CA1: SharedState existe con los tres campos del tipo correcto.
+        #[test]
+        fn shared_state_has_required_fields() {
+            let state = SharedState::default();
+
+            // Verificar que los campos son accesibles y del tipo correcto
+            let _: &Arc<RwLock<HashMap<String, u32>>> = &state.reject_cycles;
+            let _: &Arc<RwLock<HashMap<String, u32>>> = &state.story_iterations;
+            let _: &Arc<RwLock<HashMap<String, String>>> = &state.story_errors;
+        }
+
+        /// CA1: SharedState::default() tiene HashMaps vacíos.
+        #[test]
+        fn shared_state_default_is_empty() {
+            let state = SharedState::default();
+
+            assert!(state.reject_cycles.read().unwrap().is_empty());
+            assert!(state.story_iterations.read().unwrap().is_empty());
+            assert!(state.story_errors.read().unwrap().is_empty());
+        }
+
+        /// CA1: SharedState es Clone y los clones comparten el mismo Arc.
+        #[test]
+        fn shared_state_clone_shares_data() {
+            let state = SharedState::default();
+            state.reject_cycles.write().unwrap().insert("S1".into(), 5);
+
+            let clone = state.clone();
+            assert_eq!(clone.reject_cycles.read().unwrap().get("S1"), Some(&5));
+
+            // Escribir en el clone también afecta al original (mismo Arc)
+            clone
+                .story_iterations
+                .write()
+                .unwrap()
+                .insert("S1".into(), 10);
+            assert_eq!(state.story_iterations.read().unwrap().get("S1"), Some(&10));
+        }
+
+        // ══════════════════════════════════════════════════════════
+        // CA3: Lecturas con .read().unwrap(), escrituras con .write().unwrap()
+        // ══════════════════════════════════════════════════════════
+
+        /// CA3: read() lock devuelve una guarda que permite leer.
+        #[test]
+        fn read_lock_allows_reading() {
+            let state = SharedState::default();
+            state
+                .reject_cycles
+                .write()
+                .unwrap()
+                .insert("STORY-001".into(), 3);
+
+            let guard = state.reject_cycles.read().unwrap();
+            assert_eq!(guard.get("STORY-001"), Some(&3));
+        }
+
+        /// CA3: write() lock permite insertar y modificar.
+        #[test]
+        fn write_lock_allows_mutation() {
+            let state = SharedState::default();
+
+            {
+                let mut guard = state.reject_cycles.write().unwrap();
+                guard.insert("STORY-001".into(), 1);
+                guard.insert("STORY-002".into(), 2);
+            }
+
+            let guard = state.reject_cycles.read().unwrap();
+            assert_eq!(guard.get("STORY-001"), Some(&1));
+            assert_eq!(guard.get("STORY-002"), Some(&2));
+        }
+
+        /// CA3: El lock se libera al salir del scope (drop).
+        #[test]
+        fn lock_is_released_after_scope() {
+            let state = SharedState::default();
+
+            // Tomar write lock, modificarlo, soltarlo
+            {
+                let mut w = state.reject_cycles.write().unwrap();
+                w.insert("A".into(), 42);
+            }
+            // Lock liberado — podemos tomar read lock
+            {
+                let r = state.reject_cycles.read().unwrap();
+                assert_eq!(r.get("A"), Some(&42));
+            }
+            // Se puede volver a tomar write lock
+            {
+                let mut w = state.reject_cycles.write().unwrap();
+                w.insert("B".into(), 100);
+            }
+            assert_eq!(state.reject_cycles.read().unwrap().len(), 2);
+        }
+
+        /// CA3: Múltiples readers concurrentes (RwLock lo permite).
+        #[test]
+        fn multiple_readers_allowed() {
+            let state = SharedState::default();
+            state.reject_cycles.write().unwrap().insert("X".into(), 99);
+
+            // Dos read locks simultáneos deben ser posibles
+            let r1 = state.reject_cycles.read().unwrap();
+            let r2 = state.reject_cycles.read().unwrap();
+
+            assert_eq!(r1.get("X"), Some(&99));
+            assert_eq!(r2.get("X"), Some(&99));
+
+            drop(r1);
+            drop(r2);
+        }
+
+        /// CA3: Write lock es exclusivo (no se puede leer mientras se escribe
+        /// en el mismo scope).
+        #[test]
+        fn write_lock_is_exclusive() {
+            let state = SharedState::default();
+
+            // Tomar write lock
+            let mut w = state.reject_cycles.write().unwrap();
+            w.insert("Z".into(), 1);
+
+            // try_read falla porque hay un write lock activo
+            assert!(state.reject_cycles.try_read().is_err());
+
+            drop(w);
+
+            // Ahora sí se puede leer
+            assert!(state.reject_cycles.try_read().is_ok());
+        }
     }
 }

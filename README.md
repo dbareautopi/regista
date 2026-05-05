@@ -2,11 +2,6 @@
 
 > AI agent director — orquestación multi-provider del ciclo completo de
 > desarrollo: **PO → QA → Dev → Reviewer → Done.**
->
-> Compatible con [`pi`](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent),
-> [Claude Code](https://github.com/anthropics/claude-code),
-> [Codex CLI](https://github.com/openai/codex), y
-> [OpenCode](https://github.com/anomalyco/opencode).
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -28,7 +23,7 @@ Draft ──PO──→ Ready ──QA──→ Tests Ready ──Dev──→ I
 
 - **100% daemon**: toda ejecución corre en background. Usa `--logs` para ver el progreso.
 - **Spec-first**: escribe una especificación en lenguaje natural, `regista auto` hace el resto.
-- **Multi-provider**: elige entre `pi`, `claude`, `codex` u `opencode` — o mezcla por rol.
+- **Multi-provider**: elige entre [`pi`](https://github.com/mariozechner/pi-coding-agent), [Claude Code](https://github.com/anthropics/claude-code), [Codex CLI](https://github.com/openai/codex), u [OpenCode](https://github.com/anomalyco/opencode) — o mezcla por rol.
 - **Deadlock detection**: si el grafo se estanca, prioriza la historia que más dependencias desbloquea.
 - **Checkpoint/resume**: guarda progreso tras cada iteración. Si algo interrumpe → `--resume`.
 - **Dry-run**: simula el pipeline completo sin gastar créditos de LLM.
@@ -47,131 +42,250 @@ instrucciones de rol (skills, agents, commands).
 
 ---
 
-## Quick start
+## 🚀 Flujo de trabajo habitual
+
+El ciclo completo de regista tiene **4 pasos**:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        Flujo spec-first                                 │
+│                                                                         │
+│  1. regista init                   Estructura inicial del proyecto      │
+│  2. Escribe specs/mi-app.md        Tu especificación de producto        │
+│  3. regista auto specs/mi-app.md   Genera backlog + ejecuta pipeline    │
+│     --logs                         (daemon, ves progreso en vivo)       │
+│  4. regista logs                   Re-conectar al progreso              │
+│                                                                         │
+│  Si alguna historia queda en Failed → revisa .regista/daemon.log,       │
+│  ajusta la spec o las instrucciones de rol, y repite desde el paso 3.   │
+└─────────────────────────────────────────────────────────────────────────┘
+
+    🌍 Lo que tú creas           │   📁 .regista/ (gestionado por regista)
+    ────────────────────────────┼─────────────────────────────────────────
+    specs/mi-app.md             │   stories/STORY-*.md      ← backlog
+    (tu especificación)         │   epics/EPIC-*.md         ← épicas
+                                │   decisions/              ← logs de agentes
+                                │   state.toml              ← checkpoint
+                                │   daemon.log              ← log del daemon
+```
+
+---
+
+## 🎯 Ejemplo completo: de spec a Done
+
+Vamos a construir una **app de notas** desde cero. Solo necesitas 3 comandos.
+
+### Paso 1 — Inicializar el proyecto
 
 ```bash
-# 1. Instalar
-cargo install regista
+mkdir notas-app && cd notas-app
+regista init --provider claude --with-example
+```
 
-# 2. Inicializar regista en tu proyecto
-cd mi-proyecto
-regista init --provider claude
+Esto crea:
+```
+notas-app/
+├── .regista/
+│   ├── config.toml              ← provider = "claude", auto-escalado, hooks
+│   ├── stories/STORY-001.md     ← historia de ejemplo (puedes borrarla)
+│   └── epics/EPIC-001.md        ← épica de ejemplo
+├── .claude/agents/              ← instrucciones de rol para Claude Code
+│   ├── product_owner.md
+│   ├── qa_engineer.md
+│   ├── developer.md
+│   └── reviewer.md
+```
 
-# 3. Escribe tu especificación (specs/mi-app.md) y lánzalo todo
-regista auto specs/mi-app.md --logs
+### Paso 2 — Escribir tu especificación
 
-# 4. Ver progreso en otra terminal
+Crea `specs/notas-app.md`. Este es el **único input** que necesitas:
+
+```markdown
+# Notas App — Especificación de producto
+
+## Descripción general
+Aplicación de notas con organización por etiquetas y búsqueda full-text.
+Interfaz de línea de comandos (CLI).
+
+## Usuarios objetivo
+- Usuarios técnicos que quieren tomar notas rápidas desde la terminal
+
+## Funcionalidades
+
+### 1. CRUD de notas
+- Crear nota con título, contenido, y etiquetas opcionales
+- Listar todas las notas (tabla con id, título, fecha)
+- Ver una nota completa por ID
+- Editar título, contenido o etiquetas de una nota existente
+- Eliminar nota por ID (con confirmación)
+- Las notas se guardan en una base de datos SQLite local
+
+### 2. Etiquetas
+- Asignar una o varias etiquetas a cada nota
+- Filtrar notas por etiqueta
+- Listar todas las etiquetas existentes
+
+### 3. Búsqueda
+- Buscar notas por palabra clave en título y contenido
+- Resultados ordenados por relevancia (match exacto primero)
+- Soporte para búsqueda combinada: etiqueta + keyword
+
+### 4. Exportación
+- Exportar una nota a Markdown (.md)
+- Exportar todas las notas de una etiqueta a un solo archivo
+
+## Requisitos técnicos
+- Lenguaje: Rust
+- CLI: clap 4
+- Base de datos: SQLite (rusqlite)
+- Búsqueda: FTS5 de SQLite
+- Tests unitarios y de integración
+
+## Restricciones
+- No se puede eliminar una nota si es la única que tiene cierta etiqueta
+  (prevenir etiquetas huérfanas)
+- Los títulos no pueden superar 200 caracteres
+```
+
+### Paso 3 — Lanzar regista en modo auto
+
+```bash
+regista auto specs/notas-app.md --logs
+```
+
+**¿Qué pasa ahora?**
+
+1. 🔍 El **Product Owner** lee tu spec y la descompone en ~15-20 historias atómicas
+2. 📦 Las agrupa en épicas (CRUD, Etiquetas, Búsqueda, Exportación)
+3. 🔗 Detecta dependencias (ej: "buscar por etiqueta" depende de "crear notas con etiquetas")
+4. ✅ Valida el grafo de dependencias en bucle hasta que esté limpio
+
+5. 🏭 El **orquestador** arranca el pipeline:
+   - **PO** refina cada Draft → Ready
+   - **QA** escribe tests → Tests Ready
+   - **Dev** implementa → In Review
+   - **Reviewer** revisa → Business Review o rechaza
+   - **PO** valida → Done (o rechaza para otra iteración)
+
+6. 🔁 El daemon sigue hasta que **todas las historias** estén en `Done` o `Failed`
+
+```bash
+# Ver el progreso en vivo:
 regista logs
+
+# El daemon trabaja en background. Puedes cerrar el terminal.
+# Para ver cómo va más tarde:
+regista status
+# → ✅ Daemon corriendo (PID: 12345, log: .regista/daemon.log)
+
+# Cuando termine, revisa el dashboard:
+regista board
+# → 📊 Story Board — regista
+#   Draft         0
+#   Ready         0
+#   Tests Ready   0
+#   Done          17 ✅
+#   Failed        0
 ```
 
-Eso es todo. `regista auto` genera el backlog desde tu spec, ejecuta el
-pipeline completo, y el daemon trabaja en background hasta que todas las
-historias lleguen a `Done`.
+### Paso 4 — Iterar si es necesario
 
----
-
-## Instalación
+Si alguna historia queda en `Failed`, revisa qué falló:
 
 ```bash
-# Desde crates.io
-cargo install regista
-
-# Desde el repositorio
-git clone https://github.com/dbareautopi/regista
-cd regista
-cargo build --release
+cat .regista/daemon.log | grep -i "failed\|rechaz"
+regista board --json | jq '.failed'
 ```
 
-El binario queda en `~/.cargo/bin/regista` (añadido al PATH automáticamente por Rust).
+Ajusta tu spec o las instrucciones de rol (`.claude/agents/developer.md`, etc.),
+y relanza solo el pipeline (sin regenerar historias):
+
+```bash
+regista run --resume --logs
+```
+
+O empieza de cero con una spec mejorada:
+
+```bash
+regista auto specs/notas-app.md --replace --logs
+```
 
 ---
 
-## Comandos
+## 📋 Comandos
 
 ```
 regista <subcomando> [args]
-
-Subcomandos de pipeline (daemon):
-  plan      <spec>   Generar historias desde una especificación
-  auto      <spec>   Generar historias + ejecutar pipeline completo
-  run                Ejecutar pipeline sobre historias existentes
-
-Subcomandos de gestión del daemon:
-  logs      [dir]    Ver el log del daemon en vivo (Ctrl+C no lo detiene)
-  status    [dir]    Consultar si el daemon está corriendo
-  kill      [dir]    Detener el daemon
-
-Subcomandos auxiliares:
-  validate  [dir]    Validar configuración e historias
-  board     [dir]    Dashboard Kanban: conteo por estado, bloqueadas, fallidas
-  init      [dir]    Inicializar estructura del proyecto
 ```
 
-### `regista plan` — generar backlog
+| Comando | Descripción |
+|---------|-------------|
+| `plan <spec>` | Generar historias desde una especificación (daemon) |
+| `auto <spec>` | Generar historias + ejecutar pipeline completo (daemon) |
+| `run [dir]` | Ejecutar pipeline sobre historias existentes (daemon) |
+| `logs [dir]` | Ver el log del daemon en vivo (Ctrl+C no lo detiene) |
+| `status [dir]` | Consultar si el daemon está corriendo |
+| `kill [dir]` | Detener el daemon |
+| `board [dir]` | Dashboard Kanban: conteo por estado, bloqueadas, fallidas |
+| `validate [dir]` | Validar configuración e historias (sin ejecutar agentes) |
+| `init [dir]` | Inicializar estructura del proyecto |
+| `update` | Comprobar e instalar nueva versión desde crates.io |
 
-Lee una especificación y genera historias de usuario + épicas en `.regista/`.
-Ejecuta en modo daemon.
+### `regista auto` — generar y ejecutar (full-auto)
+
+El comando principal. "Fuego y olvida":
+
+```bash
+regista auto specs/mi-app.md              # planificar + ejecutar (daemon)
+regista auto specs/mi-app.md --logs       # igual + ver progreso en vivo
+regista auto specs/mi-app.md --replace    # desde cero (borra historias anteriores)
+regista auto specs/mi-app.md --epic EPIC-001 --once  # una épica, una iteración
+regista auto specs/mi-app.md --dry-run    # simulación síncrona (sin agentes)
+regista auto specs/mi-app.md --provider claude
+```
+
+### `regista plan` — solo generar backlog
+
+Genera las historias y épicas pero **no ejecuta el pipeline**:
 
 ```bash
 regista plan specs/mi-app.md              # merge: añade sin borrar
 regista plan specs/mi-app.md --replace    # destructivo: borra y regenera
 regista plan specs/mi-app.md --max-stories 10
 regista plan specs/mi-app.md --logs       # daemon + tail del log
-regista plan specs/mi-app.md --dry-run    # síncrono, sin daemon
-regista plan specs/mi-app.md --provider claude
 ```
 
-### `regista auto` — generar y ejecutar (full-auto)
+### `regista run` — solo pipeline
 
-Hace `plan` + `run` en un solo paso. El "fuego y olvido".
-
-```bash
-regista auto specs/mi-app.md              # planificar + ejecutar (daemon)
-regista auto specs/mi-app.md --logs       # igual + ver progreso en vivo
-regista auto specs/mi-app.md --replace    # desde cero
-regista auto specs/mi-app.md --epic EPIC-001 --once
-```
-
-### `regista run` — ejecutar pipeline
-
-Ejecuta el pipeline sobre historias ya existentes en `.regista/stories/`.
+Ejecuta el pipeline sobre historias **ya existentes**:
 
 ```bash
 regista run                               # todo el backlog (daemon)
-regista run --logs                        # daemon + tail
-regista run --epic EPIC-001               # filtrar
+regista run --logs                        # daemon + ver progreso
+regista run --epic EPIC-001               # filtrar por épica
 regista run --story STORY-005 --once      # una historia, una iteración
 regista run --dry-run                     # simulación síncrona
 regista run --resume                      # reanudar tras interrupción
 regista run --clean-state                 # borrar checkpoint antes
 ```
 
-### `regista board` — dashboard de historias
-
-Muestra un tablero Kanban con el conteo de historias por estado y lista
-las que están bloqueadas o fallidas con detalle.
+### `regista board` — dashboard
 
 ```bash
-regista board                              # tablero completo del proyecto
+regista board                              # tablero completo
 regista board --json                       # salida JSON para CI/CD
 regista board --epic EPIC-001              # filtrar por épica
 regista board --epic EPIC-001 --json       # JSON filtrado
 
-# Salida esperada:
+# Salida:
 # 📊 Story Board — regista
-# ==========================
-#
 #   Draft                3
 #   Ready                2
 #   Tests Ready          1
-#   In Progress          0
-#   In Review            1
-#   Business Review      0
 #   Done                 5
 #   Blocked              2
 #   Failed               1
-#   ──────────────────────
-#   Total               15
+#   Total               14
 #
 # 🔴 Blocked (2):
 #   STORY-008 — blocked by: STORY-005
@@ -179,15 +293,6 @@ regista board --epic EPIC-001 --json       # JSON filtrado
 #
 # ❌ Failed (1):
 #   STORY-015 — falta cobertura de tests para CA3
-```
-
-### `regista logs` / `status` / `kill` — gestión del daemon
-
-```bash
-regista logs                              # tail del log en vivo
-regista logs /ruta/al/proyecto            # desde fuera del proyecto
-regista status                            # ¿está corriendo?
-regista kill                              # detener (SIGTERM → SIGKILL)
 ```
 
 ### `regista validate` — chequeo pre-vuelo
@@ -208,195 +313,125 @@ regista init --light                      # solo .regista/config.toml
 regista init --with-example               # incluye historia de ejemplo
 ```
 
-### Flags comunes a `plan`, `auto`, `run`
+---
 
-| Flag | Descripción |
-|------|-------------|
-| `--logs` | Tail del log tras spawnear el daemon |
-| `--dry-run` | Simulación síncrona (sin agentes, sin coste) |
-| `--config <PATH>` | Ruta al archivo `.regista/config.toml` |
-| `--provider <NAME>` | Provider a usar (pi, claude, codex, opencode) |
-| `--quiet` | Suprimir logs de progreso |
+## 📦 Instalación
 
-### Flags de pipeline (`auto`, `run`)
+```bash
+# Desde crates.io
+cargo install regista
 
-| Flag | Descripción |
-|------|-------------|
-| `--story <ID>` | Filtrar por historia |
-| `--epic <ID>` | Filtrar por épica |
-| `--epics <RANGO>` | Filtrar por rango (`EPIC-001..EPIC-003`) |
-| `--once` | Una sola iteración |
-| `--resume` | Reanudar desde checkpoint |
-| `--clean-state` | Borrar checkpoint antes de arrancar |
+# Desde el repositorio
+git clone https://github.com/dbareautopi/regista
+cd regista
+cargo build --release
+```
 
-### Flags de planificación (`plan`, `auto`)
-
-| Flag | Descripción |
-|------|-------------|
-| `--replace` | Borrar historias existentes antes de generar |
-| `--max-stories <N>` | Límite de historias (0 = sin límite, default) |
+El binario queda en `~/.cargo/bin/regista`.
 
 ---
 
-## Caso de uso: de spec a Done en un solo comando
+## 🔧 Configuración
 
-### 1. Inicializa el proyecto
+### `.regista/config.toml` de referencia
 
-```bash
-cd mi-app
-regista init --provider claude --with-example
+```toml
+[project]
+stories_dir    = ".regista/stories"
+story_pattern  = "STORY-*.md"
+epics_dir      = ".regista/epics"
+decisions_dir  = ".regista/decisions"
+log_dir        = ".regista/logs"
+
+[agents]
+provider = "pi"                          # provider global
+
+# Opcional: sobreescribir provider y/o skill por rol
+[agents.product_owner]
+# provider = "claude"
+# skill = ".claude/agents/po-custom.md"
+
+[limits]
+max_iterations            = 0   # 0 = auto: nº historias × 6 (mín 10)
+max_retries_per_step      = 5
+max_reject_cycles         = 8
+agent_timeout_seconds     = 1800
+max_wall_time_seconds     = 28800
+retry_delay_base_seconds  = 10
+plan_max_iterations      = 5
+inject_feedback_on_retry  = true
+
+[hooks]
+# post_qa       = "cargo check --tests"
+# post_dev      = "cargo build && cargo test"
+# post_reviewer = "cargo test && cargo clippy -- -D warnings"
+
+[git]
+enabled = true
+
+[stack]
+# Comandos del stack. Opcionales: si no se definen, los agentes
+# usan instrucciones genéricas y su skill interpreta el stack.
+build_command = "npm run build"
+test_command  = "npm test"
+lint_command  = "eslint ."
+fmt_command   = "prettier --check ."
+src_dir       = "src/"
 ```
 
-Esto crea `.regista/config.toml`, las instrucciones de rol para Claude Code,
-y una historia de ejemplo para que veas el formato.
+### Providers soportados
 
-### 2. Escribe tu especificación
+| Provider | Binario | Directorio de instrucciones |
+|----------|---------|----------------------------|
+| `pi` | `pi` | `.pi/skills/<rol>/SKILL.md` |
+| `claude` | `claude` | `.claude/agents/<rol>.md` |
+| `codex` | `codex` | `.agents/skills/<rol>/SKILL.md` |
+| `opencode` | `opencode` | `.opencode/agents/<rol>.md` |
 
-Crea un archivo como `specs/mi-app.md`. Este es el **único input** que necesitas
-proporcionar. Aquí tienes un formato recomendado:
-
-```markdown
-# Mi App — Especificación de producto
-
-## Descripción general
-Plataforma de blogging con soporte multi-idioma y sistema de comentarios.
-
-## Usuarios objetivo
-- Autores: crean y gestionan contenido
-- Lectores: consumen artículos y comentan
-- Moderadores: revisan comentarios
-
-## Funcionalidades
-
-### 1. Gestión de artículos
-- Crear, editar, borrar artículos (borrador/publicado)
-- Soporte para Markdown con vista previa
-- Programar fecha de publicación
-
-### 2. Traducción de contenido
-- Cada artículo puede tener traducciones a 3 idiomas
-- Los autores asignan traductores por idioma
-- Las traducciones tienen su propio flujo de revisión
-
-### 3. Sistema de comentarios
-- Lectores comentan al final de cada artículo
-- Moderación opcional (comentarios quedan en "pendiente")
-- Respuestas anidadas (hilos)
-
-### 4. Dashboard de analytics
-- Vistas por artículo (diarias, semanales, mensuales)
-- Tiempo medio de lectura
-- Gráficos exportables (PNG, CSV)
-
-### 5. Notificaciones por email
-- Aviso de nuevos comentarios al autor
-- Resumen semanal de actividad
-- Notificaciones de traducción completada
-
-## Requisitos técnicos
-- API RESTful
-- Base de datos PostgreSQL
-- Autenticación JWT
-- Tests con ≥ 80% de cobertura
-
-## Restricciones
-- Los artículos publicados no se pueden borrar, solo archivar
-- Un usuario solo puede tener 3 sesiones simultáneas
-- Límite de 5 comentarios por minuto por IP
-```
-
-### 3. Lánzalo todo
+Puedes sobreescribir el provider desde la CLI:
 
 ```bash
-regista auto specs/mi-app.md --logs
-```
-
-**¿Qué pasa?**
-
-1. El Product Owner lee `specs/mi-app.md`
-2. La descompone en ~15-25 historias atómicas con criterios de aceptación
-3. Las agrupa en 5 épicas (una por cada funcionalidad)
-4. Detecta dependencias entre historias (`Bloqueado por: STORY-XXX`)
-5. Valida el grafo de dependencias en bucle hasta que esté limpio
-6. Escribe todo en `.regista/stories/STORY-NNN.md` y `.regista/epics/EPIC-NNN.md`
-7. El orquestador arranca el pipeline:
-   - **PO** refina cada Draft → Ready
-   - **QA** escribe tests → Tests Ready
-   - **Dev** implementa → In Review
-   - **Reviewer** revisa → Business Review o rechaza
-   - **PO** valida → Done (o rechaza para otra iteración)
-8. El daemon sigue hasta que todas las historias están en `Done` o `Failed`
-
-Mientras tanto, `--logs` te muestra el progreso en vivo. Puedes hacer Ctrl+C
-en cualquier momento: el daemon **sigue corriendo**.
-
-```bash
-# Si cierraste el --logs, puedes volver a verlo
-regista logs
-
-# Consultar cómo va
-regista status
-# → ✅ Daemon corriendo (PID: 12345, log: .regista/daemon.log)
-
-# Si quieres pararlo
-regista kill
-```
-
-### 4. Itera si hace falta
-
-Si alguna historia queda en `Failed` (superó `max_reject_cycles`), revisa qué
-falló:
-
-```bash
-cat .regista/daemon.log | grep -i "error\|failed\|rechaz"
-```
-
-Ajusta la spec, y vuelve a lanzar:
-
-```bash
-regista auto specs/mi-app.md --logs
-```
-
-O si solo cambiaste instrucciones de rol pero las historias están bien, lanza
-solo el pipeline:
-
-```bash
-regista run --resume --logs
+regista run --provider claude
+regista auto specs/spec.md --provider codex
 ```
 
 ---
 
-## Flujo de trabajo completo
+## 📁 Estructura del proyecto
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                          Flujo spec-first                            │
-│                                                                      │
-│  1. regista init                   Estructura inicial                │
-│  2. Escribe specs/mi-app.md        Tu especificación de producto     │
-│  3. regista auto specs/mi-app.md   Genera backlog + ejecuta pipeline │
-│     --logs                         (daemon, ves progreso en vivo)    │
-│  4. regista logs                   Re-conectar al progreso           │
-│  5. Itera sobre Failed ajustando   Mejora la spec, repite            │
-│     la spec o las instrucciones                                      │
-└──────────────────────────────────────────────────────────────────────┘
-
-     🌍 Tu input                  │    📁 .regista/ (gestionado por regista)
-     ────────────────────────────┼─────────────────────────────────────────
-     specs/mi-app.md             │    stories/STORY-*.md      ← backlog
-     (especificación)            │    epics/EPIC-*.md         ← épicas
-                                 │    decisions/              ← logs de agentes
-                                 │    state.toml              ← checkpoint
-                                 │    daemon.log              ← log del daemon
-                                 │    daemon.pid              ← PID
+mi-proyecto/
+├── specs/                           ← tus especificaciones (input)
+│   └── mi-app.md
+│
+├── .regista/                        ← gestionado por regista
+│   ├── config.toml                  ← configuración del pipeline
+│   ├── stories/                     ← historias de usuario (*.md)
+│   ├── epics/                       ← épicas
+│   ├── decisions/                   ← decisiones documentadas por agentes
+│   ├── state.toml                   ← checkpoint para --resume
+│   ├── health.json                  ← métricas del pipeline
+│   ├── daemon.pid                   ← PID del proceso daemon
+│   └── daemon.log                   ← log del daemon
+│
+├── .pi/skills/                      ← instrucciones si provider=pi
+│   ├── product-owner/SKILL.md
+│   ├── qa-engineer/SKILL.md
+│   ├── developer/SKILL.md
+│   └── reviewer/SKILL.md
+│
+├── .claude/agents/                  ← instrucciones si provider=claude
+│   ├── product_owner.md
+│   └── ...
+│
+└── src/                             ← tu código
 ```
 
 ---
 
-## Formato de especificación recomendado
+## 📝 Formato de especificación
 
-Tu spec es el **contrato** entre tú y regista. Sé concreto y estructurado.
-Un buen formato incluye:
+Tu spec es el **contrato** entre tú y regista. Sé concreto y estructurado:
 
 ```markdown
 # Título del producto — Especificación
@@ -422,250 +457,37 @@ Un buen formato incluye:
 ```
 
 **Consejos:**
-
 - **Sé concreto**: "Dashboard con gráficos de vistas diarias" > "Analytics".
 - **Describe el qué, no el cómo**: el cómo lo deciden los agentes.
-- **No hace falta descomponer en historias**: el PO lo hace por ti.
 - **Pon restricciones importantes**: "no se puede borrar un artículo publicado"
   evita que el Dev tome decisiones equivocadas.
 
 ---
 
-## Estructura del proyecto
-
-```
-mi-proyecto/
-├── specs/                           ← tus especificaciones (input)
-│   └── mi-app.md
-│
-├── .regista/                        ← gestionado por regista
-│   ├── config.toml                  ← configuración del pipeline
-│   ├── stories/                     ← historias de usuario (*.md)
-│   │   ├── STORY-001.md
-│   │   └── STORY-002.md
-│   ├── epics/                       ← épicas
-│   ├── decisions/                   ← decisiones documentadas por agentes
-│   ├── state.toml                   ← checkpoint para --resume
-│   ├── daemon.pid                   ← PID del proceso daemon
-│   └── daemon.log                   ← log del daemon
-│
-├── .pi/skills/                      ← instrucciones si provider=pi
-│   ├── product-owner/SKILL.md
-│   ├── qa-engineer/SKILL.md
-│   ├── developer/SKILL.md
-│   └── reviewer/SKILL.md
-│
-├── .claude/agents/                  ← instrucciones si provider=claude
-│   ├── product_owner.md
-│   ├── qa_engineer.md
-│   ├── developer.md
-│   └── reviewer.md
-│
-├── .agents/skills/                  ← instrucciones si provider=codex
-│   ├── product-owner/SKILL.md
-│   └── ...
-│
-├── .opencode/agents/                ← instrucciones si provider=opencode
-│   ├── product_owner.md
-│   └── ...
-│
-└── src/                             ← tu código
-```
-
----
-
-## Configuración
-
-### `.regista/config.toml` de referencia
-
-```toml
-[project]
-stories_dir    = ".regista/stories"
-story_pattern  = "STORY-*.md"
-epics_dir      = ".regista/epics"
-decisions_dir  = ".regista/decisions"
-log_dir        = ".regista/logs"
-
-[agents]
-provider = "pi"                          # provider global
-
-# Opcional: sobreescribir provider y/o skill por rol
-[agents.product_owner]
-# provider = "claude"                    # este rol usa otro provider
-# skill = ".claude/agents/po-custom.md"  # instrucciones explícitas
-
-[limits]
-max_iterations            = 0   # 0 = auto: nº historias × 6 (mín 10)
-max_retries_per_step      = 5
-max_reject_cycles         = 3
-agent_timeout_seconds     = 1800
-max_wall_time_seconds     = 28800
-retry_delay_base_seconds  = 10
-plan_max_iterations      = 5
-inject_feedback_on_retry  = true
-
-[hooks]
-# Comandos de verificación post-fase. Si fallan → rollback (con git.enabled)
-post_qa       = "cargo check --tests"
-post_dev      = "cargo build && cargo test && cargo clippy -- -D warnings"
-post_reviewer = "cargo test"
-
-[git]
-enabled = true
-
-[stack]
-# Comandos del stack tecnológico. Opcionales: si no se definen,
-# los agentes usan instrucciones genéricas y su skill interpreta el stack.
-build_command = "npm run build"
-test_command  = "npm test"
-lint_command  = "eslint ."
-fmt_command   = "prettier --check ."
-src_dir       = "src/"
-```
-
-Todos los campos son opcionales. Si no se define `[stack]`, los prompts
-usan instrucciones genéricas ("compila/construye el proyecto") y el skill del
-agente interpreta el stack automáticamente.
-
-### Providers soportados
-
-| Provider | Binario | Directorio de instrucciones |
-|----------|---------|----------------------------|
-| `pi` | `pi` | `.pi/skills/<rol>/SKILL.md` |
-| `claude` | `claude` | `.claude/agents/<rol>.md` |
-| `codex` | `codex` | `.agents/skills/<rol>/SKILL.md` |
-| `opencode` | `opencode` | `.opencode/agents/<rol>.md` |
-
-Puedes sobreescribir el provider desde la CLI:
+## 🧪 Tests
 
 ```bash
-regista run --provider claude
-regista auto specs/spec.md --provider codex
+cargo test    # 357 tests, 0 fallos
+cargo clippy  # 0 warnings
 ```
-
-### `max_iterations = 0` — auto-escalado
-
-Cuando se deja en 0, el orquestador calcula:
-
-```
-máx iteraciones = max(10, historias × 6)
-```
-
-Para 21 historias → 126 iteraciones. Suficiente para todo el backlog.
 
 ---
 
-## Formato de historias
+## 📐 Arquitectura interna
 
-Formato que el PO genera en `.regista/stories/STORY-NNN.md`:
-
-```markdown
-# STORY-001: Título descriptivo
-
-## Status
-**Draft**
-
-## Epic
-EPIC-001
-
-## Descripción
-Como [rol], quiero [acción] para que [beneficio].
-
-## Criterios de aceptación
-- [ ] CA1: criterio específico y verificable
-- [ ] CA2: ...
-
-## Dependencias
-- Bloqueado por: STORY-000
-
-## Activity Log
-- YYYY-MM-DD | PO | Creada en Draft
-```
-
-### Estados
-
-| Estado | Significado |
-|--------|-------------|
-| `Draft` | Sin refinar |
-| `Ready` | Refinada, lista para QA |
-| `Tests Ready` | Tests escritos, lista para Dev |
-| `In Progress` | Dev implementando |
-| `In Review` | Reviewer evaluando |
-| `Business Review` | PO validando |
-| `Done` | Completada ✅ |
-| `Blocked` | Dependencias sin resolver |
-| `Failed` | Ciclos de rechazo agotados |
-
----
-
-## Máquina de estados
-
-### Flujo feliz
-
-```
-Draft ──PO──→ Ready ──QA──→ Tests Ready ──Dev──→ In Review ──Reviewer──→ Business Review ──PO──→ Done
-```
-
-### Rechazos y correcciones
-
-```
-Ready           ──QA──→ Draft              (no testeable)
-Tests Ready     ──QA──→ Tests Ready        (Dev reporta tests rotos)
-In Review       ──Reviewer──→ In Progress  (rechazo técnico)
-Business Review ──PO──→ In Review          (rechazo leve)
-Business Review ──PO──→ In Progress        (rechazo grave)
-```
-
-### Transiciones automáticas
-
-| De | A | Disparador |
-|----|---|------------|
-| Cualquiera | `Blocked` | Dependencias ≠ Done |
-| `Blocked` | `Ready` | Dependencias → Done |
-| Cualquiera | `Failed` | Supera `max_reject_cycles` |
-
-### Deadlock detection
-
-Cuando no hay historias accionables, el orquestador:
-
-1. Identifica historias en Draft → las refina el PO
-2. Prioriza la que desbloquea más dependencias
-3. Si hay ciclos, el PO debe romperlos
-
----
-
-## Arquitectura interna
+Arquitectura en **4 capas** con dependencias unidireccionales:
 
 ```
 src/
-├── main.rs                ← CLI (clap subcommands), handlers, dispatch
-├── config.rs              ← Config, AgentsConfig, carga TOML
-├── state.rs               ← Status, Actor, Transition (14 canónicas)
-├── story.rs               ← Story, parseo .md, set_status() atómico
-├── dependency_graph.rs    ← Grafo, DFS, ciclos
-├── deadlock.rs            ← Detección y priorización de bloqueos
-├── providers.rs           ← trait AgentProvider + 4 implementaciones
-├── agent.rs               ← invoke_with_retry(), backoff, feedback
-├── prompts.rs             ← 7 funciones de prompt por transición
-├── orchestrator.rs        ← Loop principal, dry-run, auto-escalado
-├── checkpoint.rs          ← Save/load/remove state.toml
-├── validator.rs           ← validate: chequeo pre-vuelo multi-provider
-├── init.rs                ← init: scaffolding multi-provider
-├── plan.rs               ← plan: generación de backlog + bucle validate
-├── board.rs              ← board: dashboard Kanban de historias
-├── hooks.rs               ← Ejecución de hooks post-fase
-├── git.rs                 ← Snapshots + rollback
-└── daemon.rs              ← Modo daemon (detach/logs/status/kill)
+├── cli/        ← 🟢 CLI (args + handlers) → importa cualquier capa
+├── app/        ← 🟡 Casos de uso → importa domain + infra + config
+├── domain/     ← 🔴 Lógica pura → NO importa otras capas
+├── infra/      ← 🔵 I/O, procesos → solo importa config
+└── config.rs   ← ⚪ Configuración → no importa nada del crate
 ```
 
----
-
-## Tests
-
-```bash
-cargo test    # 143 tests, 0 fallos
-cargo clippy  # 0 warnings
-```
+Verificada automáticamente por `tests/architecture.rs` (11 tests, reglas R1-R5).
+Para más detalle, consulta [`AGENTS.md`](AGENTS.md).
 
 ---
 

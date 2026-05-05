@@ -7,6 +7,49 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.9.0] — 2026-05-05
+
+### Changed
+- **Migración a tokio (async/await)**: `agent.rs` y `pipeline.rs` migrados a
+  async con `tokio::process::Command` + `tokio::time::timeout`. Timeout real
+  mata procesos por PID (zero zombies). Operaciones de bloqueo (git, hooks)
+  usan `spawn_blocking`. Se añade dependencia `tokio` con features
+  `rt-multi-thread`, `process`, `time`, `fs`.
+- **Trait `Workflow` + `CanonicalWorkflow`**: la lógica de transiciones
+  (`next_status`, `map_status_to_role`, `canonical_column_order`) se abstrae
+  en un trait en `domain/workflow.rs`. `pipeline.rs` y `board.rs` consumen
+  `&dyn Workflow` en lugar de funciones hardcodeadas. Prepara el terreno
+  para workflows configurables (#04).
+- **`SharedState` con `Arc<RwLock<>>`**: los contadores del orquestador
+  (`reject_cycles`, `story_iterations`, `story_errors`) ahora usan
+  `Arc<RwLock<HashMap<>>>` en lugar de `&mut HashMap` pasado por la pila.
+  Clonable y compartible entre tareas — preparado para paralelismo (#01).
+- **`max_reject_cycles` 3→8**: más tolerante a iteraciones de rechazo.
+
+### Added
+- **`app/health.rs` — Health & Metrics**: nuevo módulo con `HealthReport`
+  (iteraciones/hora, tiempo medio agente, tasa rechazo, throughput, coste
+  estimado). Escritura atómica a `.regista/health.json` (tmp → rename).
+  `is_health_checkpoint()` dispara cada N iteraciones. Preparado para
+  TUI (#11) y cost tracking (#12). 19 tests.
+- **`tests/architecture.rs`**: 11 tests que verifican las reglas R1-R5 de
+  dependencias entre capas (domain sin IO, infra sin lógica, etc.).
+  Ejecutable con `cargo test --test architecture`.
+- **Skills inline con YAML frontmatter**: `init.rs` incluye las instrucciones
+  de rol como constantes con frontmatter completo (`name`, `model`,
+  `description`). OpenCode usa `model:` para pasar `-m <model>`.
+
+### Fixed
+- **OpenCode agent name mismatch**: `instruction_dir()` convierte underscores
+  a guiones para coincidir con el `name` del YAML frontmatter.
+- **`--dry-run` ignorado**: los handlers no propagaban `dry_run: true`.
+
+### Docs
+- **AGENTS.md, HANDOFF.md, README.md** actualizados para reflejar la
+  arquitectura en capas, nuevos módulos, y el flujo spec-first.
+
+---
+
 ## [0.8.0] — 2026-05-04
 
 ### Changed
@@ -277,6 +320,7 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 - Dry-run, salida JSON, feedback rico en reintentos
 - Hooks post-fase y snapshots git
 
+[0.9.0]: https://github.com/dbareautopi/regista/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/dbareautopi/regista/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/dbareautopi/regista/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/dbareautopi/regista/compare/v0.7.0...v0.7.1
