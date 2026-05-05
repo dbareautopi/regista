@@ -68,7 +68,7 @@ impl Drop for PidCleanup {
 /// excluyendo el path del binario. Deben incluir `--daemon` y `--log-file`.
 ///
 /// Ejemplo de child_args:
-///   ["run", ".", "--daemon", "--log-file", ".regista/daemon.log", "--epic", "EPIC-001"]
+///   ["run", ".", "--daemon", "--log-file", ".regista/logs/regista-log-20260505-120000.log", "--epic", "EPIC-001"]
 ///
 /// Retorna el PID del hijo.
 pub fn detach(
@@ -92,7 +92,7 @@ pub fn detach(
             }
         }
         None => {
-            let mut log_path = canonical_project.join(".regista/daemon.log");
+            let mut log_path = canonical_project.join(".regista/logs/regista-log.log");
             let mut i = 0;
             while i < child_args.len() {
                 if child_args[i] == "--log-file" && i + 1 < child_args.len() {

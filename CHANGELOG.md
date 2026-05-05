@@ -7,6 +7,19 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.9.1] — 2026-05-05
+
+### Fixed
+- **Logs usan `log_dir` configurable**: los logs del daemon ahora se guardan en
+  `log_dir` (`.regista/logs/` por defecto) con nombres timestamped
+  (`regista-log-YYYYMMDD-HHMMSS.log`), usando la configuración que ya existía
+  en `DESIGN.md` y `config.rs` pero no se aplicaba.
+- **Rotación automática de logs**: se conservan solo los últimos 10 archivos
+  de log, eliminando los más antiguos automáticamente para evitar crecimiento
+  ilimitado del disco.
+- Actualizado el fallback y documentación en `daemon.rs` para reflejar
+  los nuevos paths.
+
 ## [0.9.0] — 2026-05-05
 
 ### Changed
@@ -320,6 +333,7 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 - Dry-run, salida JSON, feedback rico en reintentos
 - Hooks post-fase y snapshots git
 
+[0.9.1]: https://github.com/dbareautopi/regista/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/dbareautopi/regista/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/dbareautopi/regista/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/dbareautopi/regista/compare/v0.7.1...v0.7.2
