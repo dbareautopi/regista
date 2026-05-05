@@ -146,4 +146,59 @@ mod tests {
         assert!(state.story_iterations.is_empty());
         assert!(state.story_errors.is_empty());
     }
+
+    // ── STORY-011: SharedState ──
+
+    /// CA5: OrchestratorState se puede construir clonando datos
+    /// desde locks de SharedState. Verifica que el patrón de clonación
+    /// bajo read() lock produce el resultado esperado y libera los locks.
+    #[test]
+    fn build_from_shared_state_locks() {
+        use std::collections::HashMap;
+        use std::sync::{Arc, RwLock};
+
+        // Simular SharedState con datos
+        let reject_cycles = Arc::new(RwLock::new(HashMap::from([("STORY-001".into(), 2u32)])));
+        let story_iterations =
+            Arc::new(RwLock::new(HashMap::from([("STORY-001".into(), 3u32)])));
+        let story_errors = Arc::new(RwLock::new(HashMap::from([(
+            "STORY-002".into(),
+            "timeout".to_string(),
+        )])));
+
+        // Clonar bajo read() lock (patrón que usa save_checkpoint)
+        let rc = reject_cycles.read().unwrap().clone();
+        let si = story_iterations.read().unwrap().clone();
+        let se = story_errors.read().unwrap().clone();
+
+        let state = OrchestratorState {
+            iteration: 7,
+            reject_cycles: rc,
+            story_iterations: si,
+            story_errors: se,
+        };
+
+        assert_eq!(state.iteration, 7);
+        assert_eq!(state.reject_cycles.get("STORY-001"), Some(&2));
+        assert_eq!(state.story_iterations.get("STORY-001"), Some(&3));
+        assert_eq!(
+            state.story_errors.get("STORY-002"),
+            Some(&"timeout".to_string())
+        );
+
+        // CA5: Los locks deben estar liberados después del clone
+        // (los read guards se droppearon al finalizar las expresiones)
+        assert!(
+            reject_cycles.try_read().is_ok(),
+            "reject_cycles lock debe estar libre tras el clone"
+        );
+        assert!(
+            story_iterations.try_read().is_ok(),
+            "story_iterations lock debe estar libre tras el clone"
+        );
+        assert!(
+            story_errors.try_read().is_ok(),
+            "story_errors lock debe estar libre tras el clone"
+        );
+    }
 }

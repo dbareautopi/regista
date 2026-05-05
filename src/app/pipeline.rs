@@ -1828,4 +1828,340 @@ mod tests {
         //   cargo build
         //   cargo clippy -- -D warnings
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // STORY-011: SharedState con Arc<RwLock<>>
+    // ═══════════════════════════════════════════════════════════════
+
+    mod story011 {
+        use super::*;
+        use crate::domain::state::SharedState;
+
+        // ── CA2: process_story recibe &SharedState ────────────────
+
+        /// CA2: process_story() acepta &SharedState en lugar de &mut HashMap<...>.
+        ///
+        /// Verifica que la firma compila y que la función no falla
+        /// para un estado no procesable (Done) que retorna temprano.
+        #[test]
+        fn process_story_accepts_shared_state() {
+            let tmp = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(tmp.path().join(".regista/decisions")).unwrap();
+
+            let cfg = Config::default();
+            let state = SharedState::default();
+            let story = story_fixture("STORY-001", Status::Done, None);
+            let workflow = CanonicalWorkflow::default();
+            let agent_opts = AgentOptions {
+                story_id: Some("STORY-001".into()),
+                decisions_dir: Some(tmp.path().join(".regista/decisions")),
+                inject_feedback: false,
+            };
+
+            // Done → retorna temprano sin invocar agente
+            let result =
+                process_story(&story, tmp.path(), &cfg, &state, &agent_opts, &workflow);
+            assert!(result.is_ok(), "process_story con Done debe retornar Ok");
+        }
+
+        /// CA2: process_story con un estado Blocked también retorna
+        /// temprano (sin invocar agente), verificando que la ruta
+        /// de early-return funciona con SharedState.
+        #[test]
+        fn process_story_blocked_returns_early() {
+            let tmp = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(tmp.path().join(".regista/decisions")).unwrap();
+
+            let cfg = Config::default();
+            let state = SharedState::default();
+            let story = story_fixture("STORY-002", Status::Blocked, None);
+            let workflow = CanonicalWorkflow::default();
+            let agent_opts = AgentOptions {
+                story_id: Some("STORY-002".into()),
+                decisions_dir: Some(tmp.path().join(".regista/decisions")),
+                inject_feedback: false,
+            };
+
+            let result =
+                process_story(&story, tmp.path(), &cfg, &state, &agent_opts, &workflow);
+            assert!(result.is_ok(), "process_story con Blocked debe retornar Ok");
+        }
+
+        /// CA2: process_story con un estado Failed también retorna
+        /// temprano, cubriendo todos los early-return paths.
+        #[test]
+        fn process_story_failed_returns_early() {
+            let tmp = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(tmp.path().join(".regista/decisions")).unwrap();
+
+            let cfg = Config::default();
+            let state = SharedState::default();
+            let story = story_fixture("STORY-003", Status::Failed, None);
+            let workflow = CanonicalWorkflow::default();
+            let agent_opts = AgentOptions {
+                story_id: Some("STORY-003".into()),
+                decisions_dir: Some(tmp.path().join(".regista/decisions")),
+                inject_feedback: false,
+            };
+
+            let result =
+                process_story(&story, tmp.path(), &cfg, &state, &agent_opts, &workflow);
+            assert!(result.is_ok(), "process_story con Failed debe retornar Ok");
+        }
+
+        // ── CA4: apply_automatic_transitions accede a reject_cycles
+        //        vía SharedState ───────────────────────────────────
+
+        /// CA4: apply_automatic_transitions() lee reject_cycles desde SharedState
+        /// para la transición *→Failed cuando se agota max_reject_cycles.
+        #[test]
+        fn apply_automatic_transitions_reads_reject_cycles_from_shared_state() {
+            let wf = CanonicalWorkflow::default();
+            let cfg = Config::default();
+
+            let state = SharedState::default();
+            // Story con 8 ciclos de rechazo → igual a max_reject_cycles (8)
+            state
+                .reject_cycles
+                .write()
+                .unwrap()
+                .insert("STORY-001".into(), 8);
+
+            let story = story_fixture("STORY-001", Status::InReview, None);
+            let stories = vec![story];
+            let graph = DependencyGraph::from_stories(&stories);
+
+            // simulate=true → no escribe a disco
+            let result =
+                apply_automatic_transitions(stories, &graph, &state, &cfg, true, &wf).unwrap();
+
+            let failed_story = result.iter().find(|s| s.id == "STORY-001").unwrap();
+            assert_eq!(
+                failed_story.status,
+                Status::Failed,
+                "STORY-001 con 8 ciclos de rechazo debe marcarse Failed"
+            );
+        }
+
+        /// CA4: apply_automatic_transitions NO marca Failed si los ciclos
+        /// de rechazo están por debajo del límite.
+        #[test]
+        fn apply_automatic_transitions_does_not_fail_below_threshold() {
+            let wf = CanonicalWorkflow::default();
+            let cfg = Config::default();
+
+            let state = SharedState::default();
+            // 5 ciclos < 8 (max_reject_cycles) → NO debe marcar Failed
+            state
+                .reject_cycles
+                .write()
+                .unwrap()
+                .insert("STORY-001".into(), 5);
+
+            let story = story_fixture("STORY-001", Status::InReview, None);
+            let stories = vec![story];
+            let graph = DependencyGraph::from_stories(&stories);
+
+            let result =
+                apply_automatic_transitions(stories, &graph, &state, &cfg, true, &wf).unwrap();
+
+            let story_after = result.iter().find(|s| s.id == "STORY-001").unwrap();
+            assert!(
+                story_after.status != Status::Failed,
+                "STORY-001 con 5 ciclos NO debe marcarse Failed"
+            );
+            assert_eq!(
+                story_after.status, Status::InReview,
+                "STORY-001 debe permanecer en InReview"
+            );
+        }
+
+        /// CA4: Historia sin entrada en reject_cycles se trata como 0 ciclos.
+        #[test]
+        fn apply_automatic_transitions_handles_missing_reject_cycles_entry() {
+            let wf = CanonicalWorkflow::default();
+            let cfg = Config::default();
+
+            let state = SharedState::default();
+            // No hay entrada para STORY-001 → debe interpretarse como 0 ciclos
+
+            let story = story_fixture("STORY-001", Status::InReview, None);
+            let stories = vec![story];
+            let graph = DependencyGraph::from_stories(&stories);
+
+            let result =
+                apply_automatic_transitions(stories, &graph, &state, &cfg, true, &wf).unwrap();
+
+            let story_after = result.iter().find(|s| s.id == "STORY-001").unwrap();
+            assert!(
+                story_after.status != Status::Failed,
+                "Sin entrada en reject_cycles, la historia NO debe marcarse Failed"
+            );
+        }
+
+        /// CA4: Múltiples historias con distintos niveles de ciclos de rechazo.
+        /// Solo la que alcanza el umbral se marca Failed.
+        #[test]
+        fn apply_automatic_transitions_only_fails_stories_at_threshold() {
+            let wf = CanonicalWorkflow::default();
+            let cfg = Config::default();
+
+            let state = SharedState::default();
+            state
+                .reject_cycles
+                .write()
+                .unwrap()
+                .insert("STORY-001".into(), 8); // → Failed
+            state
+                .reject_cycles
+                .write()
+                .unwrap()
+                .insert("STORY-002".into(), 7); // → OK
+
+            let s1 = story_fixture("STORY-001", Status::InReview, None);
+            let s2 = story_fixture("STORY-002", Status::InReview, None);
+            let stories = vec![s1, s2];
+            let graph = DependencyGraph::from_stories(&stories);
+
+            let result =
+                apply_automatic_transitions(stories, &graph, &state, &cfg, true, &wf).unwrap();
+
+            let s1_after = result.iter().find(|s| s.id == "STORY-001").unwrap();
+            assert_eq!(s1_after.status, Status::Failed);
+
+            let s2_after = result.iter().find(|s| s.id == "STORY-002").unwrap();
+            assert!(
+                s2_after.status != Status::Failed,
+                "STORY-002 con 7 ciclos NO debe marcarse Failed"
+            );
+        }
+
+        // ── CA5: save_checkpoint clona bajo read() lock ──────────
+
+        /// CA5: save_checkpoint() clona el contenido de los locks
+        /// de SharedState para serializar a TOML.
+        #[test]
+        fn save_checkpoint_clones_shared_state_under_read_lock() {
+            let tmp = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(tmp.path().join(".regista")).unwrap();
+
+            let state = SharedState::default();
+            state
+                .reject_cycles
+                .write()
+                .unwrap()
+                .insert("STORY-001".into(), 2);
+            state
+                .story_iterations
+                .write()
+                .unwrap()
+                .insert("STORY-001".into(), 3);
+            state
+                .story_errors
+                .write()
+                .unwrap()
+                .insert("STORY-002".into(), "timeout".into());
+
+            // save_checkpoint con SharedState (post-refactoring)
+            save_checkpoint(tmp.path(), 7, &state);
+
+            // Cargar y verificar
+            let loaded = OrchestratorState::load(tmp.path())
+                .expect("El checkpoint debe existir tras save_checkpoint");
+
+            assert_eq!(loaded.iteration, 7);
+            assert_eq!(loaded.reject_cycles.get("STORY-001"), Some(&2));
+            assert_eq!(loaded.story_iterations.get("STORY-001"), Some(&3));
+            assert_eq!(
+                loaded.story_errors.get("STORY-002"),
+                Some(&"timeout".to_string())
+            );
+        }
+
+        /// CA5: save_checkpoint con SharedState vacío produce
+        /// un checkpoint sin entradas.
+        #[test]
+        fn save_checkpoint_with_empty_state() {
+            let tmp = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(tmp.path().join(".regista")).unwrap();
+
+            let state = SharedState::default();
+
+            save_checkpoint(tmp.path(), 1, &state);
+
+            let loaded = OrchestratorState::load(tmp.path()).unwrap();
+            assert_eq!(loaded.iteration, 1);
+            assert!(loaded.reject_cycles.is_empty());
+            assert!(loaded.story_iterations.is_empty());
+            assert!(loaded.story_errors.is_empty());
+        }
+
+        /// CA5: save_checkpoint no deadlockea si se llama con un
+        /// read lock externo ya adquirido sobre story_iterations
+        /// (RwLock permite múltiples readers).
+        #[test]
+        fn save_checkpoint_works_with_external_read_lock() {
+            let tmp = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(tmp.path().join(".regista")).unwrap();
+
+            let state = SharedState::default();
+            state
+                .reject_cycles
+                .write()
+                .unwrap()
+                .insert("X".into(), 1);
+
+            // Adquirir un read lock externo ANTES de save_checkpoint
+            let external_read = state.story_iterations.read().unwrap();
+            assert!(external_read.is_empty());
+
+            // save_checkpoint DEBE poder adquirir sus propios read locks
+            // sin deadlock (RwLock permite múltiples readers concurrentes)
+            save_checkpoint(tmp.path(), 1, &state);
+
+            drop(external_read);
+
+            let loaded = OrchestratorState::load(tmp.path()).unwrap();
+            assert_eq!(loaded.reject_cycles.get("X"), Some(&1));
+        }
+
+        // ── CA3 integrado: locks en apply_automatic_transitions ──
+
+        /// CA3: apply_automatic_transitions usa locks de corta duración.
+        /// Verifica que después de la función, los locks están liberados
+        /// y se pueden volver a adquirir para lectura o escritura.
+        #[test]
+        fn locks_are_released_after_apply_automatic_transitions() {
+            let wf = CanonicalWorkflow::default();
+            let cfg = Config::default();
+
+            let state = SharedState::default();
+            state
+                .reject_cycles
+                .write()
+                .unwrap()
+                .insert("STORY-001".into(), 3);
+
+            let story = story_fixture("STORY-001", Status::InReview, None);
+            let stories = vec![story];
+            let graph = DependencyGraph::from_stories(&stories);
+
+            // apply_automatic_transitions adquiere y libera locks internamente
+            let _result =
+                apply_automatic_transitions(stories, &graph, &state, &cfg, true, &wf).unwrap();
+
+            // Después: los locks deben estar libres para lectura
+            let guard = state.reject_cycles.read().unwrap();
+            assert_eq!(guard.get("STORY-001"), Some(&3));
+            drop(guard);
+
+            // Y se puede escribir de nuevo sin deadlock
+            state
+                .reject_cycles
+                .write()
+                .unwrap()
+                .insert("STORY-002".into(), 1);
+            assert_eq!(state.reject_cycles.read().unwrap().len(), 2);
+        }
+    }
 }
