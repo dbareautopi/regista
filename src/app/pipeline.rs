@@ -1867,8 +1867,8 @@ mod tests {
         ///
         /// Verifica que la firma compila y que la función no falla
         /// para un estado no procesable (Done) que retorna temprano.
-        #[test]
-        fn process_story_accepts_shared_state() {
+        #[tokio::test]
+        async fn process_story_accepts_shared_state() {
             let tmp = tempfile::tempdir().unwrap();
             std::fs::create_dir_all(tmp.path().join(".regista/decisions")).unwrap();
 
@@ -1883,15 +1883,16 @@ mod tests {
             };
 
             // Done → retorna temprano sin invocar agente
-            let result = process_story(&story, tmp.path(), &cfg, &state, &agent_opts, &workflow);
+            let result =
+                process_story(&story, tmp.path(), &cfg, &state, &agent_opts, &workflow).await;
             assert!(result.is_ok(), "process_story con Done debe retornar Ok");
         }
 
         /// CA2: process_story con un estado Blocked también retorna
         /// temprano (sin invocar agente), verificando que la ruta
         /// de early-return funciona con SharedState.
-        #[test]
-        fn process_story_blocked_returns_early() {
+        #[tokio::test]
+        async fn process_story_blocked_returns_early() {
             let tmp = tempfile::tempdir().unwrap();
             std::fs::create_dir_all(tmp.path().join(".regista/decisions")).unwrap();
 
@@ -1905,14 +1906,15 @@ mod tests {
                 inject_feedback: false,
             };
 
-            let result = process_story(&story, tmp.path(), &cfg, &state, &agent_opts, &workflow);
+            let result =
+                process_story(&story, tmp.path(), &cfg, &state, &agent_opts, &workflow).await;
             assert!(result.is_ok(), "process_story con Blocked debe retornar Ok");
         }
 
         /// CA2: process_story con un estado Failed también retorna
         /// temprano, cubriendo todos los early-return paths.
-        #[test]
-        fn process_story_failed_returns_early() {
+        #[tokio::test]
+        async fn process_story_failed_returns_early() {
             let tmp = tempfile::tempdir().unwrap();
             std::fs::create_dir_all(tmp.path().join(".regista/decisions")).unwrap();
 
@@ -1926,7 +1928,8 @@ mod tests {
                 inject_feedback: false,
             };
 
-            let result = process_story(&story, tmp.path(), &cfg, &state, &agent_opts, &workflow);
+            let result =
+                process_story(&story, tmp.path(), &cfg, &state, &agent_opts, &workflow).await;
             assert!(result.is_ok(), "process_story con Failed debe retornar Ok");
         }
 
@@ -2566,8 +2569,8 @@ mod tests {
         /// - El loop principal itera correctamente (1 iteración)
         /// - PipelineComplete se detecta y detiene el loop
         /// - El reporte refleja correctamente los conteos por estado
-        #[test]
-        fn run_real_with_terminal_stories_completes_in_one_iteration() {
+        #[tokio::test]
+        async fn run_real_with_terminal_stories_completes_in_one_iteration() {
             let tmp = tempfile::tempdir().unwrap();
             let stories_dir = tmp.path().join(".regista/stories");
             std::fs::create_dir_all(&stories_dir).unwrap();
@@ -2590,7 +2593,7 @@ mod tests {
             let cfg = Config::default();
             let options = RunOptions::default();
 
-            let report = run_real(tmp.path(), &cfg, &options, None).unwrap();
+            let report = run_real(tmp.path(), &cfg, &options, None).await.unwrap();
 
             assert_eq!(report.total, 3);
             assert_eq!(report.done, 2);
@@ -2620,8 +2623,8 @@ mod tests {
 
         /// CA2: run_real() con directorio de historias vacío completa
         /// inmediatamente sin incidencias — no hay nada que procesar.
-        #[test]
-        fn run_real_with_no_stories_completes_immediately() {
+        #[tokio::test]
+        async fn run_real_with_no_stories_completes_immediately() {
             let tmp = tempfile::tempdir().unwrap();
             let stories_dir = tmp.path().join(".regista/stories");
             std::fs::create_dir_all(&stories_dir).unwrap();
@@ -2630,7 +2633,7 @@ mod tests {
             let cfg = Config::default();
             let options = RunOptions::default();
 
-            let report = run_real(tmp.path(), &cfg, &options, None).unwrap();
+            let report = run_real(tmp.path(), &cfg, &options, None).await.unwrap();
 
             assert_eq!(report.total, 0);
             assert_eq!(report.done, 0);
@@ -2643,8 +2646,8 @@ mod tests {
         /// verifica que el loop avanza al menos una iteración
         /// y la historia es detectada como stuck (InvokePoFor).
         /// Con git deshabilitado para evitar dependencia de git.
-        #[test]
-        fn run_real_with_draft_story_invokes_po_path() {
+        #[tokio::test]
+        async fn run_real_with_draft_story_invokes_po_path() {
             let tmp = tempfile::tempdir().unwrap();
             let stories_dir = tmp.path().join(".regista/stories");
             std::fs::create_dir_all(&stories_dir).unwrap();
@@ -2675,7 +2678,7 @@ mod tests {
             // run_real intentará invocar al PO vía deadlock (InvokePoFor).
             // Si el agente no está instalado, el error se captura sin
             // propagarse — run_real debe retornar Ok de todas formas.
-            let result = run_real(tmp.path(), &cfg, &options, None);
+            let result = run_real(tmp.path(), &cfg, &options, None).await;
             assert!(
                 result.is_ok(),
                 "run_real debe completar incluso si el agente falla"
@@ -2688,8 +2691,8 @@ mod tests {
         /// CA2: run_real() con SharedState verifica que el loop
         /// actualiza story_iterations y reject_cycles secuencialmente
         /// (no hay escrituras concurrentes).
-        #[test]
-        fn run_real_shared_state_reflects_sequential_processing() {
+        #[tokio::test]
+        async fn run_real_shared_state_reflects_sequential_processing() {
             let tmp = tempfile::tempdir().unwrap();
             let stories_dir = tmp.path().join(".regista/stories");
             std::fs::create_dir_all(&stories_dir).unwrap();
@@ -2709,7 +2712,7 @@ mod tests {
             let cfg = Config::default();
             let options = RunOptions::default();
 
-            let report = run_real(tmp.path(), &cfg, &options, None).unwrap();
+            let report = run_real(tmp.path(), &cfg, &options, None).await.unwrap();
 
             // Con PipelineComplete, el loop sale ANTES de incrementar
             // story_iterations (solo NoDeadlock e InvokePoFor lo hacen).
