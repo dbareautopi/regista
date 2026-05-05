@@ -148,6 +148,33 @@ Modificar `invoke_once()` en `infra/agent.rs` para que, cuando `verbose = true`,
   * Solución requerida (responsabilidad del QA): `let binding = buffer.lock().unwrap(); let log_output = String::from_utf8_lossy(&binding);` en las 3 ubicaciones.
   * NO se avanza a In Review. El orquestador debe pasar el turno al QA.
   * Documentado en .regista/decisions/STORY-022-dev-verification-10-2026-05-05.md.
+- 2026-05-05 | Dev | Undécima verificación de STORY-022. Re-verificación completa del código de producción:
+  * `cargo check` (0.15s): OK, sin errores.
+  * `cargo build` (0.14s): OK, binario generado.
+  * `cargo clippy --no-deps` (0.22s): OK, 0 warnings.
+  * `cargo fmt -- --check`: OK, código formateado.
+  * `cargo test -- story022`: NO compila — mismos 3 errores E0716.
+  * Código de producción cubre todos los CAs implementables (CA1-CA8, CA10-CA11):
+    - `invoke_once()` con parámetro `verbose: bool` + rama `invoke_once_verbose()` (CA2, CA6).
+    - `BufReader::new()` + `read_line()` en bucle async para streaming (CA2).
+    - `tracing::info!("  │ {}", trimmed)` para líneas no vacías (CA3).
+    - stdout acumulado en `Vec<u8>` y devuelto en `Output` (CA4).
+    - stderr en `tokio::spawn` separado con `read_to_end()`, sin streaming (CA5).
+    - `kill_process_by_pid()` para timeout cross-platform en ambos modos (CA7).
+    - `invoke_with_retry()` y `invoke_with_retry_blocking()` con `verbose: bool` (CA1, CA10).
+    - Call sites en `app/plan.rs:152` y `app/pipeline.rs:774` pasan `false` (CA10).
+    - `AgentResult` mantiene `stdout: String`, `stderr: String`, `exit_code: i32` (CA11).
+    - `Cargo.toml` tiene feature `io-util` de tokio (CA2).
+  * Errores E0716 en tests del QA (NO corregidos — responsabilidad del QA):
+    | Test | Línea | Error |
+    |------|-------|-------|
+    | `ca3_verbose_logs_lines_with_pipe_prefix` | 1763 | `String::from_utf8_lossy(&buffer.lock().unwrap())` — `MutexGuard` temporal destruido antes que el `Cow<str>` |
+    | `ca3_empty_lines_not_logged` | 1809 | `String::from_utf8_lossy(&buffer.lock().unwrap())` — mismo error E0716 |
+    | `ca5_stderr_not_streamed_to_log` | 2006 | `String::from_utf8_lossy(&buffer.lock().unwrap())` — mismo error E0716 |
+  * Las 3 líneas usan `MutexGuard` temporal (`buffer.lock().unwrap()`) que se destruye al final del statement, mientras el `Cow<str>` devuelto por `String::from_utf8_lossy` aún lo referencia. Solución exacta: `let binding = buffer.lock().unwrap(); let log_output = String::from_utf8_lossy(&binding);`.
+  * CA9 bloqueado: `cargo test` no puede ejecutarse hasta que el QA corrija los 3 errores de compilación.
+  * NO se avanza a In Review. El orquestador debe pasar el turno al QA.
+  * Documentado en .regista/decisions/STORY-022-dev-verification-11-2026-05-05.md.
 - 2026-05-05 | Dev | Octava verificación de STORY-022. El código de producción sigue completo y correcto:
   * `cargo build` (0.15s): OK, compila sin errores.
   * `cargo clippy --no-deps` (0.23s): OK, 0 warnings.
