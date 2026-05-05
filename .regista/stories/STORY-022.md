@@ -44,3 +44,17 @@ Modificar `invoke_once()` en `infra/agent.rs` para que, cuando `verbose = true`,
   * Línea ~2006: test `ca5_stderr_not_streamed_to_log`
   Las 3 líneas usan `String::from_utf8_lossy(&buffer.lock().unwrap())`, donde el `MutexGuard` temporal se destruye al final del statement pero el `Cow<str>` devuelto por `from_utf8_lossy` aún lo referencia. La solución requiere `let binding = buffer.lock().unwrap(); let log_output = String::from_utf8_lossy(&binding);`. Es responsabilidad del QA. No se avanza a In Review.
   * Documentado en .regista/decisions/STORY-022-dev-recheck-2026-05-05.md.
+- 2026-05-05 | Dev | Tercera verificación de STORY-022: código de producción existente re-verificado. `cargo check` (OK), `cargo build` (OK), `cargo clippy --no-deps` (0 warnings), `cargo fmt -- --check` (OK). Resumen de la implementación:
+  * `Cargo.toml`: feature `io-util` añadido a tokio.
+  * `invoke_once()` (L316): nuevo parámetro `verbose: bool`. `verbose=false` → `wait_with_output()`. `verbose=true` → `invoke_once_verbose()`.
+  * `invoke_once_verbose()` (L358): `child.stdout.take()` + `BufReader::new()` + `read_line()` en bucle async. Cada línea no vacía: `tracing::info!("  │ {}", trimmed)`. stdout acumulado en `Vec<u8>`. stderr en `tokio::spawn` separado con `read_to_end()`, sin streaming.
+  * `kill_process_by_pid()` (L440): helper extraído para timeout cross-platform.
+  * `invoke_with_retry()` (L78): `verbose: bool` como último parámetro, propagado a `invoke_once()`.
+  * `invoke_with_retry_blocking()` (L193): `verbose: bool` propagado a `invoke_with_retry()`.
+  * Call sites: `app/plan.rs:152` y `app/pipeline.rs:774` pasan `false`.
+  * Los mismos 3 errores E0716 persisten en los tests del QA:
+    - L1764: `ca3_verbose_logs_lines_with_pipe_prefix` → `String::from_utf8_lossy(&buffer.lock().unwrap())`
+    - L1809: `ca3_empty_lines_not_logged` → `String::from_utf8_lossy(&buffer.lock().unwrap())`
+    - L2006: `ca5_stderr_not_streamed_to_log` → `String::from_utf8_lossy(&buffer.lock().unwrap())`
+  * No se avanza a In Review. El QA debe corregir los 3 errores E0716.
+  * Documentado en .regista/decisions/STORY-022-dev-verification-3-2026-05-05.md.
