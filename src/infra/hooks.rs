@@ -129,11 +129,11 @@ mod tests {
     /// o el runtime global, la invocación desde async debe ser segura.
     #[tokio::test]
     async fn run_hook_safe_from_async_context() {
-        // run_hook se llama desde un contexto async sin bloquear el
-        // runtime. Si internamente usara std::process::Command::status()
-        // (bloqueante) directamente en el event loop, este test podría
-        // causar problemas en el scheduler de tokio.
-        let handle = tokio::spawn(async { run_hook(Some("true"), "async_hook") });
+        // run_hook es síncrona externamente pero usa RUNTIME.block_on()
+        // internamente. Para invocarla desde un contexto async sin causar
+        // "Cannot start a runtime from within a runtime", se debe ejecutar
+        // dentro de spawn_blocking (hilo separado del worker pool).
+        let handle = tokio::task::spawn_blocking(|| run_hook(Some("true"), "async_hook"));
         let result = handle.await.unwrap();
         assert!(
             result.is_ok(),

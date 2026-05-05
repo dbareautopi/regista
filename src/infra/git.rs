@@ -360,25 +360,25 @@ mod tests {
     }
 
     /// CA5: snapshot concurrentes (múltiples llamadas desde async)
-    /// no causan race conditions ni deadlocks.
+    /// no causan deadlocks. Cada snapshot opera en su propio directorio
+    /// para evitar contienda por el index.lock de git.
     #[tokio::test]
     async fn concurrent_snapshots_dont_deadlock() {
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path();
-
-        assert!(init_test_repo(root), "debe inicializar repo git");
-
-        // Crear archivo inicial
-        std::fs::write(root.join("shared.txt"), "initial").unwrap();
-
-        let root = root.to_path_buf();
-
-        // Disparar 3 snapshots concurrentes (simulando procesamiento paralelo futuro)
         let mut handles = vec![];
+
+        // Cada snapshot concurrente usa su propio repo para evitar
+        // conflictos con el lock de git (index.lock). El objetivo es
+        // verificar que spawn_blocking + snapshot no causa deadlocks.
         for i in 0..3 {
-            let r = root.clone();
-            let handle =
-                tokio::task::spawn_blocking(move || snapshot(&r, &format!("concurrent-{i}")));
+            let handle = tokio::task::spawn_blocking(move || {
+                let tmp = TempDir::new().unwrap();
+                let root = tmp.path().to_path_buf();
+
+                assert!(init_test_repo(&root), "debe inicializar repo git");
+                std::fs::write(root.join("shared.txt"), "initial").unwrap();
+
+                snapshot(&root, &format!("concurrent-{i}"))
+            });
             handles.push(handle);
         }
 
