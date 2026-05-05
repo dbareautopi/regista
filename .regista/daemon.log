@@ -172,3 +172,8 @@
 [2m2026-05-05T01:14:46.528785Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   ✓ agente completado (intento 1)
 [2m2026-05-05T01:14:46.529774Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 36 ══════
 [2m2026-05-05T01:14:46.534020Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 QA (tests) (pi) | STORY-010 (Ready → Tests Ready)
+[2m2026-05-05T01:14:46.586316Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   [1/5] invocando pi (./.pi/skills/qa-engineer/SKILL.md)
+[2m2026-05-05T01:20:42.132734Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   ✓ agente completado (intento 1)
+[2m2026-05-05T01:20:42.134148Z[0m [33m WARN[0m [2mregista::app::pipeline[0m[2m:[0m   ⚠ STORY-010: el agente no cambió el estado (sigue en Ready)
+[2m2026-05-05T01:20:42.134902Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 37 ══════
+[2m2026-05-05T01:20:42.138305Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 QA (tests) (pi) | STORY-010 (Ready → Tests Ready)
