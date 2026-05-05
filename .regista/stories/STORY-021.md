@@ -1,7 +1,7 @@
 # STORY-021: Implementar `parse_token_count()` con patrones multi-provider
 
 ## Status
-**Business Review**
+**Done**
 
 ## Epic
 EPIC-07
@@ -33,3 +33,4 @@ Implementar la función `pub fn parse_token_count(text: &str) -> Option<TokenCou
 - 2026-05-05 | Dev | Implementado parse_token_count() con 6 LazyLock<Regex> (pi estándar, pi alt, Claude estándar, Claude alt, Codex, OpenCode). Captura con [\d,]+ y strip de comas para CA8. 42/42 tests story021 pasan. 463/463 tests totales pasan (0 fallos). Build release OK. Nota: test de arquitectura falla por violación R2 pre-existente (STORY-020: use crate::domain::state::TokenCount en infra/agent.rs).
 - 2026-05-05 | QA | Verificados 47 tests unitarios existentes en infra::agent::story021 — cubren los 12 CAs (6 patrones multi-provider, comas, None, LazyLock, casos límite). Sin adiciones necesarias.
 - 2026-05-05 | PO | Historia generada desde specs/spec-logs-transparentes.md (sección 6: Tracking de tokens — Parseo).
+- 2026-05-05 | PO | VALIDACIÓN DE NEGOCIO → Done. Función parse_token_count() implementada correctamente con 6 patrones multi-provider (pi estándar/alt, Claude estándar/alt, Codex, OpenCode), 6 LazyLock<Regex> estáticos, manejo de comas, retorno None seguro. 42 tests story021 cubren los 12 CAs. Build limpio, 0 fallos, architecture 11/11, clippy 0 warnings, fmt OK. TokenCount definido localmente en infra/agent.rs respetando R2/R4. Valor de negocio entregado: tracking transparente de tokens para todos los providers soportados. Ver decisión en .regista/decisions/STORY-021-po-validate-done-2026-05-05.md.
