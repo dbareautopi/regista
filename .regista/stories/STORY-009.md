@@ -1,7 +1,7 @@
 # STORY-009: Adaptar `board.rs` para columnas dinámicas según workflow
 
 ## Status
-**Business Review**
+**Done**
 
 ## Epic
 EPIC-03
@@ -25,3 +25,4 @@ Actualmente `board.rs` tiene un array hardcodeado `canonical_order` con los 9 es
 - 2026-05-05 | QA | Tests unitarios verificados: 8 tests (CA1-CA6) en src/app/board.rs cubren todos los CAs. Tests existentes en el archivo — no fue necesario añadir nuevos. La función `render_board` ya acepta `&dyn Workflow` (firma correcta, cuerpo es placeholder `todo!()`). Tests usan `CanonicalWorkflow` + workflows sintéticos (FiveColumnWorkflow, SparseWorkflow) para CA2, CA3, CA4, CA6. El Developer debe implementar el cuerpo de `render_board` para que los tests pasen de `todo!()` panic a green.
 - 2026-05-05 | Dev | Implementado `render_board()` con columnas dinámicas desde `workflow.canonical_column_order()`. Eliminado array hardcodeado `canonical_order` de `print_human()`, que ahora delega en `render_board()`. Columnas con count=0 se omiten en la salida. `run()` pasa `&CanonicalWorkflow` a `print_human()`. Todos los 16 tests de `board` pasan (incluyendo 8 nuevos de STORY-009: dyn workflow, orden workflow, omisión vacías, output canónico, workflow 5-columnas, sparse). `cargo fmt` y `cargo clippy` limpios. Test suite completa: 223/223 pasando.
 - 2026-05-05 | Reviewer | ✅ DoD técnico verificado: compilación limpia, 223/223 tests pasando (13 board), clippy 0 warnings, fmt OK, sin regresiones. CA1-CA6 todos cubiertos por tests. Se promueve a Business Review.
+- 2026-05-05 | PO | ✅ Validación de negocio superada. Verificación exhaustiva de los 6 CA: (1) `print_human` acepta `&dyn Workflow` como trait object, (2) columnas se obtienen de `workflow.canonical_column_order()`, (3) columnas count=0 se omiten en la salida, (4) salida con `CanonicalWorkflow` visualmente idéntica a la versión anterior, (5) 16/16 tests board pasando, 223/223 total, clippy y fmt limpios, (6) workflow sintético de 5 columnas muestra exactamente esas columnas. El array hardcodeado `canonical_order` fue eliminado — `board.rs` ahora es completamente dinámico y está listo para workflows configurables (#04). Se promueve a Done.
