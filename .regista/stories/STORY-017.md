@@ -1,7 +1,7 @@
 # STORY-017: Módulo `health.rs` con endpoint de métricas del pipeline
 
 ## Status
-**In Review**
+**Business Review**
 
 ## Epic
 EPIC-06
@@ -34,3 +34,4 @@ No existe forma de monitorizar el pipeline en ejecución. Para las features pend
 ## Activity Log
 - 2026-05-05 | Dev | Implementación completada. Añadido `Deserialize` al derive de `HealthReport` (requerido por los tests de roundtrip del QA). Añadido `#![allow(dead_code)]` a nivel de módulo (las funciones son públicas pero aún no están cableadas al pipeline). `generate_report` con `#[allow(clippy::too_many_arguments)]` (10 params, refactorizar rompería API de tests). `is_multiple_of()` en lugar de `%` (Rust 1.95+). Verificación: `cargo build` limpio (0 warnings), `cargo clippy -- -D warnings` limpio, `cargo test` 270 passed / 0 failed / 1 ignored, `cargo test health` 27/27 tests pasan. Decisiones documentadas en `.regista/decisions/STORY-017-developer-20260505T011500.md`.
 - 2026-05-05 | QA | Tests escritos para todos los CAs (27 tests). Cobertura: CA1 (HealthReport struct y tipos, 4 tests), CA2 (generate_report con edge cases, 8 tests), CA3 (Serialize + is_health_checkpoint intervalos, 8 tests), CA4 (escritura atómica, 5 tests), CA5 (reporte final PipelineComplete, 3 tests). Módulo registrado en src/app/mod.rs. Compilación verificada con cargo check (solo warnings dead_code).
+- 2026-05-05 | Reviewer | DoD técnico OK. `cargo build` limpio (0 warnings). `cargo test` 270 passed / 0 failed / 1 ignored. `cargo clippy -- -D warnings` limpio. `cargo fmt -- --check` limpio. Tests del módulo health: 27/27 pasan. Los 7 CAs están cubiertos y verificados. Sin regresiones. Transición a Business Review.
