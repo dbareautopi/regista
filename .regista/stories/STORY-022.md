@@ -58,3 +58,16 @@ Modificar `invoke_once()` en `infra/agent.rs` para que, cuando `verbose = true`,
     - L2006: `ca5_stderr_not_streamed_to_log` → `String::from_utf8_lossy(&buffer.lock().unwrap())`
   * No se avanza a In Review. El QA debe corregir los 3 errores E0716.
   * Documentado en .regista/decisions/STORY-022-dev-verification-3-2026-05-05.md.
+- 2026-05-05 | Dev | Cuarta verificación de STORY-022: el código de producción sigue compilando correctamente. Verificación completa:
+  * `cargo check`: OK (sin errores)
+  * `cargo build`: OK (sin errores)
+  * `cargo clippy --no-deps`: OK (0 warnings)
+  * `cargo fmt -- --check`: OK (formateado correctamente)
+  * La implementación de producción cubre CA1-CA8, CA10-CA11.
+  * Los mismos 3 errores E0716 persisten en los tests del QA (`mod story022`):
+    - L1763: test `ca3_verbose_logs_lines_with_pipe_prefix` → `String::from_utf8_lossy(&buffer.lock().unwrap())` — el `MutexGuard` temporal se destruye mientras el `Cow<str>` lo referencia.
+    - L1809: test `ca3_empty_lines_not_logged` → `String::from_utf8_lossy(&buffer.lock().unwrap())` — mismo problema.
+    - L2006: test `ca5_stderr_not_streamed_to_log` → `String::from_utf8_lossy(&buffer.lock().unwrap())` — mismo problema.
+  * Solución requerida (responsabilidad del QA): `let binding = buffer.lock().unwrap(); let log_output = String::from_utf8_lossy(&binding);`
+  * No se avanza a In Review. El QA debe corregir los 3 errores E0716.
+  * Documentado en .regista/decisions/STORY-022-dev-verification-4-2026-05-05.md.
