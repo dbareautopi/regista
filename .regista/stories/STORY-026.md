@@ -1,7 +1,7 @@
 # STORY-026: Header de sesión con metadatos (versión, modelos, límites, git, hooks)
 
 ## Status
-**Tests Ready**
+**In Review**
 
 ## Epic
 EPIC-09
@@ -39,3 +39,4 @@ Emitir un header de sesión al iniciar el daemon. En modo detallado (default), s
 - 2026-05-05 | QA | Tests unitarios verificados: 31 tests en src/cli/handlers.rs (mod story026) cubren los 7 CAs. Formato de bloque y compacto, modelos vía model_for_role() con YAML fallback, límites con max_iter efectivo y floor, git habilitado/deshabilitado, hooks parciales/totales/ninguno, emisión vía tracing::info!. Sin tests adicionales requeridos.
 - 2026-05-05 | Dev | Implementación de format_session_header() completada. 30/31 tests pasan. El test header_uses_model_for_role_resolution falla por una contradicción con models_show_desconocido_by_default: ambos pasan project_root=/tmp pero uno espera modelos del CWD (opencode/minimax-m2.5-free) y el otro espera "desconocido" (sin skills en /tmp). La implementación resuelve skills contra project_root (patrón correcto, verificado por header_reflects_yaml_frontmatter_model). No se avanza a In Review — el QA debe resolver la inconsistencia en los tests.
 - 2026-05-05 | QA | Corregido header_uses_model_for_role_resolution. El test usaba Path::new(&skill_path) (relativo, resolvía contra CWD) en lugar de project_root.join(&skill_rel) (absoluto, como hace format_session_header). Reescrito para crear skills en tempdir con modelos YAML conocidos y verificar que el header y model_for_role producen el mismo resultado usando paths absolutos. 31/31 tests pasan. Build, clippy y fmt limpios.
+- 2026-05-05 | Dev | Verificación de implementación de format_session_header() y emit_session_header(): 31/31 tests pasan, build limpio, clippy sin warnings, fmt ok. La implementación estaba completada en iteración anterior — esta iteración solo verifica consistencia tras la corrección del QA. Función format_session_header() en src/cli/handlers.rs:846 genera header detallado (bloque multilínea con versión, timestamp UTC, proyecto, provider, modelos por rol vía model_for_role(), límites con max_iter efectivo, git habilitado/deshabilitado, hooks activos/ninguno) y compacto (una línea). Helpers: effective_max_iter() (auto-escala a max(10, stories×6)) y role_abbreviation() (PO, QA, Dev, Reviewer). Emisión vía emit_session_header() usando tracing::info!. Transición Tests Ready → In Review.
