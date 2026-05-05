@@ -85,4 +85,28 @@ Modificar `invoke_once()` en `infra/agent.rs` para que, cuando `verbose = true`,
   * Solución exacta (responsabilidad QA): `let binding = buffer.lock().unwrap(); let log_output = String::from_utf8_lossy(&binding);` en las 3 ubicaciones.
   * NO se avanza a In Review. El QA debe corregir los 3 errores E0716.
   * Documentado en .regista/decisions/STORY-022-dev-verification-6-2026-05-05.md.
+- 2026-05-05 | Dev | Séptima verificación de STORY-022. Re-verificación completa:
+  * `cargo check`: OK (sin errores) — todo el crate compila.
+  * `cargo build`: OK (sin errores) — binario generado correctamente.
+  * `cargo clippy --no-deps`: OK (0 warnings) — sin problemas de linting.
+  * `cargo fmt -- --check`: OK (código formateado correctamente).
+  * `cargo test -- story022`: NO compila — los mismos 3 errores E0716 persisten.
+  * El código de producción está completo y cubre CA1-CA8, CA10-CA11:
+    - `invoke_once()` con `verbose: bool` + rama `invoke_once_verbose()` para streaming (CA2, CA6).
+    - `BufReader::new()` + `read_line()` en bucle async (CA2).
+    - `tracing::info!("  │ {}", trimmed)` para líneas no vacías (CA3).
+    - stdout acumulado en `Vec<u8>` y devuelto en `Output` (CA4).
+    - stderr en `tokio::spawn` separado con `read_to_end()`, sin streaming (CA5).
+    - `kill_process_by_pid()` extraído para timeout cross-platform (CA7).
+    - `invoke_with_retry()` y `invoke_with_retry_blocking()` con `verbose: bool` (CA1, CA10).
+    - Call sites en `app/plan.rs:152` y `app/pipeline.rs:774` pasan `false` (CA10).
+    - `AgentResult` mantiene `stdout: String`, `stderr: String`, `exit_code: i32` (CA11).
+  * Errores en tests del QA (responsabilidad del QA, NO corregidos por el Dev):
+    - `ca3_verbose_logs_lines_with_pipe_prefix` (L1763): E0716 — `String::from_utf8_lossy(&buffer.lock().unwrap())`
+    - `ca3_empty_lines_not_logged` (L1809): E0716 — `String::from_utf8_lossy(&buffer.lock().unwrap())`
+    - `ca5_stderr_not_streamed_to_log` (L2006): E0716 — `String::from_utf8_lossy(&buffer.lock().unwrap())`
+    - Las 3 líneas usan `MutexGuard` temporal que se destruye antes que el `Cow<str>`.
+    - Solución requerida: `let binding = buffer.lock().unwrap(); let log_output = String::from_utf8_lossy(&binding);`
+  * NO se avanza a In Review — el orquestador debe pasar el turno al QA.
+  * Documentado en .regista/decisions/STORY-022-dev-verification-7-2026-05-05.md.
 
