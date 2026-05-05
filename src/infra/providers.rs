@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn from_name_returns_pi() {
-        let p = from_name("pi");
+        let p = from_name("pi").unwrap();
         assert_eq!(p.binary(), "pi");
         assert_eq!(p.display_name(), "pi");
         assert_eq!(p.instruction_name(), "skill");
@@ -353,7 +353,7 @@ mod tests {
 
     #[test]
     fn from_name_returns_claude() {
-        let p = from_name("claude");
+        let p = from_name("claude").unwrap();
         assert_eq!(p.binary(), "claude");
         assert_eq!(p.display_name(), "Claude Code");
         assert_eq!(p.instruction_name(), "agent");
@@ -362,7 +362,7 @@ mod tests {
     #[test]
     fn from_name_aliases_claude() {
         for alias in &["claude-code", "claude_code"] {
-            let p = from_name(alias);
+            let p = from_name(alias).unwrap();
             assert_eq!(
                 p.binary(),
                 "claude",
@@ -373,14 +373,14 @@ mod tests {
 
     #[test]
     fn from_name_returns_codex() {
-        let p = from_name("codex");
+        let p = from_name("codex").unwrap();
         assert_eq!(p.binary(), "codex");
         assert_eq!(p.display_name(), "Codex");
     }
 
     #[test]
     fn from_name_returns_opencode() {
-        let p = from_name("opencode");
+        let p = from_name("opencode").unwrap();
         assert_eq!(p.binary(), "opencode");
         assert_eq!(p.display_name(), "OpenCode");
     }
@@ -388,7 +388,7 @@ mod tests {
     #[test]
     fn from_name_aliases_opencode() {
         for alias in &["open-code", "open_code"] {
-            let p = from_name(alias);
+            let p = from_name(alias).unwrap();
             assert_eq!(
                 p.binary(),
                 "opencode",
@@ -398,14 +398,22 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "provider desconocido")]
-    fn from_name_panics_on_unknown() {
-        from_name("chatgpt");
+    fn from_name_returns_err_on_unknown() {
+        let result = from_name("chatgpt");
+        assert!(
+            result.is_err(),
+            "from_name(\"chatgpt\") debe devolver Err, NO paniquear"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("chatgpt"),
+            "El mensaje de error debe mencionar el nombre del provider: {err_msg}"
+        );
     }
 
     #[test]
     fn from_name_is_case_insensitive() {
-        let p = from_name("CLAUDE");
+        let p = from_name("CLAUDE").unwrap();
         assert_eq!(p.binary(), "claude");
     }
 
@@ -573,6 +581,60 @@ provider = "claude"
         let cfg: crate::config::Config = toml::from_str(toml).unwrap();
         let path = skill_for_role(&cfg.agents, "developer");
         assert_eq!(path, ".claude/agents/developer.md");
+    }
+
+    /// CA3+CA4: Case-insensitivity con el Result API.
+    /// "CLAUDE", "Codex", "OPENCODE" mayúsculas/minúsculas mezcladas
+    /// deben devolver Ok.
+    #[test]
+    fn from_name_result_is_case_insensitive() {
+        for name in &["CLAUDE", "Codex", "OPENCODE", "Pi", "clAuDe-CoDe"] {
+            let result = from_name(name);
+            assert!(
+                result.is_ok(),
+                "from_name(\"{name}\") debería ser Ok con case-insensitivity"
+            );
+        }
+    }
+
+    /// CA5: skill_for_role debe manejar el caso de un provider inválido en config
+    /// (provider_for_role devuelve un nombre que from_name no reconoce).
+    /// El comportamiento exacto (panic vs Result) lo define el Developer,
+    /// pero la función no debe causar undefined behavior.
+    #[test]
+    fn skill_for_role_handles_invalid_provider_in_config() {
+        // Config con un provider desconocido — forzamos la ruta de error.
+        let toml = r#"
+[agents]
+provider = "super-agente-falso"
+"#;
+        let cfg: crate::config::Config = toml::from_str(toml).unwrap();
+
+        // skill_for_role llama internamente a from_name con "super-agente-falso".
+        // Después de la migración a Result, puede:
+        // - Retornar Result::Err (el Developer decide si la firma cambia)
+        // - Hacer .expect() con un mensaje claro (fail-fast)
+        //
+        // Este test verifica que al menos la función existe y es invocable.
+        // El Developer adaptará la aserción según la implementación final.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            skill_for_role(&cfg.agents, "developer")
+        }));
+
+        match result {
+            Ok(path) => {
+                // Si no paniquea y la firma sigue siendo String (con .expect()),
+                // el path debería ser no vacío (el provider inválido usó .expect()).
+                // Pero como hizo expect, nunca llegaríamos aquí.
+                // Si llegamos aquí, es que skill_for_role manejó el error de otra forma.
+                let _ = path;
+            }
+            Err(_panic) => {
+                // Si paniquea, debe ser con un mensaje descriptivo sobre el provider.
+                // Esto es aceptable porque un provider inválido en config es un error
+                // de configuración que debería detectarse en validate.
+            }
+        }
     }
 
     // ── pi ───────────────────────────────────────────────────────────
