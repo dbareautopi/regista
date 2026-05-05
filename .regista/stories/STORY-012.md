@@ -1,7 +1,7 @@
 # STORY-012: Migrar `pipeline.rs` a async — `process_story` y loop principal
 
 ## Status
-**Blocked**
+**Ready**
 
 ## Epic
 EPIC-04
