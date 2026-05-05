@@ -116,6 +116,24 @@ impl AgentsConfig {
     pub fn all_roles() -> [&'static str; 4] {
         ["product_owner", "qa_engineer", "developer", "reviewer"]
     }
+
+    /// STORY-002 placeholder: resuelve el nombre del provider para un rol.
+    ///
+    /// Implementado por el Developer — la lógica se migra desde
+    /// `infra::providers::provider_for_role()`.
+    pub fn provider_for_role(&self, role: &str) -> String {
+        let _ = role;
+        unimplemented!("STORY-002: provider_for_role será migrado a método de AgentsConfig")
+    }
+
+    /// STORY-002 placeholder: resuelve la ruta de skill para un rol.
+    ///
+    /// Implementado por el Developer — la lógica se migra desde
+    /// `infra::providers::skill_for_role()`.
+    pub fn skill_for_role(&self, role: &str) -> String {
+        let _ = role;
+        unimplemented!("STORY-002: skill_for_role será migrado a método de AgentsConfig")
+    }
 }
 
 /// Límites operacionales para evitar bucles infinitos o bloqueos.
@@ -555,5 +573,297 @@ src_dir = "src/"
         assert!(stack.lint_command.is_none());
         assert!(stack.fmt_command.is_none());
         assert!(stack.src_dir.is_none());
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // STORY-002: provider_for_role / skill_for_role en AgentsConfig
+    // ═══════════════════════════════════════════════════════════════
+
+    // ── CA1: provider_for_role como método de AgentsConfig ────────
+
+    /// CA1: provider_for_role existe como método público en AgentsConfig.
+    #[test]
+    fn story002_ca1_method_exists_provider_for_role() {
+        let cfg = Config::default();
+        let result = cfg.agents.provider_for_role("developer");
+        assert_eq!(result, "pi");
+    }
+
+    /// CA1: provider_for_role hereda del global cuando el rol no tiene provider explícito.
+    #[test]
+    fn story002_ca1_inherits_global_provider() {
+        let toml = r#"
+[agents]
+provider = "claude"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.agents.provider_for_role("product_owner"), "claude");
+        assert_eq!(cfg.agents.provider_for_role("qa_engineer"), "claude");
+        assert_eq!(cfg.agents.provider_for_role("developer"), "claude");
+        assert_eq!(cfg.agents.provider_for_role("reviewer"), "claude");
+    }
+
+    /// CA1: provider_for_role usa el provider específico si el rol lo define.
+    #[test]
+    fn story002_ca1_role_specific_provider_overrides_global() {
+        let toml = r#"
+[agents]
+provider = "pi"
+
+[agents.developer]
+provider = "claude"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.agents.provider_for_role("developer"), "claude");
+        assert_eq!(cfg.agents.provider_for_role("product_owner"), "pi");
+    }
+
+    /// CA1: provider_for_role con rol desconocido devuelve el provider global.
+    #[test]
+    fn story002_ca1_unknown_role_returns_global() {
+        let cfg = Config::default();
+        assert_eq!(cfg.agents.provider_for_role("unknown_role"), "pi");
+    }
+
+    /// CA1: provider_for_role para los 4 roles canónicos.
+    #[test]
+    fn story002_ca1_all_canonical_roles_return_pi_by_default() {
+        let cfg = Config::default();
+        for role in AgentsConfig::all_roles() {
+            assert_eq!(
+                cfg.agents.provider_for_role(role),
+                "pi",
+                "Rol '{role}' debería usar provider 'pi' por defecto"
+            );
+        }
+    }
+
+    /// CA1: provider_for_role con todos los providers canónicos.
+    #[test]
+    fn story002_ca1_each_canonical_provider_per_role() {
+        let toml = r#"
+[agents]
+provider = "pi"
+
+[agents.product_owner]
+provider = "claude"
+
+[agents.qa_engineer]
+provider = "codex"
+
+[agents.developer]
+provider = "pi"
+
+[agents.reviewer]
+provider = "opencode"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.agents.provider_for_role("product_owner"), "claude");
+        assert_eq!(cfg.agents.provider_for_role("qa_engineer"), "codex");
+        assert_eq!(cfg.agents.provider_for_role("developer"), "pi");
+        assert_eq!(cfg.agents.provider_for_role("reviewer"), "opencode");
+    }
+
+    // ── CA2: skill_for_role como método de AgentsConfig ───────────
+
+    /// CA2: skill_for_role existe como método público en AgentsConfig.
+    #[test]
+    fn story002_ca2_method_exists_skill_for_role() {
+        let cfg = Config::default();
+        let result = cfg.agents.skill_for_role("developer");
+        assert_eq!(result, ".pi/skills/developer/SKILL.md");
+    }
+
+    /// CA2: skill_for_role con provider pi usa la convención .pi/skills/.
+    #[test]
+    fn story002_ca2_pi_convention_skill_paths() {
+        let cfg = Config::default();
+        assert_eq!(
+            cfg.agents.skill_for_role("product_owner"),
+            ".pi/skills/product-owner/SKILL.md"
+        );
+        assert_eq!(
+            cfg.agents.skill_for_role("qa_engineer"),
+            ".pi/skills/qa-engineer/SKILL.md"
+        );
+        assert_eq!(
+            cfg.agents.skill_for_role("reviewer"),
+            ".pi/skills/reviewer/SKILL.md"
+        );
+    }
+
+    /// CA2: skill_for_role con provider claude usa la convención .claude/agents/.
+    #[test]
+    fn story002_ca2_claude_convention_skill_paths() {
+        let toml = r#"
+[agents]
+provider = "claude"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(
+            cfg.agents.skill_for_role("developer"),
+            ".claude/agents/developer.md"
+        );
+    }
+
+    /// CA2: skill_for_role con provider codex usa .agents/skills/.
+    #[test]
+    fn story002_ca2_codex_convention_skill_paths() {
+        let toml = r#"
+[agents]
+provider = "codex"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(
+            cfg.agents.skill_for_role("developer"),
+            ".agents/skills/developer/SKILL.md"
+        );
+    }
+
+    /// CA2: skill_for_role con provider opencode usa .opencode/agents/.
+    #[test]
+    fn story002_ca2_opencode_convention_skill_paths() {
+        let toml = r#"
+[agents]
+provider = "opencode"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(
+            cfg.agents.skill_for_role("developer"),
+            ".opencode/agents/developer.md"
+        );
+    }
+
+    /// CA2: skill_for_role respeta un skill path explícito.
+    #[test]
+    fn story002_ca2_explicit_skill_path_overrides_convention() {
+        let toml = r#"
+[agents]
+provider = "pi"
+
+[agents.reviewer]
+skill = ".pi/skills/senior-reviewer/SKILL.md"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(
+            cfg.agents.skill_for_role("reviewer"),
+            ".pi/skills/senior-reviewer/SKILL.md"
+        );
+    }
+
+    /// CA2: skill_for_role con rol desconocido devuelve String vacía.
+    #[test]
+    fn story002_ca2_unknown_role_returns_empty_string() {
+        let cfg = Config::default();
+        assert_eq!(cfg.agents.skill_for_role("unknown_role"), "");
+    }
+
+    /// CA2: skill_for_role con provider explícito por rol y skill explícito.
+    #[test]
+    fn story002_ca2_mixed_provider_and_explicit_skill() {
+        let toml = r#"
+[agents]
+provider = "pi"
+
+[agents.product_owner]
+provider = "claude"
+skill = ".claude/agents/po-custom.md"
+
+[agents.developer]
+provider = "codex"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+
+        assert_eq!(
+            cfg.agents.skill_for_role("product_owner"),
+            ".claude/agents/po-custom.md"
+        );
+        assert_eq!(
+            cfg.agents.skill_for_role("developer"),
+            ".agents/skills/developer/SKILL.md"
+        );
+        // QA y Reviewer heredan pi
+        assert_eq!(
+            cfg.agents.skill_for_role("qa_engineer"),
+            ".pi/skills/qa-engineer/SKILL.md"
+        );
+    }
+
+    // ── CA3: all_roles en AgentsConfig ─────────────────────────────
+
+    /// CA3: all_roles() devuelve los 4 roles canónicos.
+    #[test]
+    fn story002_ca3_all_roles_returns_four_canonical_roles() {
+        let roles = AgentsConfig::all_roles();
+        assert_eq!(roles.len(), 4);
+        assert!(roles.contains(&"product_owner"));
+        assert!(roles.contains(&"qa_engineer"));
+        assert!(roles.contains(&"developer"));
+        assert!(roles.contains(&"reviewer"));
+    }
+
+    /// CA3: all_roles() es iterable y sus elementos son &str.
+    #[test]
+    fn story002_ca3_all_roles_is_iterable() {
+        let count = AgentsConfig::all_roles().iter().filter(|r| r.contains('_')).count();
+        assert_eq!(count, 2, "product_owner y qa_engineer contienen underscore");
+    }
+
+    // ── CA5: Callers usan cfg.agents.provider_for_role() ───────────
+
+    /// CA5: Simula el patrón de uso exacto desde un caller (pipeline/plan/validate).
+    #[test]
+    fn story002_ca5_caller_pattern_provider_and_skill_for_role() {
+        let cfg = Config::default();
+        let role = "developer";
+        let provider_name = cfg.agents.provider_for_role(role);
+        let skill_path = cfg.agents.skill_for_role(role);
+
+        assert_eq!(provider_name, "pi");
+        assert_eq!(skill_path, ".pi/skills/developer/SKILL.md");
+    }
+
+    /// CA5: Simula el patrón con provider mixto (global claude, dev codex).
+    #[test]
+    fn story002_ca5_caller_pattern_mixed_providers() {
+        let toml = r#"
+[agents]
+provider = "claude"
+
+[agents.developer]
+provider = "codex"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+
+        // PO usa claude (global)
+        assert_eq!(cfg.agents.provider_for_role("product_owner"), "claude");
+        assert_eq!(
+            cfg.agents.skill_for_role("product_owner"),
+            ".claude/agents/product_owner.md"
+        );
+
+        // Dev usa codex (específico)
+        assert_eq!(cfg.agents.provider_for_role("developer"), "codex");
+        assert_eq!(
+            cfg.agents.skill_for_role("developer"),
+            ".agents/skills/developer/SKILL.md"
+        );
+    }
+
+    /// CA5: Simula el patrón de uso desde plan.rs (PO con posible provider no-pi).
+    #[test]
+    fn story002_ca5_caller_pattern_plan_po_role() {
+        let toml = r#"
+[agents]
+provider = "opencode"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+
+        // plan.rs usa "product_owner" como rol fijo
+        let provider_name = cfg.agents.provider_for_role("product_owner");
+        let skill_path_str = cfg.agents.skill_for_role("product_owner");
+
+        assert_eq!(provider_name, "opencode");
+        assert_eq!(skill_path_str, ".opencode/agents/product-owner.md");
     }
 }

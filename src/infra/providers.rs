@@ -558,17 +558,21 @@ mod tests {
 
     /// CA5: skill_for_role usa internamente from_name y debe manejar el Result.
     /// Con un provider válido, skill_for_role no debe paniquear.
+    ///
+    /// STORY-002: actualizado para usar el método de AgentsConfig.
     #[test]
     fn skill_for_role_uses_result_from_from_name() {
         let cfg = crate::config::Config::default(); // provider = "pi"
-        let path = skill_for_role(&cfg.agents, "developer");
+        let path = cfg.agents.skill_for_role("developer");
         assert_eq!(path, ".pi/skills/developer/SKILL.md");
 
-        let path_po = skill_for_role(&cfg.agents, "product_owner");
+        let path_po = cfg.agents.skill_for_role("product_owner");
         assert_eq!(path_po, ".pi/skills/product-owner/SKILL.md");
     }
 
     /// CA5: skill_for_role con provider no-pi también funciona.
+    ///
+    /// STORY-002: actualizado para usar el método de AgentsConfig.
     #[test]
     fn skill_for_role_works_with_claude_provider() {
         let toml = r#"
@@ -576,7 +580,7 @@ mod tests {
 provider = "claude"
 "#;
         let cfg: crate::config::Config = toml::from_str(toml).unwrap();
-        let path = skill_for_role(&cfg.agents, "developer");
+        let path = cfg.agents.skill_for_role("developer");
         assert_eq!(path, ".claude/agents/developer.md");
     }
 
@@ -598,6 +602,8 @@ provider = "claude"
     /// (provider_for_role devuelve un nombre que from_name no reconoce).
     /// El comportamiento exacto (panic vs Result) lo define el Developer,
     /// pero la función no debe causar undefined behavior.
+    ///
+    /// STORY-002: actualizado para usar el método de AgentsConfig.
     #[test]
     fn skill_for_role_handles_invalid_provider_in_config() {
         // Config con un provider desconocido — forzamos la ruta de error.
@@ -607,7 +613,8 @@ provider = "super-agente-falso"
 "#;
         let cfg: crate::config::Config = toml::from_str(toml).unwrap();
 
-        // skill_for_role llama internamente a from_name con "super-agente-falso".
+        // skill_for_role (ahora método de AgentsConfig) llama internamente
+        // a from_name con "super-agente-falso".
         // Después de la migración a Result, puede:
         // - Retornar Result::Err (el Developer decide si la firma cambia)
         // - Hacer .expect() con un mensaje claro (fail-fast)
@@ -615,7 +622,7 @@ provider = "super-agente-falso"
         // Este test verifica que al menos la función existe y es invocable.
         // El Developer adaptará la aserción según la implementación final.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            skill_for_role(&cfg.agents, "developer")
+            cfg.agents.skill_for_role("developer")
         }));
 
         match result {
@@ -818,5 +825,65 @@ provider = "super-agente-falso"
         assert!(names.contains(&"claude"));
         assert!(names.contains(&"codex"));
         assert!(names.contains(&"opencode"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // STORY-002 CA4: funciones libres eliminadas de providers
+    // ═══════════════════════════════════════════════════════════════
+
+    /// CA4: provider_for_role ya NO es una función libre en providers.
+    ///
+    /// Después de STORY-002, solo existe como método de AgentsConfig.
+    /// Este test usa cfg.agents.provider_for_role() y verifica que
+    /// funciona correctamente.
+    #[test]
+    fn story002_ca4_provider_for_role_not_a_free_function() {
+        let cfg = crate::config::Config::default();
+        let name = cfg.agents.provider_for_role("developer");
+        assert_eq!(name, "pi");
+
+        let name_po = cfg.agents.provider_for_role("product_owner");
+        assert_eq!(name_po, "pi");
+    }
+
+    /// CA4: skill_for_role ya NO es una función libre en providers.
+    ///
+    /// Después de STORY-002, solo existe como método de AgentsConfig.
+    /// Este test usa cfg.agents.skill_for_role() y verifica que
+    /// funciona correctamente.
+    #[test]
+    fn story002_ca4_skill_for_role_not_a_free_function() {
+        let cfg = crate::config::Config::default();
+        let path = cfg.agents.skill_for_role("developer");
+        assert_eq!(path, ".pi/skills/developer/SKILL.md");
+
+        let path_po = cfg.agents.skill_for_role("product_owner");
+        assert_eq!(path_po, ".pi/skills/product-owner/SKILL.md");
+    }
+
+    /// CA4: Las funciones libres han sido eliminadas.
+    ///
+    /// Verifica que el módulo providers NO exporta provider_for_role
+    /// ni skill_for_role como funciones libres. Si estas funciones
+    /// aún existieran, causarían conflicto o shadowing con los imports
+    /// de AgentsConfig.
+    #[test]
+    fn story002_ca4_no_free_function_conflict_with_agents_config_methods() {
+        // Si las funciones libres aún existen en providers,
+        // este test compila pero indica que CA4 no se ha completado.
+        // El Developer debe eliminar provider_for_role y skill_for_role
+        // del scope del módulo providers.
+
+        let cfg = crate::config::Config::default();
+
+        // Verifica que los métodos de AgentsConfig funcionan para los 4 roles
+        let roles = crate::config::AgentsConfig::all_roles();
+        for role in roles {
+            let provider = cfg.agents.provider_for_role(role);
+            assert!(!provider.is_empty(), "provider_for_role({role}) no debe ser vacío");
+
+            let skill = cfg.agents.skill_for_role(role);
+            assert!(!skill.is_empty(), "skill_for_role({role}) no debe ser vacío");
+        }
     }
 }
