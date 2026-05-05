@@ -6,13 +6,24 @@
 //! `invoke_with_retry` usa `tokio::time::sleep` para backoff exponencial.
 
 use crate::config::LimitsConfig;
-use crate::domain::state::TokenCount;
 use crate::infra::providers::AgentProvider;
 use regex::Regex;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::sync::LazyLock;
 use std::time::Duration;
+
+/// Conteo de tokens de una invocación de agente.
+/// Definida localmente en infra para respetar la arquitectura en capas
+/// (infra solo puede importar config, no domain).
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
+pub(crate) struct TokenCount {
+    /// Tokens de entrada (prompt).
+    pub input: u64,
+    /// Tokens de salida (respuesta).
+    pub output: u64,
+}
 
 /// Resultado de una invocación de agente.
 #[derive(Debug, Clone)]
