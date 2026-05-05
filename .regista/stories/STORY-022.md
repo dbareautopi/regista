@@ -38,3 +38,9 @@ Modificar `invoke_once()` en `infra/agent.rs` para que, cuando `verbose = true`,
   * `cargo check` compila sin errores. `cargo build` compila sin errores. `cargo clippy` sin warnings.
   * NO se avanza a In Review: los tests del QA (`mod story022`) NO compilan. 3 errores `E0716` por `temporary value dropped while borrowed` en las líneas 1758, 1810, 2010 (uso de `String::from_utf8_lossy(&buffer.lock().unwrap())` donde el `MutexGuard` temporal se destruye antes de usar el `Cow<str>`). El QA debe corregir estos tests usando `let binding = buffer.lock().unwrap(); let log_output = String::from_utf8_lossy(&binding);`.
   * Documentado en .regista/decisions/STORY-022-dev-implementation-2026-05-05.md.
+- 2026-05-05 | Dev | Re-verificación de STORY-022: el código de producción compila y pasa `cargo check`, `cargo build`, `cargo clippy`, y `cargo fmt`. La implementación cubre CA1-CA8, CA10-CA11. Sin embargo, los tests del QA en `mod story022` siguen sin compilar. Los 3 errores `E0716` (temporary value dropped while borrowed) están en:
+  * Línea ~1764: test `ca3_verbose_logs_lines_with_pipe_prefix`
+  * Línea ~1809: test `ca3_empty_lines_not_logged`
+  * Línea ~2006: test `ca5_stderr_not_streamed_to_log`
+  Las 3 líneas usan `String::from_utf8_lossy(&buffer.lock().unwrap())`, donde el `MutexGuard` temporal se destruye al final del statement pero el `Cow<str>` devuelto por `from_utf8_lossy` aún lo referencia. La solución requiere `let binding = buffer.lock().unwrap(); let log_output = String::from_utf8_lossy(&binding);`. Es responsabilidad del QA. No se avanza a In Review.
+  * Documentado en .regista/decisions/STORY-022-dev-recheck-2026-05-05.md.
