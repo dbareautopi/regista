@@ -1,7 +1,7 @@
 # STORY-020: Añadir `TokenCount` y `token_usage` a `SharedState`
 
 ## Status
-**Ready**
+**Tests Ready**
 
 ## Epic
 EPIC-07
@@ -26,3 +26,4 @@ Añadir el struct `TokenCount { input: u64, output: u64 }` y el campo `token_usa
 ## Activity Log
 - 2026-05-05 | PO | Historia generada desde specs/spec-logs-transparentes.md (sección 6: Tracking de tokens — Acumulación).
 - 2026-05-05 | PO | Refinamiento: validada contra DoR. Descripción clara, 9 CAs específicos y testeables, sin dependencias. Alineada con spec §6. Transición Draft → Ready. Ver .regista/decisions/STORY-020-po-refinement-2026-05-05.md.
+- 2026-05-05 | QA | Tests verificados: 20 tests unitarios ya existentes en `domain::state.rs::tests::story020` cubren CA1-CA5 y CA8-CA9. CA6 (cargo check) y CA7 (regresión) son verificaciones de build, no tests unitarios. No se requieren tests adicionales. Transición Ready → Tests Ready. Ver .regista/decisions/STORY-020-qa-tests-2026-05-05.md.
