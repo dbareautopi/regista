@@ -72,7 +72,7 @@ pub fn run(
             serde_json::to_string_pretty(&data).unwrap_or_else(|_| "{}".into())
         );
     } else {
-        print_human(&data);
+        print_human(&data, &CanonicalWorkflow);
     }
 
     Ok(())
@@ -121,65 +121,67 @@ fn build_board_data(stories: &[Story]) -> BoardData {
 
 /// Renderiza el tablero a un `String` usando el orden de columnas del workflow.
 ///
-/// El Developer debe implementar:
-/// - Obtener columnas de `workflow.canonical_column_order()`  (CA2)
-/// - Omitir columnas con count = 0                          (CA3)
-/// - Formatear igual que la versión hardcodeada actual        (CA4)
-///
-/// ⚠️  PLACEHOLDER — el Developer reemplazará este `todo!()` con la lógica real.
-fn render_board(_data: &BoardData, _workflow: &dyn Workflow) -> String {
-    todo!("Developer: implementar renderizado dinámico con workflow")
-}
+/// - Obtiene columnas de `workflow.canonical_column_order()`  (CA2)
+/// - Omite columnas con count = 0                             (CA3)
+/// - Formatea igual que la versión hardcodeada actual          (CA4)
+fn render_board(data: &BoardData, workflow: &dyn Workflow) -> String {
+    let mut output = String::new();
 
-/// Imprime el tablero en formato legible por humanos.
-fn print_human(data: &BoardData) {
     // Cabecera
-    println!("📊 Story Board — regista");
-    println!("==========================");
-    println!();
+    output.push_str("📊 Story Board — regista\n");
+    output.push_str("==========================\n");
+    output.push('\n');
 
-    // Conteo por estado (en orden canónico para consistencia visual)
-    let canonical_order = [
-        "Draft",
-        "Ready",
-        "Tests Ready",
-        "In Progress",
-        "In Review",
-        "Business Review",
-        "Done",
-        "Blocked",
-        "Failed",
-    ];
+    // Columnas en orden del workflow, omitiendo las vacías
+    let column_order = workflow.canonical_column_order();
+    let has_visible = column_order
+        .iter()
+        .any(|c| data.counts.get(*c).copied().unwrap_or(0) > 0);
 
-    for state in &canonical_order {
-        let count = data.counts.get(*state).copied().unwrap_or(0);
-        println!("  {state:<18} {count:>3}");
+    if has_visible {
+        for col in column_order {
+            let count = data.counts.get(*col).copied().unwrap_or(0);
+            if count > 0 {
+                output.push_str(&format!("  {col:<18} {count:>3}\n"));
+            }
+        }
+        output.push_str(&format!("  {}\n", "─".repeat(22)));
     }
-    println!("  {}", "─".repeat(22));
-    println!("  {:<18} {:>3}", "Total", data.total);
-    println!();
+
+    // Total
+    output.push_str(&format!("  {:<18} {:>3}\n", "Total", data.total));
+    output.push('\n');
 
     // Bloqueadas
     if !data.blocked.is_empty() {
-        println!("🔴 Blocked ({}):", data.blocked.len());
+        output.push_str(&format!("🔴 Blocked ({}):\n", data.blocked.len()));
         for bs in &data.blocked {
             let blockers = bs.blocked_by.join(", ");
-            println!("  {} — blocked by: {}", bs.id, blockers);
+            output.push_str(&format!("  {} — blocked by: {}\n", bs.id, blockers));
         }
-        println!();
+        output.push('\n');
     }
 
     // Fallidas
     if !data.failed.is_empty() {
-        println!("❌ Failed ({}):", data.failed.len());
+        output.push_str(&format!("❌ Failed ({}):\n", data.failed.len()));
         for fs in &data.failed {
             match &fs.reason {
-                Some(reason) => println!("  {} — {}", fs.id, reason),
-                None => println!("  {} — (sin motivo registrado)", fs.id),
+                Some(reason) => output.push_str(&format!("  {} — {}\n", fs.id, reason)),
+                None => output.push_str(&format!("  {} — (sin motivo registrado)\n", fs.id)),
             }
         }
-        println!();
+        output.push('\n');
     }
+
+    output
+}
+
+/// Imprime el tablero en formato legible por humanos,
+/// usando el orden de columnas definido por el workflow.
+fn print_human(data: &BoardData, workflow: &dyn Workflow) {
+    let rendered = render_board(data, workflow);
+    print!("{rendered}");
 }
 
 /// Extrae el número de un ID tipo "STORY-NNN".

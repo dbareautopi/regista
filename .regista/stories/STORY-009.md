@@ -1,7 +1,7 @@
 # STORY-009: Adaptar `board.rs` para columnas dinámicas según workflow
 
 ## Status
-**Tests Ready**
+**In Review**
 
 ## Epic
 EPIC-03
@@ -23,3 +23,4 @@ Actualmente `board.rs` tiene un array hardcodeado `canonical_order` con los 9 es
 ## Activity Log
 - 2026-05-04 | PO | Historia generada desde roadmap/AUDITORIA-ESCALABILIDAD.md (hallazgo #1.5).
 - 2026-05-05 | QA | Tests unitarios verificados: 8 tests (CA1-CA6) en src/app/board.rs cubren todos los CAs. Tests existentes en el archivo — no fue necesario añadir nuevos. La función `render_board` ya acepta `&dyn Workflow` (firma correcta, cuerpo es placeholder `todo!()`). Tests usan `CanonicalWorkflow` + workflows sintéticos (FiveColumnWorkflow, SparseWorkflow) para CA2, CA3, CA4, CA6. El Developer debe implementar el cuerpo de `render_board` para que los tests pasen de `todo!()` panic a green.
+- 2026-05-05 | Dev | Implementado `render_board()` con columnas dinámicas desde `workflow.canonical_column_order()`. Eliminado array hardcodeado `canonical_order` de `print_human()`, que ahora delega en `render_board()`. Columnas con count=0 se omiten en la salida. `run()` pasa `&CanonicalWorkflow` a `print_human()`. Todos los 16 tests de `board` pasan (incluyendo 8 nuevos de STORY-009: dyn workflow, orden workflow, omisión vacías, output canónico, workflow 5-columnas, sparse). `cargo fmt` y `cargo clippy` limpios. Test suite completa: 223/223 pasando.

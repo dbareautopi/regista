@@ -95,3 +95,7 @@
 [2m2026-05-05T00:08:08.704073Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   ✓ agente completado (intento 1)
 [2m2026-05-05T00:08:08.704856Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 19 ══════
 [2m2026-05-05T00:08:08.706480Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 Dev (implement) (pi) | STORY-009 (Tests Ready → In Review)
+[2m2026-05-05T00:08:08.754927Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   [1/5] invocando pi (./.pi/skills/developer/SKILL.md)
+[2m2026-05-05T00:14:58.865609Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   ✓ agente completado (intento 1)
+[2m2026-05-05T00:14:58.867301Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 20 ══════
+[2m2026-05-05T00:14:58.870867Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 Reviewer (pi) | STORY-009 (In Review → Business Review)
