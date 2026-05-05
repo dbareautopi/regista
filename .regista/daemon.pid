@@ -1,3 +1,3 @@
-pid = 825288
-log_file = "/root/repos/regista/./.regista/daemon.log"
+pid = 893474
+log_file = "/root/repos/regista/./.regista/logs/regista-log-20260505-081340.log"
 project_dir = "/root/repos/regista"
