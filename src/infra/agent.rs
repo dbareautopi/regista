@@ -554,7 +554,7 @@ mod tests {
     #[tokio::test]
     async fn save_agent_decision_creates_file_with_content() {
         let tmp = TempDir::new().expect("tempdir");
-        let decisions = tmp.path().to_path_buf();
+        let decisions = tmp.path().join("decisions");
         let story_id = "STORY-010".to_string();
 
         let opts = AgentOptions {
@@ -571,8 +571,11 @@ mod tests {
         }];
 
         // Simular path de instrucciones con nombre de actor en el penúltimo segmento.
-        let instruction = tmp.path().join("product-owner").join("SKILL.md");
-        std::fs::create_dir_all(instruction.parent().unwrap()).unwrap();
+        // NOTA: instruction se crea en un directorio diferente a decisions_dir
+        // para evitar que el subdirectorio del actor contamine read_dir().
+        let skill_dir = tmp.path().join("skills").join("product-owner");
+        let instruction = skill_dir.join("SKILL.md");
+        std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(&instruction, "skill content").unwrap();
 
         save_agent_decision(&opts, &instruction, &attempts, true).await;
