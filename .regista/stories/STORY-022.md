@@ -194,6 +194,28 @@ Modificar `invoke_once()` en `infra/agent.rs` para que, cuando `verbose = true`,
   * CA9 bloqueado: `cargo test` no puede verificarse hasta que el QA corrija los 3 errores.
   * NO se avanza a In Review. El orquestador debe pasar el turno al QA.
   * Documentado en .regista/decisions/STORY-022-dev-verification-8-2026-05-05.md.
+- 2026-05-05 | Dev | Decimotercera verificación de STORY-022. Re-verificación completa:
+  * `cargo check` (0.17s): OK, sin errores.
+  * `cargo build` (0.14s): OK, binario generado.
+  * `cargo clippy --no-deps` (0.25s): OK, 0 warnings.
+  * `cargo fmt -- --check`: OK, código formateado.
+  * `cargo test -- story022`: NO compila — los mismos 3 errores E0716 persisten.
+  * Código de producción cubre CA1-CA8, CA10-CA11.
+  * Errores E0716 en tests del QA (NO corregidos — responsabilidad del QA, 13ª iteración):
+    | Test | Línea | Error |
+    |------|-------|-------|
+    | `ca3_verbose_logs_lines_with_pipe_prefix` | 1763 | `String::from_utf8_lossy(&buffer.lock().unwrap())` — `MutexGuard` temporal destruido antes que el `Cow<str>` |
+    | `ca3_empty_lines_not_logged` | 1809 | `String::from_utf8_lossy(&buffer.lock().unwrap())` — mismo error E0716 |
+    | `ca5_stderr_not_streamed_to_log` | 2006 | `String::from_utf8_lossy(&buffer.lock().unwrap())` — mismo error E0716 |
+  * Solución exacta (sin ambigüedad):
+    ```rust
+    let binding = buffer.lock().unwrap();
+    let log_output = String::from_utf8_lossy(&binding);
+    ```
+    en las 3 ubicaciones (líneas 1763, 1809, 2006).
+  * CA9 bloqueado: `cargo test` no puede verificarse hasta que el QA corrija los 3 errores de compilación.
+  * NO se avanza a In Review. El orquestador debe pasar el turno al QA.
+  * Documentado en .regista/decisions/STORY-022-dev-verification-13-2026-05-05.md.
 - 2026-05-05 | Dev | Duodécima verificación de STORY-022. Re-verificación completa del código de producción:
   * `cargo check` (0.38s): OK, sin errores.
   * `cargo build` (0.34s): OK, binario generado.
