@@ -172,7 +172,6 @@ fn current_hash(project_root: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
     use tempfile::TempDir;
 
     /// Crea un repo git temporal vacío para tests.
