@@ -5,8 +5,14 @@
 //! `.regista/health.json` de forma atómica cada N iteraciones.
 //!
 //! Consumido por el TUI/dashboard (#11) y cost tracking (#12).
+//!
+//! Nota: Los items públicos están marcados #[allow(dead_code)] porque
+//! la integración en el pipeline ocurrirá en historias posteriores.
+//! Los tests validan el comportamiento correcto del módulo.
 
-use serde::Serialize;
+#![allow(dead_code)]
+
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 // ── HealthReport ──────────────────────────────────────────────────────────
@@ -14,7 +20,7 @@ use std::path::Path;
 /// Métricas agregadas del pipeline en un instante dado.
 ///
 /// Todos los campos son calculados; no llevan lógica de negocio interna.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthReport {
     /// Iteraciones del loop principal por hora de pared.
     pub iterations_per_hour: f64,
@@ -44,6 +50,7 @@ pub struct HealthReport {
 ///
 /// El caller (orquestador) recolecta las estadísticas del estado compartido,
 /// las historias, y el wall-clock, y las pasa aquí para el cálculo.
+#[allow(clippy::too_many_arguments)]
 pub fn generate_report(
     current_iteration: u32,
     elapsed_wall_time_seconds: u64,
@@ -107,7 +114,7 @@ pub fn is_health_checkpoint(iteration: u32, interval: u32) -> bool {
     if interval == 0 {
         return false;
     }
-    iteration % interval == 0
+    iteration.is_multiple_of(interval)
 }
 
 /// Escribe el reporte a `.regista/health.json` de forma atómica.
@@ -136,10 +143,7 @@ pub fn write_health_json(report: &HealthReport, project_root: &Path) -> anyhow::
 ///
 /// Es idéntico a `write_health_json` pero usa un nombre fijo y loguea
 /// el evento como cierre del pipeline.
-pub fn write_final_health_report(
-    report: &HealthReport,
-    project_root: &Path,
-) -> anyhow::Result<()> {
+pub fn write_final_health_report(report: &HealthReport, project_root: &Path) -> anyhow::Result<()> {
     tracing::info!("🏁 Pipeline completo — escribiendo health report final");
     write_health_json(report, project_root)
 }
@@ -260,16 +264,16 @@ mod tests {
     #[test]
     fn generate_report_happy_path() {
         let report = generate_report(
-            120,       // current_iteration
-            3600,      // elapsed_wall_time_seconds = 1 hora
-            5,         // stories_done
-            1,         // stories_failed
-            4,         // stories_active
-            3000.0,    // total_agent_time_seconds
-            100,       // total_agent_invocations
-            20,        // total_rejected_transitions
-            120,       // total_transitions
-            2.50,      // estimated_cost_usd
+            120,    // current_iteration
+            3600,   // elapsed_wall_time_seconds = 1 hora
+            5,      // stories_done
+            1,      // stories_failed
+            4,      // stories_active
+            3000.0, // total_agent_time_seconds
+            100,    // total_agent_invocations
+            20,     // total_rejected_transitions
+            120,    // total_transitions
+            2.50,   // estimated_cost_usd
         );
 
         // iterations_per_hour = 120 / 1.0h = 120
@@ -294,16 +298,16 @@ mod tests {
     #[test]
     fn generate_report_half_hour() {
         let report = generate_report(
-            60,        // current_iteration
-            1800,      // 0.5 horas
-            3,         // stories_done
-            0,         // stories_failed
-            2,         // stories_active
-            1500.0,    // total_agent_time_seconds
-            50,        // invocations
-            5,         // rejected
-            55,        // total_transitions
-            1.00,      // cost
+            60,     // current_iteration
+            1800,   // 0.5 horas
+            3,      // stories_done
+            0,      // stories_failed
+            2,      // stories_active
+            1500.0, // total_agent_time_seconds
+            50,     // invocations
+            5,      // rejected
+            55,     // total_transitions
+            1.00,   // cost
         );
 
         // iterations_per_hour = 60 / 0.5 = 120
@@ -320,16 +324,16 @@ mod tests {
     #[test]
     fn generate_report_zero_elapsed_time() {
         let report = generate_report(
-            10,        // current_iteration
-            0,         // elapsed_wall_time_seconds = 0
-            1,         // stories_done
-            0,         // stories_failed
-            0,         // stories_active
-            100.0,     // total_agent_time_seconds
-            5,         // invocations
-            1,         // rejected
-            5,         // total_transitions
-            0.50,      // cost
+            10,    // current_iteration
+            0,     // elapsed_wall_time_seconds = 0
+            1,     // stories_done
+            0,     // stories_failed
+            0,     // stories_active
+            100.0, // total_agent_time_seconds
+            5,     // invocations
+            1,     // rejected
+            5,     // total_transitions
+            0.50,  // cost
         );
 
         // Sin tiempo transcurrido, métricas por hora = 0
@@ -345,16 +349,9 @@ mod tests {
     #[test]
     fn generate_report_zero_invocations() {
         let report = generate_report(
-            1,
-            3600,
-            0,
-            0,
-            1,
-            0.0,   // total_agent_time_seconds
-            0,     // total_agent_invocations = 0
-            0,
-            0,
-            0.0,
+            1, 3600, 0, 0, 1, 0.0, // total_agent_time_seconds
+            0,   // total_agent_invocations = 0
+            0, 0, 0.0,
         );
 
         assert_eq!(report.mean_agent_time_seconds, 0.0);
@@ -364,15 +361,7 @@ mod tests {
     #[test]
     fn generate_report_zero_transitions() {
         let report = generate_report(
-            1,
-            3600,
-            0,
-            0,
-            1,
-            0.0,
-            0,
-            0,
-            0,     // total_transitions = 0
+            1, 3600, 0, 0, 1, 0.0, 0, 0, 0, // total_transitions = 0
             0.0,
         );
 
@@ -383,15 +372,8 @@ mod tests {
     #[test]
     fn generate_report_full_rejection_rate() {
         let report = generate_report(
-            10,
-            3600,
-            0,
-            0,
-            5,
-            500.0,
-            10,
-            10,    // todos rechazos
-            10,    // total = rechazos
+            10, 3600, 0, 0, 5, 500.0, 10, 10, // todos rechazos
+            10, // total = rechazos
             0.0,
         );
 
@@ -402,16 +384,10 @@ mod tests {
     #[test]
     fn generate_report_all_done() {
         let report = generate_report(
-            50,
-            7200,  // 2 horas
-            10,    // stories_done
-            0,
-            0,     // stories_active = 0
-            2000.0,
-            80,
-            5,
-            85,
-            3.50,
+            50, 7200, // 2 horas
+            10,   // stories_done
+            0, 0, // stories_active = 0
+            2000.0, 80, 5, 85, 3.50,
         );
 
         assert_eq!(report.stories_done, 10);
@@ -448,8 +424,8 @@ mod tests {
             elapsed_wall_time_seconds: 3600,
         };
 
-        let json = serde_json::to_string_pretty(&report)
-            .expect("HealthReport debe serializar a JSON");
+        let json =
+            serde_json::to_string_pretty(&report).expect("HealthReport debe serializar a JSON");
 
         // Verificar que todos los campos aparecen en el JSON
         assert!(json.contains("\"iterations_per_hour\""));
@@ -487,13 +463,11 @@ mod tests {
         };
 
         let json = serde_json::to_string(&original).unwrap();
-        let parsed: HealthReport = serde_json::from_str(&json)
-            .expect("HealthReport debe deserializar desde JSON");
+        let parsed: HealthReport =
+            serde_json::from_str(&json).expect("HealthReport debe deserializar desde JSON");
 
         assert!((parsed.iterations_per_hour - original.iterations_per_hour).abs() < 0.001);
-        assert!(
-            (parsed.mean_agent_time_seconds - original.mean_agent_time_seconds).abs() < 0.001
-        );
+        assert!((parsed.mean_agent_time_seconds - original.mean_agent_time_seconds).abs() < 0.001);
         assert!((parsed.rejection_rate - original.rejection_rate).abs() < 0.001);
         assert!((parsed.stories_per_hour - original.stories_per_hour).abs() < 0.001);
         assert!((parsed.estimated_cost_usd - original.estimated_cost_usd).abs() < 0.001);
@@ -739,7 +713,10 @@ mod tests {
         write_final_health_report(&report, tmp.path()).unwrap();
 
         let health_path = tmp.path().join(".regista/health.json");
-        assert!(health_path.exists(), "health.json debe existir tras reporte final");
+        assert!(
+            health_path.exists(),
+            "health.json debe existir tras reporte final"
+        );
 
         let content = std::fs::read_to_string(&health_path).unwrap();
         let parsed: HealthReport = serde_json::from_str(&content).unwrap();
