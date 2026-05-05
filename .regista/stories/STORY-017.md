@@ -1,7 +1,7 @@
 # STORY-017: Módulo `health.rs` con endpoint de métricas del pipeline
 
 ## Status
-**Ready**
+**Tests Ready**
 
 ## Epic
 EPIC-06
@@ -32,4 +32,4 @@ No existe forma de monitorizar el pipeline en ejecución. Para las features pend
 - Bloqueado por: STORY-011
 
 ## Activity Log
-- 2026-05-04 | PO | Historia generada desde roadmap/AUDITORIA-ESCALABILIDAD.md (hallazgo #11.3, recomendación #12).
+- 2026-05-05 | QA | Tests escritos para todos los CAs (27 tests). Cobertura: CA1 (HealthReport struct y tipos, 4 tests), CA2 (generate_report con edge cases, 8 tests), CA3 (Serialize + is_health_checkpoint intervalos, 8 tests), CA4 (escritura atómica, 5 tests), CA5 (reporte final PipelineComplete, 3 tests). Módulo registrado en src/app/mod.rs. Compilación verificada con cargo check (solo warnings dead_code).

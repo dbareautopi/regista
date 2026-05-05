@@ -150,3 +150,7 @@
 [2m2026-05-05T01:02:47.165039Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 31 ══════
 [2m2026-05-05T01:02:47.169101Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m 🔓 STORY-017: dependencias resueltas → Ready
 [2m2026-05-05T01:02:47.170109Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 QA (tests) (pi) | STORY-017 (Ready → Tests Ready)
+[2m2026-05-05T01:02:47.208200Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   [1/5] invocando pi (./.pi/skills/qa-engineer/SKILL.md)
+[2m2026-05-05T01:08:08.734762Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   ✓ agente completado (intento 1)
+[2m2026-05-05T01:08:08.735901Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 32 ══════
+[2m2026-05-05T01:08:08.739204Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 Dev (implement) (pi) | STORY-017 (Tests Ready → In Review)
