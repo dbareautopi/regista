@@ -47,7 +47,7 @@ fn read_yaml_field(path: &Path, field: &str) -> Option<String> {
 /// async functions (the resulting future must be `Send` for
 /// multi-threaded tokio runtimes and potential `tokio::spawn` usage
 /// in #01).
-pub trait AgentProvider: Send + Sync {
+pub trait AgentProvider: Send + Sync + std::fmt::Debug {
     /// Binario a ejecutar: "pi", "claude", "codex", "opencode".
     fn binary(&self) -> &str;
 
@@ -79,6 +79,7 @@ pub trait AgentProvider: Send + Sync {
 
 // ── pi ────────────────────────────────────────────────────────────────
 
+#[derive(Debug)]
 pub struct PiProvider;
 
 impl AgentProvider for PiProvider {
@@ -113,6 +114,7 @@ impl AgentProvider for PiProvider {
 
 // ── Claude Code ────────────────────────────────────────────────────────
 
+#[derive(Debug)]
 pub struct ClaudeCodeProvider;
 
 impl AgentProvider for ClaudeCodeProvider {
@@ -146,6 +148,7 @@ impl AgentProvider for ClaudeCodeProvider {
 
 // ── Codex (OpenAI) ─────────────────────────────────────────────────────
 
+#[derive(Debug)]
 pub struct CodexProvider;
 
 impl AgentProvider for CodexProvider {
@@ -183,6 +186,7 @@ impl AgentProvider for CodexProvider {
 
 // ── OpenCode ───────────────────────────────────────────────────────────
 
+#[derive(Debug)]
 pub struct OpenCodeProvider;
 
 impl AgentProvider for OpenCodeProvider {
@@ -274,14 +278,14 @@ impl AgentProvider for OpenCodeProvider {
 /// Construye un provider a partir de su nombre.
 ///
 /// Acepta nombres canónicos y alias comunes.
-/// Lanza panic si el nombre no corresponde a ningún provider conocido.
-pub fn from_name(name: &str) -> Box<dyn AgentProvider> {
+/// Devuelve `Err` si el nombre no corresponde a ningún provider conocido.
+pub fn from_name(name: &str) -> anyhow::Result<Box<dyn AgentProvider>> {
     match name.to_lowercase().as_str() {
-        "pi" => Box::new(PiProvider),
-        "claude" | "claude-code" | "claude_code" => Box::new(ClaudeCodeProvider),
-        "codex" => Box::new(CodexProvider),
-        "opencode" | "open-code" | "open_code" => Box::new(OpenCodeProvider),
-        other => panic!(
+        "pi" => Ok(Box::new(PiProvider)),
+        "claude" | "claude-code" | "claude_code" => Ok(Box::new(ClaudeCodeProvider)),
+        "codex" => Ok(Box::new(CodexProvider)),
+        "opencode" | "open-code" | "open_code" => Ok(Box::new(OpenCodeProvider)),
+        other => anyhow::bail!(
             "provider desconocido: '{other}'. Providers válidos: pi, claude, codex, opencode"
         ),
     }
@@ -333,7 +337,9 @@ pub fn skill_for_role(agents: &crate::config::AgentsConfig, role: &str) -> Strin
     }
 
     let provider_name = provider_for_role(agents, role);
-    let provider = from_name(&provider_name);
+    let provider = from_name(&provider_name).expect(
+        "provider inválido en configuración — ejecuta 'regista validate' para diagnosticar",
+    );
     provider.instruction_dir(role)
 }
 
@@ -441,10 +447,7 @@ mod tests {
     fn from_name_returns_ok_for_all_canonical_providers() {
         for name in &["pi", "claude", "codex", "opencode"] {
             let result = from_name(name);
-            assert!(
-                result.is_ok(),
-                "from_name(\"{name}\") debería devolver Ok"
-            );
+            assert!(result.is_ok(), "from_name(\"{name}\") debería devolver Ok");
         }
     }
 
@@ -494,10 +497,7 @@ mod tests {
     fn from_name_claude_aliases_return_ok() {
         for alias in &["claude", "claude-code", "claude_code"] {
             let result = from_name(alias);
-            assert!(
-                result.is_ok(),
-                "Alias '{alias}' debería devolver Ok"
-            );
+            assert!(result.is_ok(), "Alias '{alias}' debería devolver Ok");
             let provider = result.unwrap();
             assert_eq!(
                 provider.binary(),
@@ -514,10 +514,7 @@ mod tests {
     fn from_name_opencode_aliases_return_ok() {
         for alias in &["opencode", "open-code", "open_code"] {
             let result = from_name(alias);
-            assert!(
-                result.is_ok(),
-                "Alias '{alias}' debería devolver Ok"
-            );
+            assert!(result.is_ok(), "Alias '{alias}' debería devolver Ok");
             let provider = result.unwrap();
             assert_eq!(
                 provider.binary(),

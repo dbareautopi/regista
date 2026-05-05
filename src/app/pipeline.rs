@@ -718,7 +718,7 @@ async fn process_story(
     // Determinar el rol, provider, y path de instrucciones
     let role = workflow.map_status_to_role(story.status);
     let provider_name = providers::provider_for_role(&cfg.agents, role);
-    let provider = providers::from_name(&provider_name);
+    let provider = providers::from_name(&provider_name)?;
     let skill_path_str = providers::skill_for_role(&cfg.agents, role);
     let instruction_path = project_root.join(&skill_path_str);
 

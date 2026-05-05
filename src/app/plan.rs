@@ -78,7 +78,7 @@ pub fn run(
 
     // ── 4. Bucle plan → validate ───────────────────────────────────
     let provider_name = providers::provider_for_role(&cfg.agents, "product_owner");
-    let provider = providers::from_name(&provider_name);
+    let provider = providers::from_name(&provider_name)?;
     let skill_path_str = providers::skill_for_role(&cfg.agents, "product_owner");
     let skill_path = project_root.join(&skill_path_str);
     let max_loop = cfg.limits.plan_max_iterations.max(1);

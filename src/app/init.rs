@@ -248,7 +248,7 @@ pub fn init(
     with_example: bool,
     provider_name: &str,
 ) -> anyhow::Result<InitResult> {
-    let provider = providers::from_name(provider_name);
+    let provider = providers::from_name(provider_name)?;
     let mut result = InitResult {
         created: vec![],
         skipped: vec![],
