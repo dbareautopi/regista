@@ -1,7 +1,7 @@
 # STORY-017: Módulo `health.rs` con endpoint de métricas del pipeline
 
 ## Status
-**Blocked**
+**Ready**
 
 ## Epic
 EPIC-06
