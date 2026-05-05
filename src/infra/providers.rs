@@ -409,6 +409,172 @@ mod tests {
         assert_eq!(p.binary(), "claude");
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // STORY-001: from_name() devuelve Result
+    // ═══════════════════════════════════════════════════════════════
+
+    /// CA1: from_name("pi") devuelve Ok(Box<dyn AgentProvider>)
+    /// (mismo comportamiento, distinto tipo de retorno).
+    #[test]
+    fn from_name_returns_ok_for_known_provider() {
+        let result = from_name("pi");
+        assert!(
+            result.is_ok(),
+            "from_name(\"pi\") debería devolver Ok, no Err ni paniquear"
+        );
+        let provider = result.unwrap();
+        assert_eq!(provider.binary(), "pi");
+        assert_eq!(provider.display_name(), "pi");
+        assert_eq!(provider.instruction_name(), "skill");
+    }
+
+    /// CA1: from_name para cada provider canónico devuelve Ok.
+    #[test]
+    fn from_name_returns_ok_for_all_canonical_providers() {
+        for name in &["pi", "claude", "codex", "opencode"] {
+            let result = from_name(name);
+            assert!(
+                result.is_ok(),
+                "from_name(\"{name}\") debería devolver Ok"
+            );
+        }
+    }
+
+    /// CA2: from_name("inventado") devuelve Err con mensaje descriptivo,
+    /// sin hacer panic.
+    #[test]
+    fn from_name_returns_err_for_unknown_provider() {
+        let result = from_name("inventado");
+        assert!(
+            result.is_err(),
+            "from_name(\"inventado\") debería devolver Err, NO paniquear"
+        );
+    }
+
+    /// CA2: el mensaje de error debe ser descriptivo:
+    /// mencionar el nombre del provider y sugerir alternativas.
+    #[test]
+    fn from_name_err_message_is_descriptive() {
+        let result = from_name("inventado");
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("inventado"),
+            "El mensaje de error debe mencionar el provider desconocido: {msg}"
+        );
+        assert!(
+            msg.to_lowercase().contains("provider"),
+            "El mensaje debe ser descriptivo e indicar que es un error de provider: {msg}"
+        );
+    }
+
+    /// CA2: Varios nombres inválidos deben devolver Err, no panic.
+    #[test]
+    fn from_name_returns_err_for_various_unknown_names() {
+        for invalid in &["chatgpt", "copilot", "cursor", "", "unknown-agent"] {
+            let result = from_name(invalid);
+            assert!(
+                result.is_err(),
+                "from_name(\"{invalid}\") debería devolver Err"
+            );
+        }
+    }
+
+    /// CA3: Aliases de Claude ("claude-code", "claude_code", "claude")
+    /// siguen funcionando con el nuevo Result.
+    #[test]
+    fn from_name_claude_aliases_return_ok() {
+        for alias in &["claude", "claude-code", "claude_code"] {
+            let result = from_name(alias);
+            assert!(
+                result.is_ok(),
+                "Alias '{alias}' debería devolver Ok"
+            );
+            let provider = result.unwrap();
+            assert_eq!(
+                provider.binary(),
+                "claude",
+                "Alias '{alias}' debería resolver a claude"
+            );
+            assert_eq!(provider.display_name(), "Claude Code");
+        }
+    }
+
+    /// CA4: Aliases de OpenCode ("opencode", "open-code", "open_code")
+    /// siguen funcionando con el nuevo Result.
+    #[test]
+    fn from_name_opencode_aliases_return_ok() {
+        for alias in &["opencode", "open-code", "open_code"] {
+            let result = from_name(alias);
+            assert!(
+                result.is_ok(),
+                "Alias '{alias}' debería devolver Ok"
+            );
+            let provider = result.unwrap();
+            assert_eq!(
+                provider.binary(),
+                "opencode",
+                "Alias '{alias}' debería resolver a opencode"
+            );
+            assert_eq!(provider.display_name(), "OpenCode");
+        }
+    }
+
+    /// CA5: El Result de from_name se puede propagar con el operador `?`.
+    /// Esto verifica que el tipo de retorno es compatible con anyhow.
+    #[test]
+    fn from_name_result_works_with_question_mark_operator() {
+        fn try_get_provider(name: &str) -> anyhow::Result<Box<dyn AgentProvider>> {
+            Ok(from_name(name)?)
+        }
+
+        assert!(try_get_provider("pi").is_ok());
+        assert!(try_get_provider("claude").is_ok());
+        assert!(try_get_provider("inventado").is_err());
+    }
+
+    /// CA5: El Result de from_name se puede manejar con match exhaustivo.
+    #[test]
+    fn from_name_result_handled_with_match() {
+        let binary = match from_name("codex") {
+            Ok(p) => p.binary().to_string(),
+            Err(e) => {
+                panic!("No debería fallar con 'codex': {e}");
+            }
+        };
+        assert_eq!(binary, "codex");
+
+        let desc = match from_name("inventado") {
+            Ok(_) => "ok".to_string(),
+            Err(e) => e.to_string(),
+        };
+        assert!(desc.contains("inventado"));
+    }
+
+    /// CA5: skill_for_role usa internamente from_name y debe manejar el Result.
+    /// Con un provider válido, skill_for_role no debe paniquear.
+    #[test]
+    fn skill_for_role_uses_result_from_from_name() {
+        let cfg = crate::config::Config::default(); // provider = "pi"
+        let path = skill_for_role(&cfg.agents, "developer");
+        assert_eq!(path, ".pi/skills/developer/SKILL.md");
+
+        let path_po = skill_for_role(&cfg.agents, "product_owner");
+        assert_eq!(path_po, ".pi/skills/product-owner/SKILL.md");
+    }
+
+    /// CA5: skill_for_role con provider no-pi también funciona.
+    #[test]
+    fn skill_for_role_works_with_claude_provider() {
+        let toml = r#"
+[agents]
+provider = "claude"
+"#;
+        let cfg: crate::config::Config = toml::from_str(toml).unwrap();
+        let path = skill_for_role(&cfg.agents, "developer");
+        assert_eq!(path, ".claude/agents/developer.md");
+    }
+
     // ── pi ───────────────────────────────────────────────────────────
 
     #[test]

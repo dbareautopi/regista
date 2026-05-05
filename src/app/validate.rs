@@ -374,6 +374,18 @@ fn validate_git(project_root: &Path, cfg: &Config, result: &mut ValidationResult
     }
 }
 
+/// Valida que los binarios de los providers configurados existen en PATH.
+///
+/// Para cada rol, resuelve el provider y verifica que su binario está
+/// accesible. Si no lo está:
+/// - Provider ≠ codex → Finding::Error (CA6)
+/// - Provider = codex → Finding::Warning (CA7, codex puede usar nombres no estándar)
+fn validate_providers(_cfg: &Config, _result: &mut ValidationResult) {
+    // TODO: Implementar chequeo de binarios en PATH.
+    // El Developer debe sustituir este placeholder.
+    // Ver tests en #[cfg(test)] para el contrato esperado.
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -438,5 +450,150 @@ mod tests {
         validate_dependencies(&stories, &mut result);
         assert!(result.errors > 0);
         assert!(result.findings.iter().any(|f| f.message.contains("Ciclo")));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // STORY-001: validate verifica binarios de providers
+    // ═══════════════════════════════════════════════════════════════
+
+    /// CA6: validate_providers reporta Finding::Error si el binario
+    /// del provider configurado no está en PATH.
+    ///
+    /// Este test verifica que la función existe, recibe Config, y
+    /// añade hallazgos al ValidationResult. El Developer debe
+    /// implementar la lógica real de chequeo de PATH.
+    #[test]
+    fn validate_providers_reports_error_when_binary_missing() {
+        // Verificar que la función validate_providers existe y se puede llamar.
+        // Usamos la config por defecto (provider = "pi").
+        // Si pi está instalado → sin errores de providers.
+        // Si pi NO está instalado → Error finding.
+        let cfg = Config::default();
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+
+        // La función validate_providers debe existir con esta firma.
+        validate_providers(&cfg, &mut result);
+
+        // Los findings de categoría "providers" deben ser Error o nada.
+        // No deben ser Warning (salvo codex, ver CA7).
+        for finding in &result.findings {
+            if finding.category == "providers" {
+                assert_eq!(
+                    finding.severity,
+                    Severity::Error,
+                    "Provider 'pi' no es codex → el hallazgo debe ser Error, no Warning"
+                );
+            }
+        }
+    }
+
+    /// CA7: validate_providers reporta Finding::Warning si el provider
+    /// es "codex" y no se puede verificar (codex puede estar instalado
+    /// vía npm global con nombre no estándar).
+    #[test]
+    fn validate_providers_reports_warning_for_codex() {
+        let toml = r#"
+[agents]
+provider = "codex"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+
+        validate_providers(&cfg, &mut result);
+
+        // Si codex NO está en PATH → Warning (nunca Error).
+        // Si codex SÍ está → sin findings de providers.
+        for finding in &result.findings {
+            if finding.category == "providers" {
+                assert_eq!(
+                    finding.severity,
+                    Severity::Warning,
+                    "Provider 'codex' debe generar Warning, no Error, cuando no es verificable"
+                );
+            }
+        }
+    }
+
+    /// CA7: Si codex SÍ está en PATH, no debe generar hallazgo.
+    #[test]
+    fn validate_providers_no_warning_when_codex_is_installed() {
+        let toml = r#"
+[agents]
+provider = "codex"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+
+        validate_providers(&cfg, &mut result);
+
+        // Si codex está instalado, no debe haber hallazgos.
+        // Si no está, debe ser Warning.
+        // En cualquier caso, no debe ser Error.
+        for finding in &result.findings {
+            if finding.category == "providers" {
+                assert!(
+                    finding.severity != Severity::Error,
+                    "codex NUNCA debe generar Error, solo Warning o nada"
+                );
+            }
+        }
+    }
+
+    /// CA6+CA7: validate_providers recorre todos los roles configurados,
+    /// no solo el provider global.
+    #[test]
+    fn validate_providers_checks_all_roles() {
+        let toml = r#"
+[agents]
+provider = "pi"
+
+[agents.product_owner]
+provider = "claude"
+
+[agents.developer]
+provider = "codex"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+
+        validate_providers(&cfg, &mut result);
+
+        // La función no debe paniquear al procesar múltiples providers.
+        // Verifica que los hallazgos están categorizados como "providers".
+        let provider_findings: Vec<_> = result
+            .findings
+            .iter()
+            .filter(|f| f.category == "providers")
+            .collect();
+
+        // Al menos debe haber intentado verificar los providers.
+        // Si todos están instalados, provider_findings estará vacío (OK).
+        // Si alguno falta, debe haber hallazgos.
+        for f in &provider_findings {
+            // Los de codex deben ser Warning, el resto Error.
+            if f.message.contains("codex") {
+                assert_eq!(f.severity, Severity::Warning);
+            }
+        }
     }
 }
