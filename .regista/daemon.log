@@ -477,3 +477,7 @@
 [2m2026-05-05T04:31:18.504492Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m 🔓 Deadlock → PO debe refinar STORY-001: en Draft — necesita refinamiento del PO (desbloquearía 0 historias)
 [2m2026-05-05T04:31:18.504530Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m 🔓 Deadlock detectado: en Draft — necesita refinamiento del PO (desbloquearía 0 historias)
 [2m2026-05-05T04:31:18.504579Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 PO (plan) (pi) | STORY-001 (Draft → Ready)
+[2m2026-05-05T04:31:18.567117Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   [1/5] invocando pi (./.pi/skills/product-owner/SKILL.md)
+[2m2026-05-05T04:32:42.140235Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   ✓ agente completado (intento 1)
+[2m2026-05-05T04:32:42.141308Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 99 ══════
+[2m2026-05-05T04:32:42.149800Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 QA (tests) (pi) | STORY-001 (Ready → Tests Ready)

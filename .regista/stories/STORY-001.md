@@ -1,7 +1,7 @@
 # STORY-001: `from_name()` devuelve `Result` + `validate` verifica binarios de providers
 
 ## Status
-**Draft**
+**Ready**
 
 ## Epic
 EPIC-01
@@ -25,3 +25,4 @@ El método `from_name()` en `src/infra/providers.rs` actualmente hace `panic!` c
 
 ## Activity Log
 - 2026-05-04 | PO | Historia generada desde roadmap/AUDITORIA-ESCALABILIDAD.md (hallazgos #7.1, #7.2).
+- 2026-05-05 | PO | Refinamiento completado. DoR verificado: descripción clara (2 cambios concretos), 9 CAs específicos y testeables, sin dependencias. Callers de from_name() identificados: providers.rs (skill_for_role), pipeline.rs, init.rs, plan.rs — todos necesitarán adaptación al Result. Lista para QA.
