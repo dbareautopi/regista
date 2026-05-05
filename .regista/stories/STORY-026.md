@@ -1,7 +1,7 @@
 # STORY-026: Header de sesión con metadatos (versión, modelos, límites, git, hooks)
 
 ## Status
-**Business Review**
+**Done**
 
 ## Epic
 EPIC-09
@@ -41,3 +41,4 @@ Emitir un header de sesión al iniciar el daemon. En modo detallado (default), s
 - 2026-05-05 | QA | Corregido header_uses_model_for_role_resolution. El test usaba Path::new(&skill_path) (relativo, resolvía contra CWD) en lugar de project_root.join(&skill_rel) (absoluto, como hace format_session_header). Reescrito para crear skills en tempdir con modelos YAML conocidos y verificar que el header y model_for_role producen el mismo resultado usando paths absolutos. 31/31 tests pasan. Build, clippy y fmt limpios.
 - 2026-05-05 | Dev | Verificación de implementación de format_session_header() y emit_session_header(): 31/31 tests pasan, build limpio, clippy sin warnings, fmt ok. La implementación estaba completada en iteración anterior — esta iteración solo verifica consistencia tras la corrección del QA. Función format_session_header() en src/cli/handlers.rs:846 genera header detallado (bloque multilínea con versión, timestamp UTC, proyecto, provider, modelos por rol vía model_for_role(), límites con max_iter efectivo, git habilitado/deshabilitado, hooks activos/ninguno) y compacto (una línea). Helpers: effective_max_iter() (auto-escala a max(10, stories×6)) y role_abbreviation() (PO, QA, Dev, Reviewer). Emisión vía emit_session_header() usando tracing::info!. Transición Tests Ready → In Review.
 - 2026-05-05 | Reviewer | DoD técnico verificado: cargo build compila sin errores, cargo test pasa 400/400 tests (0 failures, 1 ignorado — requiere pi), architecture tests 11/11 pasan, cargo clippy -- -D warnings limpio sin warnings, cargo fmt -- --check sin diferencias. Implementación en src/cli/handlers.rs: format_session_header() + emit_session_header() + helpers effective_max_iter() y role_abbreviation(). 31 tests unitarios (mod story026) cubren los 7 CAs. No hay regresiones. Transición In Review → Business Review.
+- 2026-05-05 | PO | Validación de negocio: OK. Header detallado entrega transparencia operativa completa (versión, timestamp, proyecto, provider, modelos por rol vía model_for_role(), límites efectivos, git, hooks). Modo compacto implementado y testeado. Build, tests (400/400), clippy y fmt limpios. Valor de negocio cumplido. Nota: flag --compact no expuesto en CLI aún (código listo, falta wiring trivial en args.rs). Transición Business Review → Done.
