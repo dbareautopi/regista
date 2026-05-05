@@ -88,6 +88,7 @@ pub struct AgentRoleConfig {
     /// Si es `None`, hereda del `model` global de `AgentsConfig`,
     /// luego del YAML frontmatter del skill, y finalmente `"desconocido"`.
     #[serde(default)]
+    #[allow(dead_code)]
     pub model: Option<String>,
 }
 
@@ -105,6 +106,7 @@ pub struct AgentsConfig {
     /// Si es `None`, `model_for_role` intenta leerlo del YAML frontmatter
     /// del archivo de skill y usa `"desconocido"` como último fallback.
     #[serde(default)]
+    #[allow(dead_code)]
     pub model: Option<String>,
 
     /// Configuración del Product Owner.
@@ -181,9 +183,34 @@ impl AgentsConfig {
     /// 4. `"desconocido"`
     ///
     /// No paniquea si `skill_path` no existe — trata el error como fallback al paso 3.
-    pub fn model_for_role(&self, _role: &str, _skill_path: &Path) -> String {
-        // STUB: el Developer implementará la lógica de resolución.
-        // Prioridad: rol > global > YAML frontmatter > "desconocido".
+    #[allow(dead_code)]
+    pub fn model_for_role(&self, role: &str, skill_path: &Path) -> String {
+        // 1. Modelo específico del rol
+        let role_config = match role {
+            "product_owner" => Some(&self.product_owner),
+            "qa_engineer" => Some(&self.qa_engineer),
+            "developer" => Some(&self.developer),
+            "reviewer" => Some(&self.reviewer),
+            _ => None,
+        };
+
+        if let Some(config) = role_config {
+            if let Some(ref model) = config.model {
+                return model.clone();
+            }
+        }
+
+        // 2. Modelo global
+        if let Some(ref model) = self.model {
+            return model.clone();
+        }
+
+        // 3. YAML frontmatter del skill
+        if let Some(model) = crate::infra::providers::read_yaml_field(skill_path, "model") {
+            return model;
+        }
+
+        // 4. Fallback
         "desconocido".to_string()
     }
 }
@@ -915,7 +942,10 @@ provider = "opencode"
     #[test]
     fn story019_ca1_agents_config_model_field_exists_and_defaults_none() {
         let cfg = AgentsConfig::default();
-        assert!(cfg.model.is_none(), "AgentsConfig.model debe ser None por defecto");
+        assert!(
+            cfg.model.is_none(),
+            "AgentsConfig.model debe ser None por defecto"
+        );
     }
 
     /// CA1: Verifica que el campo model es `pub` (accesible desde fuera).
@@ -990,7 +1020,9 @@ provider = "pi"
 model = "gpt-5"
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
-        let result = cfg.agents.model_for_role("developer", Path::new("nonexistent.md"));
+        let result = cfg
+            .agents
+            .model_for_role("developer", Path::new("nonexistent.md"));
         assert_eq!(result, "gpt-5");
     }
 
@@ -1006,7 +1038,9 @@ model = "claude-sonnet-4"
 model = "gpt-5"
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
-        let result = cfg.agents.model_for_role("developer", Path::new("nonexistent.md"));
+        let result = cfg
+            .agents
+            .model_for_role("developer", Path::new("nonexistent.md"));
         assert_eq!(
             result, "gpt-5",
             "El modelo de rol (gpt-5) debe prevalecer sobre el global (claude-sonnet-4)"
@@ -1024,7 +1058,9 @@ provider = "pi"
 model = "claude-sonnet-4"
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
-        let result = cfg.agents.model_for_role("developer", Path::new("nonexistent.md"));
+        let result = cfg
+            .agents
+            .model_for_role("developer", Path::new("nonexistent.md"));
         assert_eq!(result, "claude-sonnet-4");
     }
 
