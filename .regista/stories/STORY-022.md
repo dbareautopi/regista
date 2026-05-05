@@ -1,7 +1,7 @@
 # STORY-022: Streaming de stdout del agente en `invoke_once()` + parámetro `verbose`
 
 ## Status
-**Ready**
+**Tests Ready**
 
 ## Epic
 EPIC-08
@@ -28,3 +28,4 @@ Modificar `invoke_once()` en `infra/agent.rs` para que, cuando `verbose = true`,
 ## Activity Log
 - 2026-05-05 | PO | Historia generada desde specs/spec-logs-transparentes.md (sección 3: Streaming de stdout del agente).
 - 2026-05-05 | PO | Refinamiento: validada contra DoR. Supera los 3 criterios (descripción clara, CAs testeables, dependencias identificadas). Documentadas 5 decisiones de diseño en .regista/decisions/STORY-022-po-refinement-2026-05-05.md. Transición Draft → Ready.
+- 2026-05-05 | QA | Verificación de tests unitarios en `mod story022` de `src/infra/agent.rs`. 25 tests existentes cubren todos los CAs testeables (CA1-CA7, CA10-CA11). CA8 y CA9 son verificaciones de compilación/ejecución del Developer. Los tests usan providers de prueba mínimos (EchoProvider, PrintfProvider, ShProvider, SleepProvider) que ejecutan binarios reales del sistema. Los tests de CA3 y CA5 usan `tracing_subscriber::fmt().with_writer()` para capturar y verificar salida de logs. Las firmas de `invoke_once()` e `invoke_with_retry()` referencian el nuevo parámetro `verbose: bool` — el Developer deberá añadirlo a las funciones reales. Documentado en .regista/decisions/STORY-022-qa-test-review-2026-05-05.md. Transición Ready → Tests Ready.
