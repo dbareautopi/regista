@@ -1,7 +1,7 @@
 # STORY-019: Añadir campo `model` a configuración y función `model_for_role()`
 
 ## Status
-**Draft**
+**Ready**
 
 ## Epic
 EPIC-07
@@ -26,3 +26,4 @@ Ampliar la configuración de agentes en `config.rs` para que soporte un campo `m
 
 ## Activity Log
 - 2026-05-05 | PO | Historia generada desde specs/spec-logs-transparentes.md (sección 7: Resolución del modelo).
+- 2026-05-05 | PO | Refinamiento completado. Historia cumple DoR: descripción clara, CAs testeables (CA1-CA10), sin dependencias. Pasada a Ready. Decisión documentada en .regista/decisions/STORY-019-po-refinement-2026-05-05.md.
