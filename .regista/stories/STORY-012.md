@@ -1,7 +1,7 @@
 # STORY-012: Migrar `pipeline.rs` a async — `process_story` y loop principal
 
 ## Status
-**Ready**
+**Tests Ready**
 
 ## Epic
 EPIC-04
@@ -23,4 +23,5 @@ Con `agent.rs` ya async (STORY-010) y el estado compartido en `Arc<RwLock<>>` (S
 - Bloqueado por: STORY-010, STORY-011
 
 ## Activity Log
+- 2026-05-05 | QA | Verificación de cobertura de tests para los 8 CAs. Los 8 CAs ya están cubiertos por 29 tests existentes en 3 archivos (pipeline.rs: 16 tests CA1-CA3/CA8, hooks.rs: 6 tests CA4, git.rs: 7 tests CA5). No se escribieron nuevos tests. Decisión documentada en .regista/decisions/STORY-012-qa-20260505T000000.md.
 - 2026-05-04 | PO | Historia generada desde roadmap/AUDITORIA-ESCALABILIDAD.md (hallazgo #10.2, recomendación #6).
