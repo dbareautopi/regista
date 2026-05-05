@@ -117,22 +117,48 @@ impl AgentsConfig {
         ["product_owner", "qa_engineer", "developer", "reviewer"]
     }
 
-    /// STORY-002 placeholder: resuelve el nombre del provider para un rol.
+    /// Resuelve el nombre del provider para un rol dado.
     ///
-    /// Implementado por el Developer — la lógica se migra desde
-    /// `infra::providers::provider_for_role()`.
+    /// Si el rol tiene `provider` explícito, lo usa.
+    /// Si no, hereda del provider global.
+    /// Si el rol no es reconocido, devuelve el provider global.
     pub fn provider_for_role(&self, role: &str) -> String {
-        let _ = role;
-        unimplemented!("STORY-002: provider_for_role será migrado a método de AgentsConfig")
+        let config = match role {
+            "product_owner" => &self.product_owner,
+            "qa_engineer" => &self.qa_engineer,
+            "developer" => &self.developer,
+            "reviewer" => &self.reviewer,
+            _ => return self.provider.clone(),
+        };
+        config
+            .provider
+            .clone()
+            .unwrap_or_else(|| self.provider.clone())
     }
 
-    /// STORY-002 placeholder: resuelve la ruta de skill para un rol.
+    /// Resuelve la ruta al archivo de instrucciones (skill) para un rol.
     ///
-    /// Implementado por el Developer — la lógica se migra desde
-    /// `infra::providers::skill_for_role()`.
+    /// Si el rol tiene `skill` explícito, lo usa.
+    /// Si no, usa la convención de directorio del provider.
+    /// Si el rol no es reconocido, devuelve String vacía.
     pub fn skill_for_role(&self, role: &str) -> String {
-        let _ = role;
-        unimplemented!("STORY-002: skill_for_role será migrado a método de AgentsConfig")
+        let config = match role {
+            "product_owner" => &self.product_owner,
+            "qa_engineer" => &self.qa_engineer,
+            "developer" => &self.developer,
+            "reviewer" => &self.reviewer,
+            _ => return String::new(),
+        };
+
+        if let Some(ref skill) = config.skill {
+            return skill.clone();
+        }
+
+        let provider_name = self.provider_for_role(role);
+        let provider = crate::infra::providers::from_name(&provider_name).expect(
+            "provider inválido en configuración — ejecuta 'regista validate' para diagnosticar",
+        );
+        provider.instruction_dir(role)
     }
 }
 
@@ -359,7 +385,6 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infra::providers;
 
     // ── Defaults ───────────────────────────────────────────────────────
 
@@ -383,15 +408,15 @@ mod tests {
         // Por defecto, el provider es pi → usa .pi/skills/<rol>/SKILL.md
         // Roles con underscore se convierten a hyphens (requisito de pi)
         assert_eq!(
-            providers::skill_for_role(&cfg.agents, "product_owner"),
+            cfg.agents.skill_for_role("product_owner"),
             ".pi/skills/product-owner/SKILL.md"
         );
         assert_eq!(
-            providers::skill_for_role(&cfg.agents, "qa_engineer"),
+            cfg.agents.skill_for_role("qa_engineer"),
             ".pi/skills/qa-engineer/SKILL.md"
         );
         assert_eq!(
-            providers::skill_for_role(&cfg.agents, "developer"),
+            cfg.agents.skill_for_role("developer"),
             ".pi/skills/developer/SKILL.md"
         );
     }
@@ -400,7 +425,7 @@ mod tests {
     fn default_provider_for_role_is_pi() {
         let cfg = Config::default();
         for role in AgentsConfig::all_roles() {
-            assert_eq!(providers::provider_for_role(&cfg.agents, role), "pi");
+            assert_eq!(cfg.agents.provider_for_role(role), "pi");
         }
     }
 
@@ -415,14 +440,8 @@ provider = "claude"
         let cfg: Config = toml::from_str(toml).unwrap();
         assert_eq!(cfg.agents.provider, "claude");
         // Los roles heredan el provider global
-        assert_eq!(
-            providers::provider_for_role(&cfg.agents, "product_owner"),
-            "claude"
-        );
-        assert_eq!(
-            providers::provider_for_role(&cfg.agents, "developer"),
-            "claude"
-        );
+        assert_eq!(cfg.agents.provider_for_role("product_owner"), "claude");
+        assert_eq!(cfg.agents.provider_for_role("developer"), "claude");
     }
 
     #[test]
@@ -436,12 +455,9 @@ provider = "pi"
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
         // PO hereda claude del global
-        assert_eq!(
-            providers::provider_for_role(&cfg.agents, "product_owner"),
-            "claude"
-        );
+        assert_eq!(cfg.agents.provider_for_role("product_owner"), "claude");
         // Dev tiene su propio provider
-        assert_eq!(providers::provider_for_role(&cfg.agents, "developer"), "pi");
+        assert_eq!(cfg.agents.provider_for_role("developer"), "pi");
     }
 
     #[test]
@@ -455,12 +471,12 @@ skill = ".pi/skills/senior-reviewer/SKILL.md"
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
         assert_eq!(
-            providers::skill_for_role(&cfg.agents, "reviewer"),
+            cfg.agents.skill_for_role("reviewer"),
             ".pi/skills/senior-reviewer/SKILL.md"
         );
         // Los demás usan la convención
         assert_eq!(
-            providers::skill_for_role(&cfg.agents, "developer"),
+            cfg.agents.skill_for_role("developer"),
             ".pi/skills/developer/SKILL.md"
         );
     }
@@ -480,30 +496,21 @@ provider = "codex"
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
 
+        assert_eq!(cfg.agents.provider_for_role("product_owner"), "claude");
         assert_eq!(
-            providers::provider_for_role(&cfg.agents, "product_owner"),
-            "claude"
-        );
-        assert_eq!(
-            providers::skill_for_role(&cfg.agents, "product_owner"),
+            cfg.agents.skill_for_role("product_owner"),
             ".claude/agents/po-custom.md"
         );
 
+        assert_eq!(cfg.agents.provider_for_role("developer"), "codex");
         assert_eq!(
-            providers::provider_for_role(&cfg.agents, "developer"),
-            "codex"
-        );
-        assert_eq!(
-            providers::skill_for_role(&cfg.agents, "developer"),
+            cfg.agents.skill_for_role("developer"),
             ".agents/skills/developer/SKILL.md"
         );
 
         // QA y Reviewer heredan pi
-        assert_eq!(
-            providers::provider_for_role(&cfg.agents, "qa_engineer"),
-            "pi"
-        );
-        assert_eq!(providers::provider_for_role(&cfg.agents, "reviewer"), "pi");
+        assert_eq!(cfg.agents.provider_for_role("qa_engineer"), "pi");
+        assert_eq!(cfg.agents.provider_for_role("reviewer"), "pi");
     }
 
     #[test]
@@ -805,7 +812,10 @@ provider = "codex"
     /// CA3: all_roles() es iterable y sus elementos son &str.
     #[test]
     fn story002_ca3_all_roles_is_iterable() {
-        let count = AgentsConfig::all_roles().iter().filter(|r| r.contains('_')).count();
+        let count = AgentsConfig::all_roles()
+            .iter()
+            .filter(|r| r.contains('_'))
+            .count();
         assert_eq!(count, 2, "product_owner y qa_engineer contienen underscore");
     }
 

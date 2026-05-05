@@ -717,9 +717,9 @@ async fn process_story(
 
     // Determinar el rol, provider, y path de instrucciones
     let role = workflow.map_status_to_role(story.status);
-    let provider_name = providers::provider_for_role(&cfg.agents, role);
+    let provider_name = cfg.agents.provider_for_role(role);
     let provider = providers::from_name(&provider_name)?;
-    let skill_path_str = providers::skill_for_role(&cfg.agents, role);
+    let skill_path_str = cfg.agents.skill_for_role(role);
     let instruction_path = project_root.join(&skill_path_str);
 
     // Prompt según el estado (sin cambios)
@@ -1633,13 +1633,13 @@ mod tests {
                     "workflow.map_status_to_role({status}) = {role}, expected {expected_role}"
                 );
 
-                let provider_name = providers::provider_for_role(&cfg.agents, role);
+                let provider_name = cfg.agents.provider_for_role(role);
                 assert_eq!(
                     provider_name, *expected_provider,
                     "provider para rol {role} debería ser {expected_provider}"
                 );
 
-                let skill_path = providers::skill_for_role(&cfg.agents, role);
+                let skill_path = cfg.agents.skill_for_role(role);
                 assert!(
                     !skill_path.is_empty(),
                     "skill_path para rol {role} no debe estar vacío"
@@ -1712,14 +1712,14 @@ mod tests {
             assert_eq!(alt_role, "reviewer");
 
             // La resolución de provider refleja el cambio de rol
-            let can_provider = providers::provider_for_role(&cfg.agents, can_role);
-            let alt_provider = providers::provider_for_role(&cfg.agents, alt_role);
+            let can_provider = cfg.agents.provider_for_role(can_role);
+            let alt_provider = cfg.agents.provider_for_role(alt_role);
             // Ambos usan "pi" con defaults, pero los skill paths difieren
             assert_eq!(can_provider, "pi");
             assert_eq!(alt_provider, "pi");
 
-            let can_skill = providers::skill_for_role(&cfg.agents, can_role);
-            let alt_skill = providers::skill_for_role(&cfg.agents, alt_role);
+            let can_skill = cfg.agents.skill_for_role(can_role);
+            let alt_skill = cfg.agents.skill_for_role(alt_role);
             assert_ne!(
                 can_skill, alt_skill,
                 "skill paths deben diferir cuando el rol difiere: {can_skill} vs {alt_skill}"

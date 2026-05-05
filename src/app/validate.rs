@@ -193,7 +193,7 @@ fn validate_skills(project_root: &Path, cfg: &Config, result: &mut ValidationRes
 
     let mut found = 0;
     for (i, role) in roles.iter().enumerate() {
-        let path_str = providers::skill_for_role(&cfg.agents, role);
+        let path_str = cfg.agents.skill_for_role(role);
         let path = project_root.join(&path_str);
         let label = role_names[i];
         if path.exists() && path.is_file() {
@@ -404,7 +404,7 @@ fn validate_providers(cfg: &Config, result: &mut ValidationResult) {
     // Providers por rol
     let roles = ["product_owner", "qa_engineer", "developer", "reviewer"];
     for role in &roles {
-        let name = providers::provider_for_role(&cfg.agents, role);
+        let name = cfg.agents.provider_for_role(role);
         provider_names.insert(name);
     }
 
