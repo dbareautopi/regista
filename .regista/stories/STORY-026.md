@@ -1,7 +1,7 @@
 # STORY-026: Header de sesión con metadatos (versión, modelos, límites, git, hooks)
 
 ## Status
-**Ready**
+**Tests Ready**
 
 ## Epic
 EPIC-09
@@ -36,3 +36,4 @@ Emitir un header de sesión al iniciar el daemon. En modo detallado (default), s
 
 ## Activity Log
 - 2026-05-05 | PO | Historia generada desde specs/spec-logs-transparentes.md (sección 2: Header de sesión).
+- 2026-05-05 | QA | Tests unitarios verificados: 31 tests en src/cli/handlers.rs (mod story026) cubren los 7 CAs. Formato de bloque y compacto, modelos vía model_for_role() con YAML fallback, límites con max_iter efectivo y floor, git habilitado/deshabilitado, hooks parciales/totales/ninguno, emisión vía tracing::info!. Sin tests adicionales requeridos.
