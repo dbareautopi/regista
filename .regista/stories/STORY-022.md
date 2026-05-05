@@ -26,6 +26,36 @@ Modificar `invoke_once()` en `infra/agent.rs` para que, cuando `verbose = true`,
 (Ninguna)
 
 ## Activity Log
+- 2026-05-05 | Dev | Decimocuarta verificación de STORY-022. Re-verificación completa del código de producción:
+  * `cargo check` (0.20s): OK, sin errores.
+  * `cargo build` (0.30s): OK, binario generado.
+  * `cargo clippy --no-deps` (0.33s): OK, 0 warnings.
+  * `cargo fmt -- --check`: OK, código formateado.
+  * `cargo test`: NO compila — los mismos 3 errores E0716 persisten en `mod story022`.
+  * Código de producción cubre CA1-CA8, CA10-CA11:
+    - `Cargo.toml`: feature `io-util` añadido a tokio (CA2).
+    - `invoke_once()` (L316): nuevo parámetro `verbose: bool`. `verbose=false` → `wait_with_output()`. `verbose=true` → `invoke_once_verbose()` (CA2, CA6).
+    - `invoke_once_verbose()` (L358): `child.stdout.take()` + `BufReader::new()` + `read_line()` en bucle async. Cada línea no vacía: `tracing::info!("  │ {}", trimmed)`. stdout acumulado en `Vec<u8>`. stderr en `tokio::spawn` separado con `read_to_end()`, sin streaming (CA2, CA3, CA4, CA5).
+    - `kill_process_by_pid()` (L440): helper extraído para timeout cross-platform en ambos modos (CA7).
+    - `invoke_with_retry()` (L78): `verbose: bool` como último parámetro (CA1).
+    - `invoke_with_retry_blocking()` (L193): `verbose: bool` propagado (CA1, CA10).
+    - Call sites en `app/plan.rs:152` y `app/pipeline.rs:774` pasan `false` (CA10).
+    - `AgentResult` mantiene `stdout: String`, `stderr: String`, `exit_code: i32` (CA11).
+  * Errores E0716 en tests del QA (NO corregidos — responsabilidad del QA, 14ª iteración sin corrección):
+    | Test | Línea | Error |
+    |------|-------|-------|
+    | `ca3_verbose_logs_lines_with_pipe_prefix` | 1763 | `String::from_utf8_lossy(&buffer.lock().unwrap())` — `MutexGuard` temporal destruido antes que el `Cow<str>` |
+    | `ca3_empty_lines_not_logged` | 1809 | `String::from_utf8_lossy(&buffer.lock().unwrap())` — mismo error E0716 |
+    | `ca5_stderr_not_streamed_to_log` | 2006 | `String::from_utf8_lossy(&buffer.lock().unwrap())` — mismo error E0716 |
+  * Solución exacta (sin ambigüedad):
+    ```rust
+    let binding = buffer.lock().unwrap();
+    let log_output = String::from_utf8_lossy(&binding);
+    ```
+    en las 3 ubicaciones (líneas 1763, 1809, 2006).
+  * CA9 bloqueado: `cargo test` no puede verificarse hasta que el QA corrija los 3 errores de compilación.
+  * NO se avanza a In Review. El orquestador debe pasar el turno al QA.
+  * Documentado en .regista/decisions/STORY-022-dev-verification-14-2026-05-05.md.
 - 2026-05-05 | PO | Historia generada desde specs/spec-logs-transparentes.md (sección 3: Streaming de stdout del agente).
 - 2026-05-05 | PO | Refinamiento: validada contra DoR. Supera los 3 criterios (descripción clara, CAs testeables, dependencias identificadas). Documentadas 5 decisiones de diseño en .regista/decisions/STORY-022-po-refinement-2026-05-05.md. Transición Draft → Ready.
 - 2026-05-05 | QA | Verificación de tests unitarios en `mod story022` de `src/infra/agent.rs`. 25 tests existentes cubren todos los CAs testeables (CA1-CA7, CA10-CA11). CA8 y CA9 son verificaciones de compilación/ejecución del Developer. Los tests usan providers de prueba mínimos (EchoProvider, PrintfProvider, ShProvider, SleepProvider) que ejecutan binarios reales del sistema. Los tests de CA3 y CA5 usan `tracing_subscriber::fmt().with_writer()` para capturar y verificar salida de logs. Las firmas de `invoke_once()` e `invoke_with_retry()` referencian el nuevo parámetro `verbose: bool` — el Developer deberá añadirlo a las funciones reales. Documentado en .regista/decisions/STORY-022-qa-test-review-2026-05-05.md. Transición Ready → Tests Ready.
