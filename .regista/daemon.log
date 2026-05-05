@@ -196,3 +196,7 @@
 [2m2026-05-05T01:40:24.965857Z[0m [33m WARN[0m [2mregista::app::pipeline[0m[2m:[0m   ⚠ STORY-010: el agente no cambió el estado (sigue en Tests Ready)
 [2m2026-05-05T01:40:24.967131Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 41 ══════
 [2m2026-05-05T01:40:24.972415Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 Dev (implement) (pi) | STORY-010 (Tests Ready → In Review)
+[2m2026-05-05T01:40:25.022641Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   [1/5] invocando pi (./.pi/skills/developer/SKILL.md)
+[2m2026-05-05T01:42:30.411590Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   ✓ agente completado (intento 1)
+[2m2026-05-05T01:42:30.412710Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 42 ══════
+[2m2026-05-05T01:42:30.414109Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 Reviewer (pi) | STORY-010 (In Review → Business Review)
