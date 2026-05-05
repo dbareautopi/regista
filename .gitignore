@@ -1,2 +1,10 @@
 /target/
 **/*.bak
+
+# Runtime artifacts of regista self-hosting
+.regista/daemon.log
+.regista/daemon.pid
+.regista/state.toml
+.regista/decisions/
+.regista/logs/
+.regista/health.json
