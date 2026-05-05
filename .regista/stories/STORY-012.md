@@ -1,7 +1,7 @@
 # STORY-012: Migrar `pipeline.rs` a async — `process_story` y loop principal
 
 ## Status
-**Tests Ready**
+**In Review**
 
 ## Epic
 EPIC-04
@@ -10,19 +10,20 @@ EPIC-04
 Con `agent.rs` ya async (STORY-010) y el estado compartido en `Arc<RwLock<>>` (STORY-011), el último paso es convertir `process_story()` y el loop principal de `pipeline.rs` a async. El loop principal usará `.await` en `process_story()` y estará listo para que en #01 se añada `tokio::spawn` para ejecutar múltiples historias en paralelo. Por ahora, el comportamiento sigue siendo secuencial (una historia a la vez), pero la infraestructura async está en su lugar.
 
 ## Criterios de aceptación
-- [ ] CA1: `process_story()` es una función `async` que invoca `invoke_with_retry(...).await`
-- [ ] CA2: El loop principal en `run_real()` usa `process_story(...).await` secuencialmente (sin `tokio::spawn` aún)
-- [ ] CA3: `run_dry()` también se adapta a async o se mantiene síncrono (no invoca agentes reales, no necesita tokio)
-- [ ] CA4: Las funciones `run_hook()` en `hooks.rs` se migran a `tokio::process::Command` (o se ejecutan con `spawn_blocking`)
-- [ ] CA5: `snapshot()` y `rollback()` en `git.rs` se ejecutan con `spawn_blocking` (git es I/O de proceso, no necesita ser async nativo)
-- [ ] CA6: `cargo test --lib orchestrator` pasa
-- [ ] CA7: `cargo build` compila sin warnings
-- [ ] CA8: El pipeline ejecutado con `regista run --dry-run` produce la misma salida que antes de la migración
+- [x] CA1: `process_story()` es una función `async` que invoca `invoke_with_retry(...).await`
+- [x] CA2: El loop principal en `run_real()` usa `process_story(...).await` secuencialmente (sin `tokio::spawn` aún)
+- [x] CA3: `run_dry()` también se adapta a async o se mantiene síncrono (no invoca agentes reales, no necesita tokio)
+- [x] CA4: Las funciones `run_hook()` en `hooks.rs` se migran a `tokio::process::Command` (o se ejecutan con `spawn_blocking`)
+- [x] CA5: `snapshot()` y `rollback()` en `git.rs` se ejecutan con `spawn_blocking` (git es I/O de proceso, no necesita ser async nativo)
+- [x] CA6: `cargo test --lib orchestrator` pasa
+- [x] CA7: `cargo build` compila sin warnings
+- [x] CA8: El pipeline ejecutado con `regista run --dry-run` produce la misma salida que antes de la migración
 
 ## Dependencias
 - Bloqueado por: STORY-010, STORY-011
 
 ## Activity Log
+- 2026-05-05 | Dev | 35ª sesión: verificación completa de la implementación async. Todos los CAs confirmados: CA1-CA5 ya implementados en sesiones previas (process_story async, loop principal con .await secuencial, run_dry síncrono, hooks con tokio::process::Command, git con spawn_blocking). Suite completa: 318 tests (307 unit + 11 architecture), 0 fallos, 1 ignorado. 15 tests de story012: 15 passed. cargo build, cargo clippy -- -D warnings y cargo fmt --check limpios (CA7 ✅). Dry-run: 18 historias → Done, 59 iteraciones (CA8 ✅). Todos los CAs satisfechos. Avance a In Review (Tests Ready → In Review). Decisión documentada en .regista/decisions/STORY-012-dev-20260505-verify-final.md.
 - 2026-05-05 | QA | 9ª verificación de tests STORY-012 tras nuevo reporte del Developer: inspección de los 4 tests mencionados (run_real_with_terminal_stories_completes_in_one_iteration, run_real_with_no_stories_completes_immediately, run_real_with_draft_story_invokes_po_path, run_real_shared_state_reflects_sequential_processing). Todos ya tienen #[tokio::test] async fn + .await desde la 1ª ronda de QA. Suite verificada: 318 tests (307 unit + 11 architecture), 0 fallos, 1 ignorado. Los 15 tests de story012 compilan y pasan (cargo test story012: 15 passed, 0 failed). cargo build, cargo clippy -- -D warnings y cargo fmt --check limpios. Los reportes del Developer son stale — ninguna corrección necesaria. Status mantenido en Tests Ready. Historia lista para In Review (Tests Ready → In Review). Decisión documentada en .regista/decisions/STORY-012-qa-20260505-verify-9.md.
 - 2026-05-05 | QA | 8ª verificación de tests STORY-012 tras reporte del Developer (34ª sesión): verificación con cargo clean + rebuild completo desde cero. Suite completa: 318 tests (307 unit + 11 architecture), 0 fallos, 1 ignorado. Los 15 tests de story012 compilan y pasan sin errores (cargo test story012: 15 passed, 0 failed). cargo build, cargo clippy -- -D warnings y cargo fmt --check limpios. Los 4 tests que el Developer reporta con E0599 (run_real_with_terminal_stories_completes_in_one_iteration, run_real_with_no_stories_completes_immediately, run_real_with_draft_story_invokes_po_path, run_real_shared_state_reflects_sequential_processing) ya están corregidos desde la 1ª ronda de QA (#[tokio::test] async fn + .await) y compilan/pasan sin incidencias. Dry-run: 18 historias → Done, 59 iteraciones (CA8 ✅). Los reportes del Developer son stale — ninguna corrección necesaria. Status mantenido en Tests Ready. Historia lista para In Review (Tests Ready → In Review). Decisión documentada en .regista/decisions/STORY-012-qa-20260505-verify-8.md.
 - 2026-05-05 | QA | 7ª verificación de tests STORY-012 tras nuevo reporte del Developer: suite re-verificada. 318 tests (307 unit + 11 architecture), 0 fallos, 1 ignorado. Los 15 tests de story012 compilan y pasan (cargo test story012: 15 passed, 0 failed). Los 4 tests específicos que el Developer reporta con E0599 (run_real_with_terminal_stories_completes_in_one_iteration, run_real_with_no_stories_completes_immediately, run_real_with_draft_story_invokes_po_path, run_real_shared_state_reflects_sequential_processing) ya están correctamente migrados con #[tokio::test] async fn + .await desde la 1ª ronda de QA y pasan sin incidencias. cargo build, cargo clippy -- -D warnings y cargo fmt --check limpios. Los reportes del Developer son stale — ninguna corrección necesaria. Status mantenido en Tests Ready. Historia lista para In Review (Tests Ready → In Review). Decisión documentada en .regista/decisions/STORY-012-qa-20260505-verify-7.md.
