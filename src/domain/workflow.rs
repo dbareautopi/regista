@@ -14,8 +14,11 @@ use crate::domain::state::Status;
 ///
 /// Cada método recibe `&self` (no `&mut self`) porque los workflows
 /// son inmutables durante la ejecución.
+/// `Sync` is required so that `&dyn Workflow` can be held across `.await`
+/// points in async functions (the resulting future must be `Send` for
+/// multi-threaded tokio runtimes and potential `tokio::spawn` usage in #01).
 #[allow(dead_code)]
-pub trait Workflow {
+pub trait Workflow: Sync {
     /// Infiere el estado esperado tras la intervención del agente
     /// para el estado `current`.
     fn next_status(&self, current: Status) -> Status;

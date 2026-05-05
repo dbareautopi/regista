@@ -42,7 +42,12 @@ fn read_yaml_field(path: &Path, field: &str) -> Option<String> {
 /// Devuelve `Vec<String>` (args de CLI), no un `Command`, para que el
 /// invocador decida si usar `std::process::Command` (sync) o
 /// `tokio::process::Command` (async, paralelismo).
-pub trait AgentProvider {
+/// `Send + Sync` is required so that `&dyn AgentProvider` and
+/// `Box<dyn AgentProvider>` can be held across `.await` points in
+/// async functions (the resulting future must be `Send` for
+/// multi-threaded tokio runtimes and potential `tokio::spawn` usage
+/// in #01).
+pub trait AgentProvider: Send + Sync {
     /// Binario a ejecutar: "pi", "claude", "codex", "opencode".
     fn binary(&self) -> &str;
 

@@ -807,20 +807,27 @@ async fn process_story(
                 );
             }
 
-            // Ejecutar hook post-fase si está definido
-            let hook_result = match story.status {
-                Status::Ready => {
-                    crate::infra::hooks::run_hook(cfg.hooks.post_qa.as_deref(), "post_qa")
-                }
+            // Ejecutar hook post-fase si está definido.
+            // run_hook usa RUNTIME.block_on internamente, lo que paniquearía
+            // si se llama desde dentro del runtime de tokio. Lo envolvemos en
+            // spawn_blocking para ejecutarlo en un hilo de bloqueo dedicado.
+            let post_qa = cfg.hooks.post_qa.clone();
+            let post_dev = cfg.hooks.post_dev.clone();
+            let post_reviewer = cfg.hooks.post_reviewer.clone();
+            let hook_status = story.status;
+
+            let hook_result = tokio::task::spawn_blocking(move || match hook_status {
+                Status::Ready => crate::infra::hooks::run_hook(post_qa.as_deref(), "post_qa"),
                 Status::TestsReady | Status::InProgress => {
-                    crate::infra::hooks::run_hook(cfg.hooks.post_dev.as_deref(), "post_dev")
+                    crate::infra::hooks::run_hook(post_dev.as_deref(), "post_dev")
                 }
-                Status::InReview => crate::infra::hooks::run_hook(
-                    cfg.hooks.post_reviewer.as_deref(),
-                    "post_reviewer",
-                ),
+                Status::InReview => {
+                    crate::infra::hooks::run_hook(post_reviewer.as_deref(), "post_reviewer")
+                }
                 _ => Ok(()),
-            };
+            })
+            .await
+            .unwrap_or_else(|_| Err(anyhow::anyhow!("spawn_blocking del hook falló")));
 
             if let Err(e) = hook_result {
                 tracing::warn!("  ❌ hook falló: {e}");
