@@ -1,5 +1,8 @@
 use std::path::{Path, PathBuf};
 
+use chrono;
+use glob;
+
 use crate::app;
 use crate::config;
 use crate::infra;
@@ -46,6 +49,10 @@ fn handle_plan(args: PlanArgs) {
             args.common.config.as_deref(),
             args.common.provider.as_deref(),
         );
+
+        // Header de sesión (antes de groom, story_count=0)
+        emit_session_header(&cfg, project_root, 0, false);
+
         match app::plan::run(
             project_root,
             Path::new(&args.plan_mode.spec),
@@ -151,6 +158,9 @@ fn handle_auto(args: AutoArgs) {
             args.common.config.as_deref(),
             args.common.provider.as_deref(),
         );
+
+        // Header de sesión (antes de groom, story_count=0 porque aún no hay historias)
+        emit_session_header(&cfg, project_root, 0, false);
 
         // 1. Groom
         match app::plan::run(
@@ -305,6 +315,10 @@ fn handle_run(args: RunArgs) {
             args.common.config.as_deref(),
             args.common.provider.as_deref(),
         );
+
+        // Contar historias para el header de sesión
+        let story_count = count_stories(project_root, &cfg);
+        emit_session_header(&cfg, project_root, story_count, false);
 
         let run_options = build_run_options(&args.pipeline, args.common.quiet);
         let resume_state = if args.pipeline.resume {
@@ -555,6 +569,36 @@ fn setup_user_tracing(quiet: bool, _json: bool, _log_file: Option<&str>) {
         .init();
 }
 
+/// Emite el header de sesión vía `tracing::info!` usando `format_session_header`.
+fn emit_session_header(
+    cfg: &config::Config,
+    project_root: &Path,
+    story_count: usize,
+    compact: bool,
+) {
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let header = format_session_header(
+        cfg,
+        env!("CARGO_PKG_VERSION"),
+        project_root,
+        story_count,
+        compact,
+        &now,
+    );
+    tracing::info!("{}", header);
+}
+
+/// Cuenta las historias en `stories_dir` usando el patrón configurado.
+fn count_stories(project_root: &Path, cfg: &config::Config) -> usize {
+    let stories_dir = project_root.join(&cfg.project.stories_dir);
+    let pattern = stories_dir.join(&cfg.project.story_pattern);
+    let pattern_str = pattern.to_string_lossy();
+    match glob::glob(&pattern_str) {
+        Ok(paths) => paths.filter_map(|r| r.ok()).count(),
+        Err(_) => 0,
+    }
+}
+
 /// Carga la configuración y aplica el override de provider si se especifica.
 fn load_config(
     project_root: &Path,
@@ -788,16 +832,131 @@ fn exit_code_from_report(report: &app::pipeline::RunReport) -> i32 {
 ///
 /// La resolución de modelos usa `AgentsConfig::model_for_role()` con
 /// el path de instrucciones de cada rol (`skill_for_role`).
+/// Formatea el header de sesión con metadatos del pipeline.
+///
+/// En modo detallado (default), emite un bloque multilínea con:
+/// versión, timestamp UTC, proyecto, provider, modelos por rol,
+/// límites (max_iter efectivo, max_reject, timeout), estado de git,
+/// y hooks configurados.
+///
+/// En modo compacto (`--compact`), reduce el header a una línea.
+///
+/// La resolución de modelos usa `AgentsConfig::model_for_role()`
+/// con las rutas de skill resueltas contra `project_root`.
 pub fn format_session_header(
-    _cfg: &config::Config,
-    _version: &str,
-    _project_root: &Path,
-    _story_count: usize,
-    _compact: bool,
-    _now_utc: &str,
+    cfg: &config::Config,
+    version: &str,
+    project_root: &Path,
+    story_count: usize,
+    compact: bool,
+    now_utc: &str,
 ) -> String {
-    // PLACEHOLDER — STORY-026: el Developer implementará la lógica real
-    String::new()
+    if compact {
+        let effective_max = effective_max_iter(story_count, cfg.limits.max_iterations);
+        return format!(
+            "🛰️  regista v{} | {} | {} UTC | max_iter={}",
+            version, cfg.agents.provider, now_utc, effective_max
+        );
+    }
+
+    // ── Modo detallado ───────────────────────────────────────────
+    let sep = "═══════════════════════════════════════════════════════════";
+    let mut lines: Vec<String> = Vec::new();
+
+    // Título
+    lines.push(format!(
+        "🛰️  regista v{} — sesión iniciada {} UTC",
+        version, now_utc
+    ));
+
+    // Proyecto
+    lines.push(format!("   Proyecto   : {}", project_root.display()));
+
+    // Provider
+    lines.push(format!("   Provider    : {}", cfg.agents.provider));
+
+    // Modelos (resueltos con model_for_role)
+    let models = config::AgentsConfig::all_roles()
+        .iter()
+        .map(|role| {
+            let skill_rel = cfg.agents.skill_for_role(role);
+            let skill_abs = project_root.join(&skill_rel);
+            let model = cfg.agents.model_for_role(role, &skill_abs);
+            let abbr = role_abbreviation(role);
+            format!("{abbr}={model}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    lines.push(format!("   Modelos     : {models}"));
+
+    // Límites
+    let effective_max = effective_max_iter(story_count, cfg.limits.max_iterations);
+    let limits_str = if cfg.limits.max_iterations == 0 {
+        format!(
+            "max_iter={} ({} stories × 6), max_reject={}, timeout={}s",
+            effective_max,
+            story_count,
+            cfg.limits.max_reject_cycles,
+            cfg.limits.agent_timeout_seconds
+        )
+    } else {
+        format!(
+            "max_iter={}, max_reject={}, timeout={}s",
+            effective_max, cfg.limits.max_reject_cycles, cfg.limits.agent_timeout_seconds
+        )
+    };
+    lines.push(format!("   Límites     : {limits_str}"));
+
+    // Git
+    let git_str = if cfg.git.enabled {
+        "habilitado"
+    } else {
+        "deshabilitado"
+    };
+    lines.push(format!("   Git         : {git_str}"));
+
+    // Hooks
+    let mut active: Vec<&str> = Vec::new();
+    if cfg.hooks.post_qa.is_some() {
+        active.push("post_qa");
+    }
+    if cfg.hooks.post_dev.is_some() {
+        active.push("post_dev");
+    }
+    if cfg.hooks.post_reviewer.is_some() {
+        active.push("post_reviewer");
+    }
+    let hooks_str = if active.is_empty() {
+        "ninguno".to_string()
+    } else {
+        active.join(", ")
+    };
+    lines.push(format!("   Hooks       : {hooks_str}"));
+
+    format!("{sep}\n{}\n{sep}", lines.join("\n"))
+}
+
+/// Calcula el max_iter efectivo: si `cfg_max == 0` usa `max(10, story_count * 6)`.
+#[allow(dead_code)]
+fn effective_max_iter(story_count: usize, cfg_max: u32) -> u32 {
+    if cfg_max > 0 {
+        cfg_max
+    } else {
+        let computed = story_count as u32 * 6;
+        computed.max(10)
+    }
+}
+
+/// Abreviaturas de rol para el header.
+#[allow(dead_code)]
+fn role_abbreviation(role: &str) -> &str {
+    match role {
+        "product_owner" => "PO",
+        "qa_engineer" => "QA",
+        "developer" => "Dev",
+        "reviewer" => "Reviewer",
+        _ => role,
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1017,9 +1176,7 @@ mod tests {
         #[test]
         fn detailed_header_shows_configured_provider_name() {
             for provider_name in ["claude", "codex", "opencode"] {
-                let toml = format!(
-                    "[agents]\nprovider = \"{provider_name}\"\n"
-                );
+                let toml = format!("[agents]\nprovider = \"{provider_name}\"\n");
                 let cfg: config::Config = toml::from_str(&toml).unwrap();
                 let header = format_session_header(
                     &cfg,
@@ -1621,14 +1778,8 @@ post_reviewer = "npm run lint"
             let cfg = config::Config::default();
 
             // El header debe contener Dev=opencode/gpt-5-nano
-            let header = format_session_header(
-                &cfg,
-                "1.0.0",
-                project_root,
-                0,
-                false,
-                "2026-05-05 12:00:00",
-            );
+            let header =
+                format_session_header(&cfg, "1.0.0", project_root, 0, false, "2026-05-05 12:00:00");
             assert!(
                 header.contains("Dev=opencode/gpt-5-nano"),
                 "Header debe reflejar el modelo del YAML frontmatter: Dev=opencode/gpt-5-nano"
@@ -1688,14 +1839,8 @@ post_dev = "npm run build"
                 "2026-05-05 12:00:00",
             );
 
-            assert!(
-                header.contains("post_dev"),
-                "Debe listar post_dev"
-            );
-            assert!(
-                !header.contains("post_qa"),
-                "post_qa NO debe aparecer"
-            );
+            assert!(header.contains("post_dev"), "Debe listar post_dev");
+            assert!(!header.contains("post_qa"), "post_qa NO debe aparecer");
             assert!(
                 !header.contains("post_reviewer"),
                 "post_reviewer NO debe aparecer"
