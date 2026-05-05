@@ -1,7 +1,7 @@
 # STORY-021: Implementar `parse_token_count()` con patrones multi-provider
 
 ## Status
-**Blocked**
+**Ready**
 
 ## Epic
 EPIC-07

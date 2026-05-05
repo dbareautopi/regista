@@ -1,7 +1,7 @@
 # STORY-020: Añadir `TokenCount` y `token_usage` a `SharedState`
 
 ## Status
-**Business Review**
+**Done**
 
 ## Epic
 EPIC-07
@@ -29,3 +29,4 @@ Añadir el struct `TokenCount { input: u64, output: u64 }` y el campo `token_usa
 - 2026-05-05 | QA | Tests verificados: 20 tests unitarios ya existentes en `domain::state.rs::tests::story020` cubren CA1-CA5 y CA8-CA9. CA6 (cargo check) y CA7 (regresión) son verificaciones de build, no tests unitarios. No se requieren tests adicionales. Transición Ready → Tests Ready. Ver .regista/decisions/STORY-020-qa-tests-2026-05-05.md.
 - 2026-05-05 | Dev | Implementación completa: `TokenCount` con `Debug`, `Clone`, `Default` + campo `token_usage` en `SharedState`. Todos los 21 tests story020 pasan (421 total, 0 fallos). `cargo fmt`, `cargo check`, `cargo clippy -D warnings` limpios. Añadido `#[allow(dead_code)]` en `TokenCount` y `token_usage` (serán consumidos por futuras historias de tracking). Transición Tests Ready → In Review. Ver .regista/decisions/STORY-020-dev-implement-2026-05-05.md.
 - 2026-05-05 | Reviewer | DoD técnico verificado: `cargo check` limpio, `cargo test` 422 tests (421 passed, 0 failed, 1 ignored), `cargo fmt --check` OK, `cargo clippy -- -D warnings` limpio. `tests/architecture.rs` 11/11 OK. Los 21 tests story020 cubren todos los CAs (CA1-CA5, CA8-CA9). Sin regresiones en módulos existentes. Transición In Review → Business Review. Ver .regista/decisions/STORY-020-reviewer-dod-2026-05-05.md.
+- 2026-05-05 | PO | Validación de negocio OK. Los 9 CAs se verifican: `TokenCount` existe con `input: u64, output: u64` (CA1), implementa `Debug, Clone, Default` (CA2), `token_usage` en `SharedState` con tipo `Arc<RwLock<HashMap<String, Vec<TokenCount>>>>` (CA3), inicializado vacío en `new()` (CA4), `Clone` comparte el mismo `Arc` (CA5), `cargo check` limpio (CA6), `cargo test` 52/52 en `domain::state` sin regresiones (CA7), tests de concurrencia (CA8) y clone-sharing (CA9) pasan. El valor de negocio se cumple: la infraestructura de tracking de tokens está lista para ser consumida por futuras historias (spec §6). `#[allow(dead_code)]` justificado. Transición Business Review → Done. Ver .regista/decisions/STORY-020-po-validate-2026-05-05.md.
