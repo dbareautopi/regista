@@ -81,6 +81,7 @@ pub async fn invoke_with_retry(
     prompt: &str,
     limits: &LimitsConfig,
     opts: &AgentOptions,
+    verbose: bool,
 ) -> anyhow::Result<AgentResult> {
     let mut attempt = 1u32;
     let mut delay = Duration::from_secs(limits.retry_delay_base_seconds);
@@ -96,7 +97,15 @@ pub async fn invoke_with_retry(
             instruction_path.display()
         );
 
-        match invoke_once(provider, instruction_path, &current_prompt, timeout).await {
+        match invoke_once(
+            provider,
+            instruction_path,
+            &current_prompt,
+            timeout,
+            verbose,
+        )
+        .await
+        {
             Ok(output) if output.status.success() => {
                 tracing::info!("  ✓ agente completado (intento {attempt})");
 
@@ -187,6 +196,7 @@ pub fn invoke_with_retry_blocking(
     prompt: &str,
     limits: &LimitsConfig,
     opts: &AgentOptions,
+    verbose: bool,
 ) -> anyhow::Result<AgentResult> {
     RUNTIME.block_on(invoke_with_retry(
         provider,
@@ -194,6 +204,7 @@ pub fn invoke_with_retry_blocking(
         prompt,
         limits,
         opts,
+        verbose,
     ))
 }
 
@@ -292,11 +303,17 @@ async fn save_agent_decision(
 ///
 /// Usa `tokio::process::Command` para no bloquear el thread del runtime,
 /// y `tokio::time::timeout` para limitar la duración de la invocación.
+///
+/// Cuando `verbose = true`, lee stdout línea a línea usando `BufReader`
+/// y emite cada línea no vacía al log con prefijo `  │ `. El stderr se
+/// captura en una tarea `tokio::spawn` separada, sin streaming.
+/// Cuando `verbose = false`, usa `wait_with_output()` (más eficiente).
 async fn invoke_once(
     provider: &dyn AgentProvider,
     instruction: &Path,
     prompt: &str,
     timeout: Duration,
+    verbose: bool,
 ) -> anyhow::Result<Output> {
     let args = provider.build_args(instruction, prompt);
     let child = tokio::process::Command::new(provider.binary())
@@ -314,33 +331,125 @@ async fn invoke_once(
     // Guardar el PID antes del move para poder matar el proceso en timeout.
     let pid = child.id();
 
-    match tokio::time::timeout(timeout, child.wait_with_output()).await {
-        Ok(Ok(output)) => Ok(output),
-        Ok(Err(e)) => Err(anyhow::anyhow!(
-            "error leyendo salida de '{}': {e}",
-            provider.binary()
-        )),
-        Err(_elapsed) => {
-            // child ya fue movido — matamos por PID.
-            if let Some(pid) = pid {
-                #[cfg(unix)]
-                {
-                    let _ = std::process::Command::new("kill")
-                        .args(["-9", &pid.to_string()])
-                        .output();
+    if verbose {
+        invoke_once_verbose(child, pid, provider, timeout).await
+    } else {
+        match tokio::time::timeout(timeout, child.wait_with_output()).await {
+            Ok(Ok(output)) => Ok(output),
+            Ok(Err(e)) => Err(anyhow::anyhow!(
+                "error leyendo salida de '{}': {e}",
+                provider.binary()
+            )),
+            Err(_elapsed) => {
+                // child ya fue movido — matamos por PID.
+                kill_process_by_pid(pid);
+                anyhow::bail!(
+                    "timeout ({}s) agotado esperando a '{}'",
+                    timeout.as_secs(),
+                    provider.binary()
+                )
+            }
+        }
+    }
+}
+
+/// Invoca el proceso en modo verbose: lee stdout línea a línea con streaming
+/// al log, y stderr en una tarea separada sin streaming.
+async fn invoke_once_verbose(
+    mut child: tokio::process::Child,
+    pid: Option<u32>,
+    provider: &dyn AgentProvider,
+    timeout: Duration,
+) -> anyhow::Result<Output> {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("no se pudo capturar stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("no se pudo capturar stderr"))?;
+
+    // Spawn stdout reader: stream line by line, accumulate
+    let stdout_handle = tokio::spawn(async move {
+        let mut reader = BufReader::new(stdout);
+        let mut accumulated = Vec::new();
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) => break, // EOF
+                Ok(_) => {
+                    accumulated.extend_from_slice(line.as_bytes());
+                    let trimmed = line.trim_end_matches(['\n', '\r']);
+                    if !trimmed.is_empty() {
+                        tracing::info!("  │ {}", trimmed);
+                    }
                 }
-                #[cfg(not(unix))]
-                {
-                    let _ = std::process::Command::new("taskkill")
-                        .args(["/PID", &pid.to_string(), "/F"])
-                        .output();
+                Err(e) => {
+                    tracing::warn!("error leyendo stdout: {e}");
+                    break;
                 }
             }
+        }
+        accumulated
+    });
+
+    // Spawn stderr reader: read all silently
+    let stderr_handle = tokio::spawn(async move {
+        let mut accumulated = Vec::new();
+        let mut reader = stderr;
+        let _ = reader.read_to_end(&mut accumulated).await;
+        accumulated
+    });
+
+    // Wait for child to exit, with timeout
+    let status = match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(Ok(status)) => status,
+        Ok(Err(e)) => {
+            anyhow::bail!("error esperando a '{}': {e}", provider.binary())
+        }
+        Err(_elapsed) => {
+            kill_process_by_pid(pid);
             anyhow::bail!(
                 "timeout ({}s) agotado esperando a '{}'",
                 timeout.as_secs(),
                 provider.binary()
             )
+        }
+    };
+
+    // Await the reader tasks (process already exited, pipes should be closed)
+    let stdout = stdout_handle
+        .await
+        .map_err(|e| anyhow::anyhow!("error en task de stdout: {e}"))?;
+    let stderr = stderr_handle
+        .await
+        .map_err(|e| anyhow::anyhow!("error en task de stderr: {e}"))?;
+
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+/// Mata un proceso por PID (cross-platform).
+fn kill_process_by_pid(pid: Option<u32>) {
+    if let Some(pid) = pid {
+        #[cfg(unix)]
+        {
+            let _ = std::process::Command::new("kill")
+                .args(["-9", &pid.to_string()])
+                .output();
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/F"])
+                .output();
         }
     }
 }
@@ -494,6 +603,7 @@ mod tests {
             Path::new("/nonexistent/skill.md"),
             "prompt de prueba",
             std::time::Duration::from_secs(1),
+            false,
         )
         .await;
         // Debe fallar porque el binario no existe, pero prueba que es async.
@@ -515,6 +625,7 @@ mod tests {
             Path::new("/nonexistent/skill.md"),
             "prompt que causa timeout",
             std::time::Duration::from_millis(100),
+            false,
         )
         .await;
         let elapsed = start.elapsed();
@@ -549,6 +660,7 @@ mod tests {
             "test",
             &limits,
             &opts,
+            false,
         )
         .await;
         assert!(result.is_err());
@@ -577,6 +689,7 @@ mod tests {
             "test de backoff",
             &limits,
             &opts,
+            false,
         )
         .await;
 
@@ -610,6 +723,7 @@ mod tests {
             "test de backoff exponencial",
             &limits,
             &opts,
+            false,
         )
         .await;
         let elapsed = start.elapsed();
@@ -753,6 +867,7 @@ mod tests {
             "test",
             &limits,
             &opts,
+            false,
         )
         .await;
         assert!(result.is_err());
@@ -1456,10 +1571,7 @@ mod tests {
             )
             .await;
 
-            assert!(
-                result.is_ok(),
-                "verbose=false con echo debería funcionar"
-            );
+            assert!(result.is_ok(), "verbose=false con echo debería funcionar");
             let agent_result = result.unwrap();
             assert!(
                 agent_result.stdout.contains("hello-verbose-false"),
@@ -1489,10 +1601,7 @@ mod tests {
             )
             .await;
 
-            assert!(
-                result.is_ok(),
-                "verbose=true con echo debería funcionar"
-            );
+            assert!(result.is_ok(), "verbose=true con echo debería funcionar");
             let agent_result = result.unwrap();
             assert!(
                 agent_result.stdout.contains("hello-verbose-true"),
@@ -1605,7 +1714,10 @@ mod tests {
             let output = result.unwrap();
             assert!(output.status.success());
             let stdout = String::from_utf8_lossy(&output.stdout);
-            assert!(stdout.trim().is_empty(), "stdout debería estar vacío: '{stdout}'");
+            assert!(
+                stdout.trim().is_empty(),
+                "stdout debería estar vacío: '{stdout}'"
+            );
         }
 
         // ═══════════════════════════════════════════════════════════
@@ -1659,14 +1771,8 @@ mod tests {
                 log_output.contains("alfa"),
                 "el log debe contener 'alfa'. Log capturado:\n{log_output}"
             );
-            assert!(
-                log_output.contains("beta"),
-                "el log debe contener 'beta'"
-            );
-            assert!(
-                log_output.contains("gamma"),
-                "el log debe contener 'gamma'"
-            );
+            assert!(log_output.contains("beta"), "el log debe contener 'beta'");
+            assert!(log_output.contains("gamma"), "el log debe contener 'gamma'");
         }
 
         /// CA3: Las líneas vacías NO deben generar entradas "  │ " solas.
@@ -1710,10 +1816,7 @@ mod tests {
             // Verificamos que no hay una entrada "  │ " que esté sola (sin contenido después).
             // Contamos cuántas líneas del log contienen "  │ " y verificamos
             // que cada una tiene contenido no vacío después del prefijo.
-            let pipe_lines: Vec<&str> = log_output
-                .lines()
-                .filter(|l| l.contains("  │ "))
-                .collect();
+            let pipe_lines: Vec<&str> = log_output.lines().filter(|l| l.contains("  │ ")).collect();
 
             for line in &pipe_lines {
                 // Después de "  │ " debe haber contenido no vacío

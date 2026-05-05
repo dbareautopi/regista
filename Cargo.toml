@@ -22,7 +22,7 @@ chrono = "0.4"
 glob = "0.3"
 serde_json = "1"
 ureq = { version = "2", features = ["json"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "fs"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "fs", "io-util"] }
 
 [dev-dependencies]
 tempfile = "3"
