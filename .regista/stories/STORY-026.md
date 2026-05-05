@@ -1,7 +1,7 @@
 # STORY-026: Header de sesión con metadatos (versión, modelos, límites, git, hooks)
 
 ## Status
-**Blocked**
+**Ready**
 
 ## Epic
 EPIC-09
