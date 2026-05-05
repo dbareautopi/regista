@@ -1,7 +1,7 @@
 # STORY-002: Reubicar `provider_for_role` / `skill_for_role` a `AgentsConfig`
 
 ## Status
-**Draft**
+**Ready**
 
 ## Epic
 EPIC-01
@@ -23,3 +23,4 @@ Las funciones `provider_for_role()` y `skill_for_role()` residen actualmente en 
 
 ## Activity Log
 - 2026-05-04 | PO | Historia generada desde roadmap/AUDITORIA-ESCALABILIDAD.md (hallazgo #11.2).
+- 2026-05-05 | PO | Refinamiento: historia validada contra DoR. Descripción clara, 7 CAs testeables, sin dependencias. Decisión documentada en .regista/decisions/STORY-002-po-refinement-2026-05-05.md. Draft → Ready.
