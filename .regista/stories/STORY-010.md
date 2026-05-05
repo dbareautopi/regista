@@ -1,7 +1,7 @@
 # STORY-010: Migrar `agent.rs` a `tokio` — eliminar busy-polling con `thread::sleep`
 
 ## Status
-**Ready**
+**Tests Ready**
 
 ## Epic
 EPIC-04
@@ -25,3 +25,4 @@ Actualmente `invoke_once()` en `src/infra/agent.rs` usa busy-polling con `thread
 ## Activity Log
 - 2026-05-04 | PO | Historia generada desde roadmap/AUDITORIA-ESCALABILIDAD.md (hallazgos #2.4, #10.2; recomendación #6).
 - 2026-05-05 | PO | Historia refinada. Cumple DoR: descripción clara, 8 CAs testeables, sin dependencias. Validado contra src/infra/agent.rs — busy-polling con thread::sleep(250ms) confirmado. Tokio ausente en Cargo.toml (CA6). Movida a Ready.
+- 2026-05-05 | QA | Tests escritos en src/infra/agent.rs::tests. 14 tests: 3 sync (funciones puras preservadas), 10 async (#[tokio::test]), 1 compile-time (tokio dependency check). Cada CA tiene al menos 1 test dedicado. Los tests usan .await sobre invoke_once/invoke_with_retry/save_agent_decision — definen el contrato async que el Developer debe implementar. Tokio NO está en Cargo.toml aún (CA6 — el Developer debe añadirlo). El Developer verificará compilación con cargo test --lib agent (CA8). Movida a Tests Ready.
