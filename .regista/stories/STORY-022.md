@@ -1,7 +1,7 @@
 # STORY-022: Streaming de stdout del agente en `invoke_once()` + parámetro `verbose`
 
 ## Status
-**Draft**
+**Ready**
 
 ## Epic
 EPIC-08
@@ -27,3 +27,4 @@ Modificar `invoke_once()` en `infra/agent.rs` para que, cuando `verbose = true`,
 
 ## Activity Log
 - 2026-05-05 | PO | Historia generada desde specs/spec-logs-transparentes.md (sección 3: Streaming de stdout del agente).
+- 2026-05-05 | PO | Refinamiento: validada contra DoR. Supera los 3 criterios (descripción clara, CAs testeables, dependencias identificadas). Documentadas 5 decisiones de diseño en .regista/decisions/STORY-022-po-refinement-2026-05-05.md. Transición Draft → Ready.
