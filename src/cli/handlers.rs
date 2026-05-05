@@ -766,6 +766,41 @@ fn exit_code_from_report(report: &app::pipeline::RunReport) -> i32 {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// STORY-026: Header de sesión
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Formatea el header de sesión que se emite al iniciar el daemon.
+///
+/// En modo detallado (default), produce un bloque multilínea con:
+/// - Versión de regista
+/// - Timestamp UTC
+/// - Directorio del proyecto
+/// - Provider global
+/// - Modelos por rol (resueltos con `AgentsConfig::model_for_role()`)
+/// - Límites (max_iter efectivo, max_reject_cycles, timeout)
+/// - Estado de git (habilitado / deshabilitado)
+/// - Hooks configurados (o "ninguno")
+///
+/// En modo compacto, produce una línea.
+///
+/// `story_count` se usa para calcular `max_iter` efectivo cuando
+/// `limits.max_iterations = 0`.
+///
+/// La resolución de modelos usa `AgentsConfig::model_for_role()` con
+/// el path de instrucciones de cada rol (`skill_for_role`).
+pub fn format_session_header(
+    _cfg: &config::Config,
+    _version: &str,
+    _project_root: &Path,
+    _story_count: usize,
+    _compact: bool,
+    _now_utc: &str,
+) -> String {
+    // PLACEHOLDER — STORY-026: el Developer implementará la lógica real
+    String::new()
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -892,5 +927,596 @@ mod tests {
             stories: vec![],
         };
         assert_eq!(exit_code_from_report(&report), 3);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // STORY-026: Header de sesión con metadatos
+    // ═══════════════════════════════════════════════════════════
+
+    mod story026 {
+        use super::*;
+
+        // ── CA1: Header detallado ──────────────────────────────
+
+        /// CA1: En modo detallado, el header contiene todas las
+        /// secciones requeridas: versión, timestamp, proyecto,
+        /// provider, modelos, límites, git, hooks.
+        #[test]
+        fn detailed_header_contains_all_sections() {
+            let cfg = config::Config::default();
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/home/user/project"),
+                3,
+                false,
+                "2026-05-05 12:00:00",
+            );
+
+            assert!(header.contains("regista v1.0.0"));
+            assert!(header.contains("2026-05-05 12:00:00 UTC"));
+            assert!(header.contains("/home/user/project"));
+            assert!(header.contains("Provider"));
+            assert!(header.contains("pi"));
+            assert!(header.contains("Modelos"));
+            assert!(header.contains("Límites"));
+            assert!(header.contains("Git"));
+            assert!(header.contains("Hooks"));
+        }
+
+        /// CA1: El header detallado usa formato de bloque con
+        /// líneas de separación ═ y el emoji satélite.
+        #[test]
+        fn detailed_header_has_block_format() {
+            let cfg = config::Config::default();
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                0,
+                false,
+                "2026-01-01 00:00:00",
+            );
+
+            assert!(
+                header.contains('═'),
+                "El header detallado debe usar ═ como borde"
+            );
+            assert!(
+                header.contains("🛰️"),
+                "El header detallado debe incluir el emoji satélite"
+            );
+            assert!(
+                header.contains("sesión iniciada"),
+                "Debe indicar 'sesión iniciada'"
+            );
+        }
+
+        /// CA1: El header incluye la ruta del proyecto.
+        #[test]
+        fn detailed_header_includes_project_path() {
+            let cfg = config::Config::default();
+            let project_path = "/home/dev/mi-app";
+            let header = format_session_header(
+                &cfg,
+                "2.1.0",
+                Path::new(project_path),
+                0,
+                false,
+                "2026-05-05 12:00:00",
+            );
+
+            assert!(
+                header.contains(project_path),
+                "Debe incluir el path del proyecto: {project_path}"
+            );
+        }
+
+        // ── CA2: Header compacto ───────────────────────────────
+
+        /// CA2: En modo compacto, el header es una sola línea.
+        #[test]
+        fn compact_header_is_single_line() {
+            let cfg = config::Config::default();
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                3,
+                true,
+                "2026-05-05 12:00:00",
+            );
+
+            assert!(
+                !header.contains('\n'),
+                "El header compacto debe ser una sola línea, sin saltos"
+            );
+        }
+
+        /// CA2: El header compacto contiene los campos requeridos:
+        /// versión, provider, fecha UTC, max_iter.
+        #[test]
+        fn compact_header_contains_required_fields() {
+            let cfg = config::Config::default();
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                3,
+                true,
+                "2026-05-05 12:00:00",
+            );
+
+            assert!(header.contains("regista v1.0.0"));
+            assert!(header.contains("pi"));
+            assert!(header.contains("2026-05-05 12:00:00 UTC"));
+            assert!(header.contains("max_iter="));
+        }
+
+        /// CA2: Los modos detallado y compacto producen salida diferente.
+        #[test]
+        fn compact_differs_from_detailed() {
+            let cfg = config::Config::default();
+            let detailed = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                0,
+                false,
+                "2026-05-05 12:00:00",
+            );
+            let compact = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                0,
+                true,
+                "2026-05-05 12:00:00",
+            );
+
+            assert_ne!(detailed, compact, "Detallado ≠ Compacto");
+            assert!(
+                compact.len() < detailed.len(),
+                "Compacto debe ser más corto que detallado"
+            );
+        }
+
+        // ── CA3: Modelos resueltos con model_for_role ──────────
+
+        /// CA3: Con configuración por defecto, los modelos muestran
+        /// "desconocido" (no hay modelo configurado ni YAML).
+        #[test]
+        fn models_show_desconocido_by_default() {
+            let cfg = config::Config::default();
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                0,
+                false,
+                "2026-05-05 12:00:00",
+            );
+
+            assert!(header.contains("PO=desconocido"));
+            assert!(header.contains("QA=desconocido"));
+            assert!(header.contains("Dev=desconocido"));
+            assert!(header.contains("Reviewer=desconocido"));
+        }
+
+        /// CA3: Cuando se configura un modelo global, todos los roles
+        /// lo heredan.
+        #[test]
+        fn models_inherit_global_model() {
+            let toml = r#"
+[agents]
+provider = "pi"
+model = "claude-sonnet-4"
+"#;
+            let cfg: config::Config = toml::from_str(toml).unwrap();
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                0,
+                false,
+                "2026-05-05 12:00:00",
+            );
+
+            assert!(
+                header.contains("PO=claude-sonnet-4"),
+                "PO debe heredar el modelo global"
+            );
+            assert!(
+                header.contains("QA=claude-sonnet-4"),
+                "QA debe heredar el modelo global"
+            );
+            assert!(
+                header.contains("Dev=claude-sonnet-4"),
+                "Dev debe heredar el modelo global"
+            );
+            assert!(
+                header.contains("Reviewer=claude-sonnet-4"),
+                "Reviewer debe heredar el modelo global"
+            );
+        }
+
+        /// CA3: El modelo por rol prevalece sobre el global.
+        #[test]
+        fn role_model_overrides_global_in_header() {
+            let toml = r#"
+[agents]
+provider = "pi"
+model = "claude-sonnet-4"
+
+[agents.developer]
+model = "gpt-5"
+"#;
+            let cfg: config::Config = toml::from_str(toml).unwrap();
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                0,
+                false,
+                "2026-05-05 12:00:00",
+            );
+
+            // Dev tiene modelo explícito
+            assert!(header.contains("Dev=gpt-5"));
+            // Los demás heredan el global
+            assert!(header.contains("PO=claude-sonnet-4"));
+            assert!(header.contains("QA=claude-sonnet-4"));
+            assert!(header.contains("Reviewer=claude-sonnet-4"));
+        }
+
+        /// CA3: La resolución de modelos usa AgentsConfig::model_for_role().
+        /// Verifica que el header refleja exactamente lo que devuelve
+        /// model_for_role para cada rol.
+        #[test]
+        fn header_uses_model_for_role_resolution() {
+            let cfg = config::Config::default();
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                0,
+                false,
+                "2026-05-05 12:00:00",
+            );
+
+            // Para cada rol canónico, model_for_role con skill path del rol
+            // debe coincidir con lo que aparece en el header.
+            for role in config::AgentsConfig::all_roles() {
+                let skill_path = cfg.agents.skill_for_role(role);
+                let expected_model = cfg.agents.model_for_role(role, Path::new(&skill_path));
+                let role_abbr = match role {
+                    "product_owner" => "PO",
+                    "qa_engineer" => "QA",
+                    "developer" => "Dev",
+                    "reviewer" => "Reviewer",
+                    _ => role,
+                };
+                let expected_fragment = format!("{role_abbr}={expected_model}");
+                assert!(
+                    header.contains(&expected_fragment),
+                    "Header debe contener '{expected_fragment}' (resolución de model_for_role)"
+                );
+            }
+        }
+
+        // ── CA4: Límites con max_iter efectivo ─────────────────
+
+        /// CA4: Cuando max_iterations=0, el header muestra el valor
+        /// auto-calculado (story_count × 6).
+        #[test]
+        fn limits_shows_effective_max_iter_auto() {
+            let cfg = config::Config::default(); // max_iterations = 0
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                5,
+                false,
+                "2026-05-05 12:00:00",
+            );
+
+            // 5 stories × 6 = 30
+            assert!(
+                header.contains("max_iter=30"),
+                "Con 5 historias y max_iterations=0, max_iter debe ser 30"
+            );
+            assert!(
+                header.contains("5 stories × 6") || header.contains("5 historias"),
+                "Debe indicar cómo se calculó el max_iter efectivo"
+            );
+        }
+
+        /// CA4: Cuando max_iterations > 0, el header muestra el valor
+        /// explícito y NO menciona stories × 6.
+        #[test]
+        fn limits_shows_explicit_max_iter() {
+            let toml = r#"
+[limits]
+max_iterations = 10
+"#;
+            let cfg: config::Config = toml::from_str(toml).unwrap();
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                5,
+                false,
+                "2026-05-05 12:00:00",
+            );
+
+            assert!(
+                header.contains("max_iter=10"),
+                "max_iter debe ser el valor explícito 10"
+            );
+            assert!(
+                !header.contains("stories × 6"),
+                "Con max_iter explícito, no debe mencionar stories × 6"
+            );
+        }
+
+        /// CA4: El header incluye max_reject_cycles y agent_timeout_seconds.
+        #[test]
+        fn limits_includes_reject_and_timeout() {
+            let toml = r#"
+[limits]
+max_iterations = 100
+max_reject_cycles = 5
+agent_timeout_seconds = 900
+"#;
+            let cfg: config::Config = toml::from_str(toml).unwrap();
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                0,
+                false,
+                "2026-05-05 12:00:00",
+            );
+
+            assert!(header.contains("max_reject=5"));
+            assert!(header.contains("timeout=900s"));
+        }
+
+        /// CA4: Los valores por defecto de límites aparecen correctamente.
+        #[test]
+        fn limits_shows_default_values() {
+            let cfg = config::Config::default();
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                0,
+                false,
+                "2026-05-05 12:00:00",
+            );
+
+            assert!(header.contains("max_reject=8"));
+            assert!(header.contains("timeout=1800s"));
+        }
+
+        // ── CA5: Estado de git ─────────────────────────────────
+
+        /// CA5: Con git.enabled = true, muestra "habilitado".
+        #[test]
+        fn git_enabled_shows_habilitado() {
+            let toml = r#"
+[git]
+enabled = true
+"#;
+            let cfg: config::Config = toml::from_str(toml).unwrap();
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                0,
+                false,
+                "2026-05-05 12:00:00",
+            );
+
+            assert!(
+                header.to_lowercase().contains("habilitado"),
+                "Con git.enabled=true debe mostrar 'habilitado'"
+            );
+        }
+
+        /// CA5: Con git.enabled = false, muestra "deshabilitado".
+        #[test]
+        fn git_disabled_shows_deshabilitado() {
+            let toml = r#"
+[git]
+enabled = false
+"#;
+            let cfg: config::Config = toml::from_str(toml).unwrap();
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                0,
+                false,
+                "2026-05-05 12:00:00",
+            );
+
+            assert!(
+                header.to_lowercase().contains("deshabilitado"),
+                "Con git.enabled=false debe mostrar 'deshabilitado'"
+            );
+        }
+
+        // ── CA6: Hooks configurados ────────────────────────────
+
+        /// CA6: Con hooks configurados, el header lista los hooks activos.
+        #[test]
+        fn hooks_lists_active_hooks() {
+            let toml = r#"
+[hooks]
+post_qa = "cargo test"
+post_dev = "cargo build --release"
+"#;
+            let cfg: config::Config = toml::from_str(toml).unwrap();
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                0,
+                false,
+                "2026-05-05 12:00:00",
+            );
+
+            assert!(
+                header.contains("post_qa"),
+                "Debe listar post_qa cuando está configurado"
+            );
+            assert!(
+                header.contains("post_dev"),
+                "Debe listar post_dev cuando está configurado"
+            );
+        }
+
+        /// CA6: Sin hooks configurados, muestra "ninguno".
+        #[test]
+        fn hooks_shows_ninguno_when_empty() {
+            let cfg = config::Config::default();
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                0,
+                false,
+                "2026-05-05 12:00:00",
+            );
+
+            assert!(
+                header.to_lowercase().contains("ninguno"),
+                "Sin hooks configurados debe mostrar 'ninguno'"
+            );
+        }
+
+        /// CA6: Con todos los hooks configurados, lista los tres.
+        #[test]
+        fn hooks_lists_all_three_when_configured() {
+            let toml = r#"
+[hooks]
+post_qa = "npm test"
+post_dev = "npm run build"
+post_reviewer = "npm run lint"
+"#;
+            let cfg: config::Config = toml::from_str(toml).unwrap();
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                0,
+                false,
+                "2026-05-05 12:00:00",
+            );
+
+            assert!(header.contains("post_qa"));
+            assert!(header.contains("post_dev"));
+            assert!(header.contains("post_reviewer"));
+        }
+
+        // ── CA7: Emisión vía tracing::info! ────────────────────
+
+        /// CA7: La función retorna un String no vacío que puede
+        /// pasarse directamente a `tracing::info!`.
+        ///
+        /// El Developer integrará la llamada `tracing::info!("{}", header)`
+        /// en setup_daemon_tracing() o inmediatamente después en los
+        /// handlers plan/auto/run.
+        #[test]
+        fn header_is_suitable_for_tracing_info_macro() {
+            let cfg = config::Config::default();
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                0,
+                false,
+                "2026-05-05 12:00:00",
+            );
+
+            assert!(
+                !header.is_empty(),
+                "El header no debe estar vacío; debe ser un mensaje válido para tracing::info!"
+            );
+            assert!(
+                header.is_ascii() || header.contains("🛰️"),
+                "El header contiene caracteres válidos para logging"
+            );
+        }
+
+        /// CA7: La función existe en el scope del módulo handlers
+        /// y puede ser invocada desde el contexto de los handlers
+        /// del daemon (plan/auto/run).
+        #[test]
+        fn header_function_is_callable_from_daemon_context() {
+            // Simula el contexto de un handler daemon:
+            // - Config está cargada
+            // - El project root es conocido
+            // - Se conoce el número de historias
+            let cfg = config::Config::default();
+            let project_root = Path::new("/app");
+
+            // Esto es lo que haría el handler daemon:
+            let _header: String = format_session_header(
+                &cfg,
+                env!("CARGO_PKG_VERSION"),
+                project_root,
+                10, // story_count
+                false,
+                "2026-05-05 12:00:00",
+            );
+            // Si compila y no paniquea, el header se puede integrar
+            // en el flujo daemon: setup_daemon_tracing(...); tracing::info!("{}", header);
+        }
+
+        // ── Sanity / regresión ─────────────────────────────────
+
+        /// El header NO debe paniquear cuando las rutas de skills no
+        /// existen en disco (model_for_role lo maneja con fallback).
+        #[test]
+        fn header_does_not_panic_with_nonexistent_skill_paths() {
+            let cfg = config::Config::default();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                format_session_header(
+                    &cfg,
+                    "1.0.0",
+                    Path::new("/tmp"),
+                    0,
+                    false,
+                    "2026-05-05 12:00:00",
+                )
+            }));
+            assert!(
+                result.is_ok(),
+                "format_session_header no debe paniquear con paths de skill inexistentes"
+            );
+        }
+
+        /// El header en modo compacto también funciona con max_iter
+        /// auto-calculado.
+        #[test]
+        fn compact_header_shows_auto_max_iter() {
+            let cfg = config::Config::default();
+            let header = format_session_header(
+                &cfg,
+                "2.0.0",
+                Path::new("/tmp"),
+                4,
+                true,
+                "2026-05-05 12:00:00",
+            );
+
+            assert!(header.contains("regista v2.0.0"));
+            assert!(header.contains("pi"));
+            assert!(header.contains("2026-05-05 12:00:00 UTC"));
+            // 4 stories × 6 = 24
+            assert!(header.contains("max_iter=24"));
+        }
     }
 }
