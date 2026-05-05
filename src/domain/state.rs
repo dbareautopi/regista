@@ -74,6 +74,7 @@ impl Transition {
 /// Cada invocación (incluyendo reintentos) produce un `TokenCount`
 /// que se acumula en `SharedState::token_usage`.
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct TokenCount {
     /// Tokens de entrada (prompt).
     pub input: u64,
@@ -96,6 +97,7 @@ pub struct SharedState {
     pub story_errors: Arc<RwLock<HashMap<String, String>>>,
     /// Conteo de tokens por invocación, indexado por story_id.
     /// Cada entrada es un vector con los conteos de cada invocación (incluyendo reintentos).
+    #[allow(dead_code)]
     pub token_usage: Arc<RwLock<HashMap<String, Vec<TokenCount>>>>,
 }
 
@@ -425,7 +427,10 @@ mod tests {
         /// CA1: TokenCount se puede construir con valores cero.
         #[test]
         fn token_count_zero_values() {
-            let tc = TokenCount { input: 0, output: 0 };
+            let tc = TokenCount {
+                input: 0,
+                output: 0,
+            };
             assert_eq!(tc.input, 0);
             assert_eq!(tc.output, 0);
         }
@@ -442,8 +447,14 @@ mod tests {
                 output: 567,
             };
             let debug_str = format!("{:?}", tc);
-            assert!(debug_str.contains("1234"), "debug debe contener input: {debug_str}");
-            assert!(debug_str.contains("567"), "debug debe contener output: {debug_str}");
+            assert!(
+                debug_str.contains("1234"),
+                "debug debe contener input: {debug_str}"
+            );
+            assert!(
+                debug_str.contains("567"),
+                "debug debe contener output: {debug_str}"
+            );
         }
 
         /// CA2: TokenCount implementa Clone (clon produce un valor independiente).
@@ -509,17 +520,10 @@ mod tests {
         /// CA4: SharedState::new() inicializa token_usage como HashMap vacío.
         #[test]
         fn shared_state_new_initializes_token_usage() {
-            let state = SharedState::new(
-                HashMap::new(),
-                HashMap::new(),
-                HashMap::new(),
-            );
+            let state = SharedState::new(HashMap::new(), HashMap::new(), HashMap::new());
 
             let guard = state.token_usage.read().unwrap();
-            assert!(
-                guard.is_empty(),
-                "token_usage debe estar vacío tras new()"
-            );
+            assert!(guard.is_empty(), "token_usage debe estar vacío tras new()");
         }
 
         /// CA4: SharedState::new() con otros mapas poblados no afecta a token_usage.
@@ -538,11 +542,7 @@ mod tests {
         /// CA4: token_usage es escribible tras new().
         #[test]
         fn token_usage_writable_after_new() {
-            let state = SharedState::new(
-                HashMap::new(),
-                HashMap::new(),
-                HashMap::new(),
-            );
+            let state = SharedState::new(HashMap::new(), HashMap::new(), HashMap::new());
 
             state.token_usage.write().unwrap().insert(
                 "STORY-001".into(),
@@ -571,21 +571,13 @@ mod tests {
         #[test]
         fn clone_shares_existing_fields() {
             let state = SharedState::default();
-            state
-                .reject_cycles
-                .write()
-                .unwrap()
-                .insert("S1".into(), 5);
+            state.reject_cycles.write().unwrap().insert("S1".into(), 5);
 
             let clone = state.clone();
             assert_eq!(clone.reject_cycles.read().unwrap().get("S1"), Some(&5));
 
             // Escribir en el clone afecta al original (mismo Arc)
-            clone
-                .reject_cycles
-                .write()
-                .unwrap()
-                .insert("S1".into(), 99);
+            clone.reject_cycles.write().unwrap().insert("S1".into(), 99);
             assert_eq!(state.reject_cycles.read().unwrap().get("S1"), Some(&99));
         }
 
@@ -660,7 +652,10 @@ mod tests {
             let mut w = state.token_usage.write().unwrap();
             w.insert(
                 "X".into(),
-                vec![TokenCount { input: 1, output: 2 }],
+                vec![TokenCount {
+                    input: 1,
+                    output: 2,
+                }],
             );
 
             // try_read debe fallar porque hay un write lock activo
@@ -799,12 +794,10 @@ mod tests {
             // Append en el clone
             {
                 let mut w = clone.token_usage.write().unwrap();
-                w.get_mut("STORY-001")
-                    .unwrap()
-                    .push(TokenCount {
-                        input: 20,
-                        output: 10,
-                    });
+                w.get_mut("STORY-001").unwrap().push(TokenCount {
+                    input: 20,
+                    output: 10,
+                });
             }
 
             // Visible en el original
@@ -824,7 +817,10 @@ mod tests {
             // Escribir en clone1
             clone1.token_usage.write().unwrap().insert(
                 "A".into(),
-                vec![TokenCount { input: 1, output: 1 }],
+                vec![TokenCount {
+                    input: 1,
+                    output: 1,
+                }],
             );
 
             // clone2 y original lo ven
