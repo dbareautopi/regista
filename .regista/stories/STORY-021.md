@@ -1,7 +1,7 @@
 # STORY-021: Implementar `parse_token_count()` con patrones multi-provider
 
 ## Status
-**In Review**
+**In Progress**
 
 ## Epic
 EPIC-07
@@ -27,6 +27,7 @@ Implementar la función `pub fn parse_token_count(text: &str) -> Option<TokenCou
 - Bloqueado por: STORY-020
 
 ## Activity Log
+- 2026-05-05 | Reviewer | RECHAZO TÉCNICO → In Progress. Violación de arquitectura R2/R4: src/infra/agent.rs:9 importa crate::domain::state::TokenCount. Infra solo puede importar config. tests/architecture.rs FAILS (1 violation). El resto OK: build limpio, 463 tests pasan, fmt Ok, clippy Ok. Ver decisión en .regista/decisions/STORY-021-reviewer-reject-2026-05-05.md. Fix sugerido: definir TokenCount localmente en infra/agent.rs (struct con input/output: u64) y eliminar el import cross-layer. O mover TokenCount a src/types.rs (capa Cli, accesible para ambos).
 - 2026-05-05 | Dev | Implementado parse_token_count() con 6 LazyLock<Regex> (pi estándar, pi alt, Claude estándar, Claude alt, Codex, OpenCode). Captura con [\d,]+ y strip de comas para CA8. 42/42 tests story021 pasan. 463/463 tests totales pasan (0 fallos). Build release OK. Nota: test de arquitectura falla por violación R2 pre-existente (STORY-020: use crate::domain::state::TokenCount en infra/agent.rs).
 - 2026-05-05 | QA | Verificados 47 tests unitarios existentes en infra::agent::story021 — cubren los 12 CAs (6 patrones multi-provider, comas, None, LazyLock, casos límite). Sin adiciones necesarias.
 - 2026-05-05 | PO | Historia generada desde specs/spec-logs-transparentes.md (sección 6: Tracking de tokens — Parseo).
