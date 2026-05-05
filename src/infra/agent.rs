@@ -334,14 +334,68 @@ async fn invoke_once(
     }
 }
 
+// ── Patrones regex multi-provider para parseo de tokens (STORY-021) ──
+
+/// Patrón pi estándar: `Tokens used: N input, M output`
+#[allow(dead_code)]
+static PI_STANDARD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"Tokens used:\s+([\d,]+)\s+input,\s+([\d,]+)\s+output").unwrap());
+
+/// Patrón pi alternativo: `N input tokens ... M output tokens` (multilínea)
+#[allow(dead_code)]
+static PI_ALT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"([\d,]+)\s+input\s+tokens[\s\S]*?([\d,]+)\s+output\s+tokens").unwrap()
+});
+
+/// Patrón Claude Code estándar: `Token usage: N input, M output`
+#[allow(dead_code)]
+static CLAUDE_STANDARD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"Token usage:\s+([\d,]+)\s+input,\s+([\d,]+)\s+output").unwrap());
+
+/// Patrón Claude Code alternativo: `Input tokens: N ... Output tokens: M`
+#[allow(dead_code)]
+static CLAUDE_ALT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"Input tokens:\s+([\d,]+)[\s\S]*?Output tokens:\s+([\d,]+)").unwrap()
+});
+
+/// Patrón Codex: `Tokens: N in / M out`
+#[allow(dead_code)]
+static CODEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"Tokens:\s+([\d,]+)\s+in\s+/\s+([\d,]+)\s+out").unwrap());
+
+/// Patrón OpenCode: `N prompt tokens ... M completion tokens`
+#[allow(dead_code)]
+static OPENCODE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"([\d,]+)\s+prompt\s+tokens[\s\S]*?([\d,]+)\s+completion\s+tokens").unwrap()
+});
+
 /// Extrae el conteo de tokens de entrada y salida desde la salida textual combinada
 /// (stdout + stderr) del agente, usando patrones regex específicos para cada provider.
 ///
 /// Los patrones se compilan una sola vez mediante `LazyLock<Regex>`.
 /// Devuelve `None` si no se reconoce ningún patrón de tokens.
+#[allow(dead_code)]
 pub fn parse_token_count(text: &str) -> Option<TokenCount> {
-    // ── Placeholder: el Developer implementará la lógica de parseo ──
-    let _ = text;
+    // Se prueban los patrones en orden. El primero que haga match gana.
+    let patterns: &[&LazyLock<Regex>] = &[
+        &PI_STANDARD,
+        &PI_ALT,
+        &CLAUDE_STANDARD,
+        &CLAUDE_ALT,
+        &CODEX,
+        &OPENCODE,
+    ];
+
+    for pattern in patterns {
+        if let Some(caps) = pattern.captures(text) {
+            let input_str = caps.get(1)?.as_str().replace(",", "");
+            let output_str = caps.get(2)?.as_str().replace(",", "");
+            let input: u64 = input_str.parse().ok()?;
+            let output: u64 = output_str.parse().ok()?;
+            return Some(TokenCount { input, output });
+        }
+    }
+
     None
 }
 
@@ -736,9 +790,7 @@ mod tests {
         /// CA2: patrón pi estándar.
         #[test]
         fn pi_standard_pattern() {
-            let result = parse_token_count(
-                "Tokens used: 1234 input, 567 output",
-            );
+            let result = parse_token_count("Tokens used: 1234 input, 567 output");
             assert!(result.is_some(), "debe reconocer el patrón pi estándar");
             let tc = result.unwrap();
             assert_eq!(tc.input, 1234);
@@ -758,9 +810,7 @@ mod tests {
         /// CA2: patrón pi con números grandes.
         #[test]
         fn pi_standard_large_numbers() {
-            let result = parse_token_count(
-                "Tokens used: 999999 input, 888888 output",
-            );
+            let result = parse_token_count("Tokens used: 999999 input, 888888 output");
             assert!(result.is_some());
             let tc = result.unwrap();
             assert_eq!(tc.input, 999999);
@@ -770,9 +820,7 @@ mod tests {
         /// CA2: patrón pi con output = 0.
         #[test]
         fn pi_standard_zero_output() {
-            let result = parse_token_count(
-                "Tokens used: 500 input, 0 output",
-            );
+            let result = parse_token_count("Tokens used: 500 input, 0 output");
             assert!(result.is_some());
             let tc = result.unwrap();
             assert_eq!(tc.input, 500);
@@ -787,9 +835,7 @@ mod tests {
         /// CA3: patrón pi alternativo básico.
         #[test]
         fn pi_alt_pattern() {
-            let result = parse_token_count(
-                "1500 input tokens, 800 output tokens",
-            );
+            let result = parse_token_count("1500 input tokens, 800 output tokens");
             assert!(result.is_some(), "debe reconocer el patrón pi alternativo");
             let tc = result.unwrap();
             assert_eq!(tc.input, 1500);
@@ -829,9 +875,7 @@ mod tests {
         /// CA4: patrón Claude Code estándar.
         #[test]
         fn claude_standard_pattern() {
-            let result = parse_token_count(
-                "Token usage: 500 input, 200 output",
-            );
+            let result = parse_token_count("Token usage: 500 input, 200 output");
             assert!(result.is_some(), "debe reconocer el patrón Claude Code");
             let tc = result.unwrap();
             assert_eq!(tc.input, 500);
@@ -841,9 +885,7 @@ mod tests {
         /// CA4: patrón Claude Code con números grandes.
         #[test]
         fn claude_standard_large() {
-            let result = parse_token_count(
-                "Token usage: 10000 input, 5000 output",
-            );
+            let result = parse_token_count("Token usage: 10000 input, 5000 output");
             assert!(result.is_some());
             let tc = result.unwrap();
             assert_eq!(tc.input, 10000);
@@ -858,10 +900,11 @@ mod tests {
         /// CA5: patrón Claude Code alternativo.
         #[test]
         fn claude_alt_pattern() {
-            let result = parse_token_count(
-                "Input tokens: 300, Output tokens: 150",
+            let result = parse_token_count("Input tokens: 300, Output tokens: 150");
+            assert!(
+                result.is_some(),
+                "debe reconocer el patrón Claude Code alternativo"
             );
-            assert!(result.is_some(), "debe reconocer el patrón Claude Code alternativo");
             let tc = result.unwrap();
             assert_eq!(tc.input, 300);
             assert_eq!(tc.output, 150);
@@ -887,9 +930,7 @@ mod tests {
         /// CA6: patrón Codex.
         #[test]
         fn codex_pattern() {
-            let result = parse_token_count(
-                "Tokens: 1000 in / 500 out",
-            );
+            let result = parse_token_count("Tokens: 1000 in / 500 out");
             assert!(result.is_some(), "debe reconocer el patrón Codex");
             let tc = result.unwrap();
             assert_eq!(tc.input, 1000);
@@ -899,9 +940,7 @@ mod tests {
         /// CA6: patrón Codex con espacios adicionales.
         #[test]
         fn codex_extra_whitespace() {
-            let result = parse_token_count(
-                "Tokens:  42  in  /  7  out",
-            );
+            let result = parse_token_count("Tokens:  42  in  /  7  out");
             assert!(result.is_some());
             let tc = result.unwrap();
             assert_eq!(tc.input, 42);
@@ -916,9 +955,7 @@ mod tests {
         /// CA7: patrón OpenCode.
         #[test]
         fn opencode_pattern() {
-            let result = parse_token_count(
-                "999 prompt tokens, 333 completion tokens",
-            );
+            let result = parse_token_count("999 prompt tokens, 333 completion tokens");
             assert!(result.is_some(), "debe reconocer el patrón OpenCode");
             let tc = result.unwrap();
             assert_eq!(tc.input, 999);
@@ -944,9 +981,7 @@ mod tests {
         /// CA8: comas en patrón pi.
         #[test]
         fn commas_in_pi_pattern() {
-            let result = parse_token_count(
-                "Tokens used: 1,234 input, 567 output",
-            );
+            let result = parse_token_count("Tokens used: 1,234 input, 567 output");
             assert!(result.is_some(), "debe parsear números con comas");
             let tc = result.unwrap();
             assert_eq!(tc.input, 1234);
@@ -956,9 +991,7 @@ mod tests {
         /// CA8: comas en ambos números (pi alt).
         #[test]
         fn commas_in_both_numbers() {
-            let result = parse_token_count(
-                "12,345 input tokens, 6,789 output tokens",
-            );
+            let result = parse_token_count("12,345 input tokens, 6,789 output tokens");
             assert!(result.is_some());
             let tc = result.unwrap();
             assert_eq!(tc.input, 12345);
@@ -968,9 +1001,7 @@ mod tests {
         /// CA8: comas en patrón Claude Code.
         #[test]
         fn commas_in_claude_pattern() {
-            let result = parse_token_count(
-                "Token usage: 1,500 input, 2,000 output",
-            );
+            let result = parse_token_count("Token usage: 1,500 input, 2,000 output");
             assert!(result.is_some());
             let tc = result.unwrap();
             assert_eq!(tc.input, 1500);
@@ -980,9 +1011,7 @@ mod tests {
         /// CA8: comas en patrón Codex.
         #[test]
         fn commas_in_codex_pattern() {
-            let result = parse_token_count(
-                "Tokens: 1,000 in / 5,000 out",
-            );
+            let result = parse_token_count("Tokens: 1,000 in / 5,000 out");
             assert!(result.is_some());
             let tc = result.unwrap();
             assert_eq!(tc.input, 1000);
@@ -992,9 +1021,7 @@ mod tests {
         /// CA8: comas en patrón OpenCode.
         #[test]
         fn commas_in_opencode_pattern() {
-            let result = parse_token_count(
-                "1,234 prompt tokens, 5,678 completion tokens",
-            );
+            let result = parse_token_count("1,234 prompt tokens, 5,678 completion tokens");
             assert!(result.is_some());
             let tc = result.unwrap();
             assert_eq!(tc.input, 1234);
@@ -1004,9 +1031,7 @@ mod tests {
         /// CA8: número con múltiples comas (millones).
         #[test]
         fn multiple_commas_millions() {
-            let result = parse_token_count(
-                "1,234,567 input tokens, 8,901,234 output tokens",
-            );
+            let result = parse_token_count("1,234,567 input tokens, 8,901,234 output tokens");
             assert!(result.is_some());
             let tc = result.unwrap();
             assert_eq!(tc.input, 1234567);
@@ -1021,7 +1046,10 @@ mod tests {
         #[test]
         fn returns_none_for_irrelevant_text() {
             let result = parse_token_count("Hello, world!");
-            assert!(result.is_none(), "debe devolver None para texto irrelevante");
+            assert!(
+                result.is_none(),
+                "debe devolver None para texto irrelevante"
+            );
         }
 
         /// CA9: texto vacío.
@@ -1034,17 +1062,17 @@ mod tests {
         /// CA9: solo whitespace.
         #[test]
         fn returns_none_for_whitespace_only() {
-            let result = parse_token_count("   
-  	  ");
+            let result = parse_token_count(
+                "   
+  	  ",
+            );
             assert!(result.is_none());
         }
 
         /// CA9: solo input sin output (no debe matchear como éxito).
         #[test]
         fn returns_none_for_input_only() {
-            let result = parse_token_count(
-                "Tokens used: 500 input",
-            );
+            let result = parse_token_count("Tokens used: 500 input");
             assert!(
                 result.is_none(),
                 "texto con solo input (sin output) no debe producir TokenCount"
@@ -1054,9 +1082,7 @@ mod tests {
         /// CA9: solo output sin input.
         #[test]
         fn returns_none_for_output_only() {
-            let result = parse_token_count(
-                "500 output tokens",
-            );
+            let result = parse_token_count("500 output tokens");
             assert!(
                 result.is_none(),
                 "texto con solo output (sin input) no debe producir TokenCount"
@@ -1073,9 +1099,7 @@ mod tests {
         /// CA9: patrón parcial en otro formato (no reconocible).
         #[test]
         fn returns_none_for_unknown_format() {
-            let result = parse_token_count(
-                "Consumed 100 tokens, produced 50 tokens",
-            );
+            let result = parse_token_count("Consumed 100 tokens, produced 50 tokens");
             assert!(result.is_none());
         }
 
@@ -1114,8 +1138,8 @@ mod tests {
             ];
             for _ in 0..5 {
                 for (text, exp_in, exp_out) in inputs {
-                    let tc = parse_token_count(text)
-                        .unwrap_or_else(|| panic!("debe reconocer: {text}"));
+                    let tc =
+                        parse_token_count(text).unwrap_or_else(|| panic!("debe reconocer: {text}"));
                     assert_eq!(tc.input, *exp_in, "input mismatch for {text}");
                     assert_eq!(tc.output, *exp_out, "output mismatch for {text}");
                 }
@@ -1173,15 +1197,16 @@ mod tests {
             let result = parse_token_count(
                 "The authentication token has expired. Please refresh your token.",
             );
-            assert!(result.is_none(), "la palabra 'token' sola no debe hacer match");
+            assert!(
+                result.is_none(),
+                "la palabra 'token' sola no debe hacer match"
+            );
         }
 
         /// CA11: números negativos no se reconocen.
         #[test]
         fn negative_numbers_not_recognized() {
-            let result = parse_token_count(
-                "Tokens used: -5 input, 10 output",
-            );
+            let result = parse_token_count("Tokens used: -5 input, 10 output");
             assert!(
                 result.is_none(),
                 "números negativos no deben producir match"
@@ -1191,9 +1216,7 @@ mod tests {
         /// CA11: números con decimales no se reconocen.
         #[test]
         fn decimal_numbers_not_recognized() {
-            let result = parse_token_count(
-                "Tokens used: 1.5 input, 2.3 output",
-            );
+            let result = parse_token_count("Tokens used: 1.5 input, 2.3 output");
             assert!(
                 result.is_none(),
                 "números con decimales no deben producir match"
@@ -1203,9 +1226,7 @@ mod tests {
         /// CA11: solo espacios entre patrón y números.
         #[test]
         fn whitespace_resilience() {
-            let result = parse_token_count(
-                "Tokens used:   42   input,   7   output",
-            );
+            let result = parse_token_count("Tokens used:   42   input,   7   output");
             assert!(result.is_some());
             let tc = result.unwrap();
             assert_eq!(tc.input, 42);
