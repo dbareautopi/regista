@@ -71,29 +71,18 @@ Modificar `invoke_once()` en `infra/agent.rs` para que, cuando `verbose = true`,
   * Solución requerida (responsabilidad del QA): `let binding = buffer.lock().unwrap(); let log_output = String::from_utf8_lossy(&binding);`
   * No se avanza a In Review. El QA debe corregir los 3 errores E0716.
   * Documentado en .regista/decisions/STORY-022-dev-verification-4-2026-05-05.md.
-- 2026-05-05 | Dev | Quinta verificación de STORY-022. Verificación completa del código de producción:
+- 2026-05-05 | Dev | Sexta verificación de STORY-022. Verificación completa del código de producción:
   * `cargo check`: OK (sin errores)
   * `cargo build`: OK (sin errores)
   * `cargo clippy --no-deps`: OK (0 warnings)
   * `cargo fmt -- --check`: OK (formateado correctamente)
-  * `cargo test -- story022`: NO compila — los mismos 3 errores E0716.
-  * `Cargo.toml`: feature `io-util` confirmado presente en tokio.
-  * `invoke_once()` (L316): parámetro `verbose: bool`, dispatch a `invoke_once_verbose()` o `wait_with_output()`.
-  * `invoke_once_verbose()` (L358): `BufReader::new()` + `read_line()` en bucle async, `tracing::info!("  │ {}", trimmed)` para líneas no vacías, stdout acumulado en `Vec<u8>`, stderr en `tokio::spawn` separado.
-  * `kill_process_by_pid()` (L440): helper para timeout cross-platform.
-  * `invoke_with_retry()` (L78): `verbose: bool` como último parámetro, propagado.
-  * `invoke_with_retry_blocking()` (L193): `verbose: bool` propagado.
-  * Call sites: `app/plan.rs:152` y `app/pipeline.rs:774` pasan `false`.
-  * Los 3 errores E0716 en tests del QA (`cargo test -- story022`):
-    - L1763 (`ca3_verbose_logs_lines_with_pipe_prefix`): `String::from_utf8_lossy(&buffer.lock().unwrap())` — `MutexGuard` temporal destruido antes del uso de `Cow<str>`.
+  * `cargo test -- story022`: NO compila — 3 errores E0716.
+  * Código de producción cubre CA1-CA8, CA10-CA11.
+  * Mismos 3 errores E0716 en tests del QA:
+    - L1763 (`ca3_verbose_logs_lines_with_pipe_prefix`): `String::from_utf8_lossy(&buffer.lock().unwrap())` — `MutexGuard` temporal destruido.
     - L1809 (`ca3_empty_lines_not_logged`): mismo error E0716.
     - L2006 (`ca5_stderr_not_streamed_to_log`): mismo error E0716.
-  * Solución exacta (responsabilidad QA): reemplazar cada `String::from_utf8_lossy(&buffer.lock().unwrap())` por:
-    ```
-    let binding = buffer.lock().unwrap();
-    let log_output = String::from_utf8_lossy(&binding);
-    ```
-  * La implementación de producción cubre CA1-CA8 y CA10-CA11. CA9 requiere que los tests del QA compilen.
-  * NO se avanza a In Review. El QA debe corregir los 3 errores E0716 en `mod story022`.
-  * Documentado en .regista/decisions/STORY-022-dev-verification-5-2026-05-05.md.
+  * Solución exacta (responsabilidad QA): `let binding = buffer.lock().unwrap(); let log_output = String::from_utf8_lossy(&binding);` en las 3 ubicaciones.
+  * NO se avanza a In Review. El QA debe corregir los 3 errores E0716.
+  * Documentado en .regista/decisions/STORY-022-dev-verification-6-2026-05-05.md.
 
