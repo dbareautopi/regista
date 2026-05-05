@@ -1295,8 +1295,52 @@ agent_timeout_seconds = 900
                 "2026-05-05 12:00:00",
             );
 
+            // max_iter floor = 10 cuando story_count=0 y max_iterations=0
+            assert!(header.contains("max_iter=10"));
             assert!(header.contains("max_reject=8"));
             assert!(header.contains("timeout=1800s"));
+        }
+
+        /// CA4: Cuando max_iterations=0 y story_count=1, el floor
+        /// (10) prevalece sobre el cálculo (1 × 6 = 6).
+        #[test]
+        fn limits_shows_floor_when_auto_below_minimum() {
+            let cfg = config::Config::default(); // max_iterations = 0
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                1,
+                false,
+                "2026-05-05 12:00:00",
+            );
+
+            // 1 story × 6 = 6, pero effective_max_iterations usa .max(10) = 10
+            assert!(
+                header.contains("max_iter=10"),
+                "Con 1 historia, max_iter debe ser 10 (floor), no 6"
+            );
+        }
+
+        /// CA4: Cuando max_iterations=0 y story_count=2, el cálculo
+        /// (2 × 6 = 12) prevalece sobre el floor (10).
+        #[test]
+        fn limits_shows_auto_above_floor() {
+            let cfg = config::Config::default(); // max_iterations = 0
+            let header = format_session_header(
+                &cfg,
+                "1.0.0",
+                Path::new("/tmp"),
+                2,
+                false,
+                "2026-05-05 12:00:00",
+            );
+
+            // 2 stories × 6 = 12, que es > floor 10
+            assert!(
+                header.contains("max_iter=12"),
+                "Con 2 historias, max_iter debe ser 12 (2 × 6)"
+            );
         }
 
         // ── CA5: Estado de git ─────────────────────────────────
