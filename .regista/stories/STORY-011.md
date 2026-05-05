@@ -1,7 +1,7 @@
 # STORY-011: Estado compartido con `Arc<RwLock<>>` para contadores del orchestrator
 
 ## Status
-**Draft**
+**Ready**
 
 ## Epic
 EPIC-04
@@ -23,3 +23,4 @@ Actualmente los contadores del orchestrator (`reject_cycles: HashMap<String, u32
 
 ## Activity Log
 - 2026-05-04 | PO | Historia generada desde roadmap/AUDITORIA-ESCALABILIDAD.md (hallazgo #10.3, recomendación #7).
+- 2026-05-05 | PO | Refinamiento: DoR verificado. Descripción alineada con hallazgo #10.3, 7 CAs específicos y testeables, sin dependencias. Nota: CA6 referencia `orchestrator` legado, adaptar a `app::pipeline`. Decisión documentada en decisions/STORY-011-po-refinement.md.
