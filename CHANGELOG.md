@@ -7,6 +7,26 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.9.4] — 2026-05-06
+
+### Changed
+- **QA Engineer skill → TDD puro (fase roja)**: prohibido modificar firmas de
+  producción, no necesita `cargo test` en verde para avanzar a Tests Ready,
+  máximo 2 iteraciones por historia. Los tests en rojo son el contrato que
+  recibe el Developer.
+- **Developer skill → TDD puro (fase verde)**: ciclo explícito rojo-verde-azul,
+  recibe tests en rojo como contrato, implementa solo el código mínimo para
+  hacerlos pasar, no reescribe tests del QA.
+- **Eliminado `model` hardcodeado de `init.rs`**: las plantillas de skill ya
+  no incluyen `model: opencode/minimax-m2.5-free` en el frontmatter YAML.
+  Pi usará su modelo por defecto.
+
+### Fixed
+- **STORY-024 — bucle del QA resuelto**: el QA modificó la firma de
+  `build_run_options()` rompiendo los call sites existentes. Revertido el
+  cambio de producción y adaptados los tests TDD para construir `RunOptions`
+  directamente sin depender de la firma nueva.
+
 ## [0.9.3] — 2026-05-06
 
 ### Fixed
@@ -368,6 +388,7 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 - Dry-run, salida JSON, feedback rico en reintentos
 - Hooks post-fase y snapshots git
 
+[0.9.4]: https://github.com/dbareautopi/regista/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/dbareautopi/regista/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/dbareautopi/regista/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/dbareautopi/regista/compare/v0.9.0...v0.9.1

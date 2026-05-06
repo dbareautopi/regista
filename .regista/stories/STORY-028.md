@@ -1,7 +1,7 @@
 # STORY-028: Incluir conteo de tokens en `HealthReport`
 
 ## Status
-**Blocked**
+**Ready**
 
 ## Epic
 EPIC-10
