@@ -7,6 +7,22 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.9.2] — 2026-05-06
+
+### Fixed
+- **Skills de agentes corregidos para prevenir deadlocks**: los 4 roles
+  (Developer, QA Engineer, Reviewer, Product Owner) ahora incluyen reglas
+  explícitas para detectar y romper ciclos de rechazos infinitos:
+  - Developer: corrige errores de compilación triviales del QA en vez de
+    reportarlos en bucle. Límite de 3 reintentos sin progreso.
+  - QA Engineer: obligatorio ejecutar `cargo test` antes de marcar Tests Ready.
+  - Reviewer: detecta conflictos Dev-QA (>5 iteraciones sin cambio de estado).
+  - Product Owner: detecta deadlocks (>10 entradas sin cambio de estado).
+- **STORY-022 (streaming de agente) completada**: la funcionalidad de
+  streaming línea a línea con `invoke_once_verbose()` ya estaba implementada
+  y pasando 25/25 tests, pero estaba bloqueada en un deadlock Dev-QA de 129
+  iteraciones.
+
 ## [0.9.1] — 2026-05-05
 
 ### Fixed
@@ -333,6 +349,7 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 - Dry-run, salida JSON, feedback rico en reintentos
 - Hooks post-fase y snapshots git
 
+[0.9.2]: https://github.com/dbareautopi/regista/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/dbareautopi/regista/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/dbareautopi/regista/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/dbareautopi/regista/compare/v0.7.2...v0.8.0

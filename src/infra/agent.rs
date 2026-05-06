@@ -1760,7 +1760,8 @@ mod tests {
             )
             .await;
 
-            let log_output = String::from_utf8_lossy(&buffer.lock().unwrap());
+            let guard = buffer.lock().unwrap();
+            let log_output = String::from_utf8_lossy(&guard);
 
             // Debe contener líneas con el prefijo "  │ "
             assert!(
@@ -1806,7 +1807,8 @@ mod tests {
             )
             .await;
 
-            let log_output = String::from_utf8_lossy(&buffer.lock().unwrap());
+            let guard = buffer.lock().unwrap();
+            let log_output = String::from_utf8_lossy(&guard);
 
             // Debe loguear las líneas no vacías
             assert!(log_output.contains("AAA"), "debe loguear 'AAA'");
@@ -2003,7 +2005,8 @@ mod tests {
             )
             .await;
 
-            let log_output = String::from_utf8_lossy(&buffer.lock().unwrap());
+            let guard = buffer.lock().unwrap();
+            let log_output = String::from_utf8_lossy(&guard);
 
             // stdout DEBE aparecer en el log con prefijo
             assert!(

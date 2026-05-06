@@ -786,20 +786,51 @@ async fn process_story(
             // Verificar que el agente realmente cambió el estado
             let updated = Story::load(&story.path)?;
             if updated.status == story.status {
+                // El agente completó pero NO cambió el estado.
+                // Esto es un fallo: contamos como ciclo de rechazo para que
+                // max_reject_cycles eventualmente marque la historia como Failed,
+                // y retornamos error para que el pipeline lo registre.
+                let current_cycles = {
+                    let mut guard = state.reject_cycles.write().unwrap();
+                    let cycles = guard.entry(story.id.clone()).or_insert(0);
+                    *cycles += 1;
+                    *cycles
+                };
                 tracing::warn!(
-                    "  ⚠ {}: el agente no cambió el estado (sigue en {})",
+                    "  ⚠ {}: el agente no cambió el estado (sigue en {}) — ciclo {}/{}",
+                    story.id,
+                    story.status,
+                    current_cycles,
+                    cfg.limits.max_reject_cycles
+                );
+                // Rollback si hay snapshot (el agente pudo haber hecho cambios
+                // parciales pero al no completar la tarea, revertimos).
+                if let Some(ref hash) = prev_hash {
+                    let root = project_root.to_path_buf();
+                    let hash = hash.clone();
+                    let lbl = label.to_string();
+                    tokio::task::spawn_blocking(move || {
+                        crate::infra::git::rollback(&root, &hash, &lbl)
+                    })
+                    .await
+                    .unwrap_or(false);
+                }
+                return Err(anyhow::anyhow!(
+                    "el agente completó pero no cambió el estado de {} (sigue en {})",
                     story.id,
                     story.status
-                );
-            } else if (updated.status == Status::InProgress || updated.status == Status::InReview)
+                ));
+            }
+            if (updated.status == Status::InProgress || updated.status == Status::InReview)
                 && (story.status == Status::InReview || story.status == Status::BusinessReview)
             {
-                // El agente rechazó: incrementar contador
-                let mut guard = state.reject_cycles.write().unwrap();
-                let cycles = guard.entry(story.id.clone()).or_insert(0);
-                *cycles += 1;
-                let current_cycles = *cycles;
-                drop(guard);
+                // El agente rechazó explícitamente: incrementar contador
+                let current_cycles = {
+                    let mut guard = state.reject_cycles.write().unwrap();
+                    let cycles = guard.entry(story.id.clone()).or_insert(0);
+                    *cycles += 1;
+                    *cycles
+                };
                 tracing::info!(
                     "  📊 {}: ciclo de rechazo {}/{}",
                     story.id,
