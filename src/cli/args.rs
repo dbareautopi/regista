@@ -82,6 +82,10 @@ pub struct CommonArgs {
     /// Suprimir logs de progreso (solo errores)
     #[arg(long)]
     pub quiet: bool,
+
+    /// Modo compacto: sin streaming de salida de agente ni diffs
+    #[arg(long)]
+    pub compact: bool,
 }
 
 /// Args de filtrado y control del pipeline.
@@ -243,6 +247,7 @@ mod tests {
                 assert_eq!(r.repo.dir, ".");
                 assert!(!r.common.dry_run);
                 assert!(!r.common.logs);
+                assert!(!r.common.compact);
                 assert!(r.pipeline.story.is_none());
                 assert!(!r.pipeline.once);
             }
@@ -491,6 +496,92 @@ mod tests {
                 assert_eq!(i.provider, "codex");
             }
             _ => panic!("expected Init"),
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // STORY-024 CA1: Flag --compact en CommonArgs
+    // ═══════════════════════════════════════════════════════════
+
+    /// CA1: CommonArgs.compact es false por defecto.
+    #[test]
+    fn compact_default_false() {
+        let args = Cli::try_parse_from(["regista", "run"]).unwrap();
+        match args.command {
+            Commands::Run(r) => assert!(!r.common.compact, "compact debe ser false por defecto"),
+            _ => panic!("expected Run"),
+        }
+    }
+
+    /// CA1: --compact se parsea y establece compact=true.
+    #[test]
+    fn compact_flag_sets_true() {
+        let args = Cli::try_parse_from(["regista", "run", "--compact"]).unwrap();
+        match args.command {
+            Commands::Run(r) => assert!(r.common.compact, "--compact debe ser true"),
+            _ => panic!("expected Run"),
+        }
+    }
+
+    /// CA1: El flag --compact funciona con el subcomando plan.
+    #[test]
+    fn compact_with_plan() {
+        let args = Cli::try_parse_from(["regista", "plan", "spec.md", "--compact"]).unwrap();
+        match args.command {
+            Commands::Plan(p) => assert!(p.common.compact, "--compact debe ser true en plan"),
+            _ => panic!("expected Plan"),
+        }
+    }
+
+    /// CA1: El flag --compact funciona con el subcomando auto.
+    #[test]
+    fn compact_with_auto() {
+        let args = Cli::try_parse_from(["regista", "auto", "spec.md", "--compact"]).unwrap();
+        match args.command {
+            Commands::Auto(a) => assert!(a.common.compact, "--compact debe ser true en auto"),
+            _ => panic!("expected Auto"),
+        }
+    }
+
+    /// CA1: El flag --compact se puede combinar con otros flags.
+    #[test]
+    fn compact_combined_with_other_flags() {
+        let args = Cli::try_parse_from([
+            "regista", "run", "--compact", "--dry-run", "--once",
+        ])
+        .unwrap();
+        match args.command {
+            Commands::Run(r) => {
+                assert!(r.common.compact, "--compact debe ser true");
+                assert!(r.common.dry_run, "--dry-run debe ser true");
+                assert!(r.pipeline.once, "--once debe ser true");
+            }
+            _ => panic!("expected Run"),
+        }
+    }
+
+    /// CA1: Todos los subcomandos aceptan --compact.
+    #[test]
+    fn all_pipeline_subcommands_accept_compact() {
+        // subcomando run con --compact
+        let args = Cli::try_parse_from(["regista", "run", "--compact"]).unwrap();
+        match args.command {
+            Commands::Run(r) => assert!(r.common.compact),
+            _ => panic!(),
+        }
+
+        // subcomando plan con --compact
+        let args = Cli::try_parse_from(["regista", "plan", "spec.md", "--compact"]).unwrap();
+        match args.command {
+            Commands::Plan(p) => assert!(p.common.compact),
+            _ => panic!(),
+        }
+
+        // subcomando auto con --compact
+        let args = Cli::try_parse_from(["regista", "auto", "spec.md", "--compact"]).unwrap();
+        match args.command {
+            Commands::Auto(a) => assert!(a.common.compact),
+            _ => panic!(),
         }
     }
 }

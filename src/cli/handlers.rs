@@ -624,7 +624,7 @@ fn load_config(
 }
 
 /// Construye `RunOptions` desde los flags de pipeline.
-fn build_run_options(pipeline: &PipelineArgs, quiet: bool) -> app::pipeline::RunOptions {
+fn build_run_options(pipeline: &PipelineArgs, quiet: bool, compact: bool) -> app::pipeline::RunOptions {
     let epics_range = pipeline.epics.as_ref().and_then(|range| {
         let parts: Vec<&str> = range.split("..").collect();
         if parts.len() == 2 {
@@ -645,7 +645,7 @@ fn build_run_options(pipeline: &PipelineArgs, quiet: bool) -> app::pipeline::Run
         epics_range,
         dry_run: false, // se sobreescribe en los handlers que usan --dry-run
         quiet,
-        compact: false,
+        compact,
     }
 }
 
@@ -984,6 +984,7 @@ mod tests {
             config: None,
             provider: Some("claude".into()),
             quiet: false,
+            compact: false,
         };
         let log_file = Path::new(".regista/logs/regista-log-test.log");
 
@@ -1012,6 +1013,7 @@ mod tests {
             config: Some("custom.toml".into()),
             provider: None,
             quiet: true,
+            compact: false,
         };
         let log_file = Path::new(".regista/logs/regista-log-test.log");
 
@@ -1949,6 +1951,74 @@ post_dev = "npm run build"
             assert!(header.contains("2026-05-05 12:00:00 UTC"));
             // 4 stories × 6 = 24
             assert!(header.contains("max_iter=24"));
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // STORY-024 CA3: Propagación de --compact a RunOptions
+    // ═══════════════════════════════════════════════════════════
+
+    mod story024 {
+        use super::*;
+
+        /// CA3: build_run_options propaga compact=true a RunOptions.
+        #[test]
+        fn build_run_options_propagates_compact_true() {
+            let pipeline = PipelineArgs::default();
+            let opts = build_run_options(&pipeline, false, true);
+            assert!(
+                opts.compact,
+                "build_run_options con compact=true debe tener RunOptions.compact=true"
+            );
+        }
+
+        /// CA3: build_run_options propaga compact=false a RunOptions.
+        #[test]
+        fn build_run_options_propagates_compact_false() {
+            let pipeline = PipelineArgs::default();
+            let opts = build_run_options(&pipeline, false, false);
+            assert!(
+                !opts.compact,
+                "build_run_options con compact=false debe tener RunOptions.compact=false"
+            );
+        }
+
+        /// CA3: quiet y compact se propagan independientemente.
+        #[test]
+        fn build_run_options_propagates_quiet_and_compact_independently() {
+            let pipeline = PipelineArgs::default();
+
+            let opts = build_run_options(&pipeline, true, true);
+            assert!(opts.quiet, "quiet=true debe propagarse");
+            assert!(opts.compact, "compact=true debe propagarse");
+
+            let opts = build_run_options(&pipeline, true, false);
+            assert!(opts.quiet, "quiet=true debe propagarse");
+            assert!(!opts.compact, "compact=false debe propagarse");
+
+            let opts = build_run_options(&pipeline, false, true);
+            assert!(!opts.quiet, "quiet=false debe propagarse");
+            assert!(opts.compact, "compact=true debe propagarse");
+        }
+
+        /// CA3: build_run_options conserva los otros campos al propagar compact.
+        #[test]
+        fn build_run_options_preserves_other_fields_when_compact_added() {
+            let pipeline = PipelineArgs {
+                once: true,
+                story: Some("STORY-005".into()),
+                epic: None,
+                epics: None,
+                resume: true,
+                clean_state: false,
+            };
+            let opts = build_run_options(&pipeline, false, true);
+
+            assert!(opts.once, "once debe conservarse");
+            assert_eq!(opts.story_filter.as_deref(), Some("STORY-005"));
+            assert!(opts.compact, "compact debe propagarse");
+            assert!(!opts.quiet, "quiet debe ser false");
+            assert!(!opts.dry_run, "dry_run debe ser false (se sobreescribe en handlers)");
         }
     }
 }
