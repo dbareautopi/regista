@@ -1,9 +1,10 @@
 # 🧠 regista — Session Handoff
 
-> **Fecha**: 2026-05-05
-> **Sesión**: v0.9.0 — Reestructuración arquitectónica, migración a tokio, Workflow trait, Health metrics
-> **Versión**: v0.9.0
+> **Fecha**: 2026-05-06
+> **Sesión**: v0.9.0 → v0.10.0 — Diseño de spartito, decisiones de arquitectura del ecosistema
+> **Versión**: v0.9.0 (v0.10.0 en planificación)
 > **Estado**: 357 tests pasando, 0 fallos, 1 ignorado, 0 warnings.
+> **Próximo hito**: Implementar spartito (Fase S1) y migrar regista (Fase S2)
 
 ---
 
@@ -69,7 +70,63 @@ Arquitectura en **4 capas** con dependencias unidireccionales verificadas por `t
 
 ---
 
-## 🆕 Novedades en v0.9.0 (desde v0.7.2)
+## 🆕 Novedades en planificación (v0.10.0)
+
+### 🎼 Spartito — Crate de contrato compartido
+
+Se ha diseñado `spartito`, un crate independiente que externaliza el contrato
+entre `regista` (orquestador) y `mezzala` (agent harness). Es el **vehículo de
+implementación de #04 (workflow configurable)**.
+
+**Documento de diseño**: [`mezzala/docs/spec-spartito.md`](../mezzala/docs/spec-spartito.md)
+
+#### Lo que contiene spartito
+
+| Módulo | Contenido | Tests |
+|--------|-----------|-------|
+| `types.rs` | `Status` (newtype String), `Actor` (newtype String), `Transition`, `Guard` | ~25 |
+| `story_format.rs` | Parseo/validación de `.md` (zero-regex, zero-deps) | ~25 |
+| `dod.rs` / `dor.rs` | Checklists canónicos de DoD y DoR | ~10 |
+| `workflow.rs` | Trait `Workflow` + `CanonicalWorkflow` (14 fijas) + `ConfigurableWorkflow` | ~40 |
+| `config.rs` | `WorkflowConfig` desde TOML (feature-gated con `serde`) | ~15 |
+
+#### Decisiones de diseño afianzadas
+
+| # | Decisión | Impacto |
+|---|----------|---------|
+| D1 | `Status` newtype sobre `String` | Workflows arbitrarios sin recompilar |
+| D2 | `Actor` newtype sobre `String` | Roles configurables en TOML |
+| D3 | Bifurcaciones: `transitions_from()` → `Vec<&Transition>` | Agente elige entre múltiples destinos |
+| D4 | `Guard` enum + variante `Custom` | 3 guards estándar; extensible |
+| D5 | Zero regex en story_format | WASM-compatible, compilación rápida |
+| D6 | Migración progresiva: `domain/state.rs` → wrapper | Sin romper imports existentes |
+| D7 | `domain/workflow.rs` → ELIMINADO | Trait vive en spartito |
+| D8 | **Dominio fijo (software dev), pipeline configurable** | No es orquestador genérico |
+
+#### Plan de implementación
+
+```
+S1: Crear spartito (7 historias, ~115 tests)
+S2: Migrar regista (6 historias, adaptar ~357 tests)
+S3: Verificar mezzala (2 historias)
+S4: Publicar en crates.io
+```
+
+Descompuesto en 3 épicas (EPIC-016, EPIC-017, EPIC-018) y 15 historias
+(STORY-059 a STORY-073) en el backlog de mezzala.
+
+### Afianzamiento de la estrategia de producto
+
+Tras análisis, se confirmó que regista **no debe ser un orquestador genérico**.
+La decisión es:
+
+- ✅ **Dominio**: desarrollo de software con historias, CAs, épicas, dependencias
+- ✅ **Pipeline**: 100% configurable vía `[workflow]` en TOML (estados, transiciones, bifurcaciones)
+- ❌ **No**: abstraer el concepto de "historia" para otros dominios
+- ❌ **No**: convertir regista en un runner de comandos genérico
+
+El valor está en la calidad de los prompts y la especialización en flujos de
+desarrollo, no en la generalidad del motor.
 
 ### 🏗️ Reestructuración arquitectónica (commit `245065e`)
 
@@ -303,9 +360,12 @@ EPIC-XXX
 
 ## 🚧 Pendiente (roadmap)
 
+### Prioridad máxima — AHORA
+- **S1 - Spartito**: crate compartido (~115 tests nuevos). Bloquea todo lo demás.
+- **S2 - Migrar regista**: adaptar domain + app a spartito. ~357 tests a adaptar.
+
 ### Media prioridad
 - **10 - Cross-story context**: agentes reciben contexto de historias relacionadas (Fase 4)
-- **04 - Workflow configurable**: transiciones definibles en `.regista/config.toml` (Fase 5)
 - **11 - TUI / dashboard**: visualización en vivo del progreso (Fase 6)
 - **12 - Cost tracking**: límite de gasto en llamadas LLM (Fase 6)
 - **01 - Paralelismo**: ejecutar historias independientes simultáneamente (Fase 7, ÚLTIMO)
@@ -313,6 +373,9 @@ EPIC-XXX
 ### Variantes de plan
 - **14 - `plan --from-dir`**: múltiples documentos fuente (Fase 3)
 - **15 - `plan --interactive`**: PO entrevista al usuario (Fase 6)
+
+> ⚠️ #04 (workflow configurable) ya no aparece como feature independiente:
+> spartito ES su implementación.
 
 ---
 
@@ -323,37 +386,21 @@ EPIC-XXX
 
 2. **Agnóstico al proyecto**: regista no sabe de Rust, cargo, ni nada.
 
-3. **Workflow fijo e inmutable**: 14 transiciones canónicas.
+3. **Workflow externalizado en `spartito`**: contrato compartido con mezzala.
+   `CanonicalWorkflow` por defecto; `ConfigurableWorkflow` desde TOML.
+   Soporta bifurcaciones.
 
-4. **Trait `AgentProvider` devuelve `Vec<String>`**: compatible sync/async.
+4. **Dominio fijo (software dev), pipeline configurable**: no es un orquestador
+   genérico. Historias con CA, dependencias, épicas, DoD/DoR.
 
-5. **Async runtime tokio**: `agent.rs` y `pipeline.rs` usan async/await.  
+5. **`Status` newtype sobre `String`**: extensible en TOML sin recompilar.
+
+6. **Trait `AgentProvider` devuelve `Vec<String>`**: compatible sync/async.
+
+7. **Async runtime tokio**: `agent.rs` y `pipeline.rs` usan async/await.  
    Timeout real mata procesos por PID.
 
-6. **`SharedState` con `Arc<RwLock<>>`**: preparado para paralelismo (#01).
+8. **`SharedState` con `Arc<RwLock<>>`**: preparado para paralelismo (#01).
 
-7. **Trait `Workflow`**: abstrae máquina de estados para workflows configurables (#04).
-
-8. **Shell `true` en hooks**: `hooks.rs` ejecuta con `sh -c`.
-
-9. **Backoff exponencial**: `agent.rs` duplica delay entre reintentos.
-
-10. **`set_status()` con backup atómico**: write → verify → restore .bak si falla.
-
-11. **CLI con clap Subcommand**: 10 subcomandos, `--version`/`--help` nativos.
-
-12. **Dry-run en memoria**: `advance_status_in_memory()` sin tocar filesystem.
-
-13. **Plan con bucle validate**: feedback concreto de errores de dependencias.
-
-14. **Checkpoint TOML**: mismo formato que el proyecto, legible.
-
-15. **Feedback truncado a 2000 bytes**: no desborda ventana de contexto.
-
-16. **`max_iterations = 0`**: auto-escala a `max(10, historias × 6)`.
-
-17. **`max_reject_cycles = 8`**: más tolerante que el anterior 3.
-
-18. **Provider por defecto `"pi"`**: retrocompatibilidad total.
-
-19. **Skills inline con YAML frontmatter**: `name`, `model`, `description`.
+9. **Migración progresiva**: `domain/state.rs` como wrapper con re-exports.
+   `domain/workflow.rs` eliminado.

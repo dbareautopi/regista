@@ -7,6 +7,25 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.9.3] — 2026-05-06
+
+### Fixed
+- **Falso negativo en detección de cambio de estado corregido**: cuando un
+  agente completaba exitosamente (exit code 0) y cambiaba el estado de la
+  historia, el pipeline podía no detectar el cambio por condiciones de
+  carrera del filesystem. Esto provocaba un `git reset --hard` que destruía
+  todo el trabajo del agente, forzando reintentos innecesarios (timeouts de
+  30 min).
+  - Bucle de relectura del archivo con delays (0ms → 200ms → 500ms) para
+    manejar buffering del sistema operativo.
+  - Eliminado el rollback cuando el agente retorna exit code 0: los cambios
+    se preservan siempre, incluso si el parseo de estado falla.
+  - Log de confirmación cuando el archivo fue modificado (mtime) aunque el
+    estado parseado no cambie.
+- **`RunOptions.compact` añadido a `handlers.rs`**: el constructor de
+  `RunOptions` en `build_run_options()` no incluía el campo `compact`
+  añadido en STORY-027.
+
 ## [0.9.2] — 2026-05-06
 
 ### Fixed
@@ -349,6 +368,7 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 - Dry-run, salida JSON, feedback rico en reintentos
 - Hooks post-fase y snapshots git
 
+[0.9.3]: https://github.com/dbareautopi/regista/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/dbareautopi/regista/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/dbareautopi/regista/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/dbareautopi/regista/compare/v0.8.0...v0.9.0

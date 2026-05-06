@@ -2206,7 +2206,12 @@ mod tests {
         #[tokio::test]
         async fn ca10_call_signature_matches_pipeline_usage() {
             let provider = PiProvider;
-            let limits = LimitsConfig::default();
+            let limits = LimitsConfig {
+                max_retries_per_step: 1,
+                retry_delay_base_seconds: 0,
+                agent_timeout_seconds: 2,
+                ..LimitsConfig::default()
+            };
             let opts = AgentOptions {
                 story_id: Some("STORY-022".into()),
                 decisions_dir: None,

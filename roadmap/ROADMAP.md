@@ -14,7 +14,7 @@ y notas de implementación.
 |---|---|---|---|
 | 2 | **Salida JSON + CI/CD**: reportes estructurados, exit codes, integración con pipelines | [`02-salida-json-ci-cd.md`](./02-salida-json-ci-cd.md) | ✅ Implementado |
 | 3 | **Dry-run**: simular qué haría el orquestador sin ejecutar agentes | [`03-dry-run.md`](./03-dry-run.md) | ✅ Implementado |
-| 4 | **Workflow configurable**: estados y transiciones definibles en `.regista/config.toml` | [`04-workflow-configurable.md`](./04-workflow-configurable.md) | Medio |
+| 4 | **Workflow configurable**: estados y transiciones definibles en `.regista/config.toml` | [`04-workflow-configurable.md`](./04-workflow-configurable.md) | ✍️ Diseñado — implementado vía `spartito` |
 | 20 | **🆕 Multi-provider**: pi, Claude Code, Codex, OpenCode | [`20-multi-provider.md`](./20-multi-provider.md) | ✅ Implementado |
 
 ---
@@ -48,6 +48,7 @@ y notas de implementación.
 | 13 | **`regista plan`**: generar historias desde un documento de requisitos, con bucle de validación de dependencias | [`13-groom-generacion-historias.md`](./13-groom-generacion-historias.md) | ✅ Implementado |
 | 14 | **`plan --from-dir`**: generar desde un directorio de specs por feature | [`14-groom-from-dir.md`](./14-groom-from-dir.md) | Bajo |
 | 15 | **`plan --interactive`**: el PO entrevista al usuario para extraer requisitos | [`15-groom-interactive.md`](./15-groom-interactive.md) | Medio |
+| 22 | **`plan --append`**: generación incremental consciente de historias existentes, sin pisar el backlog previo | [`22-plan-append.md`](./22-plan-append.md) ✍️ | Medio |
 
 ## 🔵 v0.2.0 — Calidad de vida (implementado)
 
@@ -74,6 +75,14 @@ Las entradas marcadas como críticas son las que *impiden* que un equipo use
 ## 🗓️ Orden de implementación (mayo 2026)
 
 ```
+Fase 0 (FUNDACIONAL — AHORA) ──── 🆕 Spartito: crate de contrato compartido
+                                     ├── Crear spartito en workspace mezzala (~115 tests)
+                                     ├── Migrar regista a usar spartito (adaptar ~357 tests)
+                                     └── Esfuerzo: medio-alto (~500 líneas nuevas + migración)
+                                     │
+                                     │  ⚠️ Spartito REEMPLAZA a #04 (workflow configurable).
+                                     │  Cuando spartito esté en crates.io, #04 estará completado.
+                                     │
 Fase 1 (abstracción fundacional) ── 🆕 #20 multi-provider (Claude Code, Codex, OpenCode…)
                                      ├── Trait AgentProvider (devuelve Vec<String>, agnóstico a sync/async)
                                      ├── PiProvider, ClaudeCodeProvider, CodexProvider, OpenCodeProvider
@@ -89,11 +98,22 @@ Fase 3 (quick win) ──────────────── #14 plan --f
 
 Fase 4 (calidad de agentes) ─────── #10 cross-story context
                                      ├── Inyectar resúmenes de dependencias Done
-                                     └── Esfuerzo: medio (~120 líneas)
+                                     ├── Esfuerzo: medio (~120 líneas)
+                                     │
+                                     ├── #22 plan --append (complementario)
+                                     ├── Generación incremental sin pisar backlog
+                                     └── Esfuerzo: medio (~100 líneas)
 
-Fase 5 (diferenciación) ─────────── #04 workflow configurable
-                                     ├── Status dinámico, transiciones desde TOML
-                                     └── Esfuerzo: medio-alto (~300 líneas)
+Fase 4 (calidad de agentes) ─────── #10 cross-story context
+                                     ├── Inyectar resúmenes de dependencias Done
+                                     ├── Esfuerzo: medio (~120 líneas)
+                                     │
+                                     ├── #22 plan --append (complementario)
+                                     ├── Generación incremental sin pisar backlog
+                                     └── Esfuerzo: medio (~100 líneas)
+
+Fase 5 (ELIMINADA) ──────────────── #04 workflow configurable
+                                     └── REEMPLAZADA por Fase 0 (spartito)
 
 Fase 6 (experiencia) ────────────── #11 TUI, #12 cost tracking, #15 interactive
                                      └── Nice to have, no bloquean adopción
@@ -108,7 +128,12 @@ Fase 7 (escalabilidad — ÚLTIMO) ─── #01 paralelismo con tokio async
 
 ```
 ┌──────────────────────┐
-│ 🆕 #20 Multi-provider│────── Fundación: define el trait AgentProvider
+│ 🆕 Spartito (Fase 0) │────── Fundación: define Status, Actor, Workflow trait,
+└────────┬─────────────┘        story_format, DoD/DoR. Shared contract.
+         │                      Reemplaza a #04 (workflow configurable).
+         ▼
+┌──────────────────────┐
+│ 🆕 #20 Multi-provider│────── Define el trait AgentProvider
 └────────┬─────────────┘        (devuelve Vec<String>, agnóstico a sync/async)
          │
          ▼
@@ -119,26 +144,8 @@ Fase 7 (escalabilidad — ÚLTIMO) ─── #01 paralelismo con tokio async
          ▼
 ┌────────────────────┐      ┌──────────────────────────┐
 │ #14 plan --from-dir │      │ #10 Cross-story context   │
-└────────────────────┘      └────────┬─────────────────┘
-         │                           │
-         │  #04 necesita prompts     │  #04 necesita contexto
-         │  genéricos + cross-story  │  de dependencias
-         │  ya funcionando           │
-         └───────────┬───────────────┘
-                     ▼
-         ┌──────────────────────────┐
-         │ #04 Workflow configurable│
-         └──────────┬───────────────┘
-                    │
-                    │  #01 se construye sobre el trait AgentProvider.
-                    │  Se deja para el final porque el paralelismo
-                    │  añade complejidad de concurrencia que conviene
-                    │  abordar cuando el resto del sistema esté maduro.
-                    ▼
-         ┌──────────────────────┐
-         │ #01 Paralelismo      │────── Tokio async + oleadas independientes
-         └──────────────────────┘        Arc<Mutex<>> para shared state
-```
+│ #22 plan --append   │      │ (complementa a #10)        │
+└────────────────────┘      └───────────────────────────┘
 
 > ⚠️ Las features #11 (TUI), #12 (cost tracking), y #15 (plan interactive) son
 > ortogonales al resto y se pueden implementar en cualquier orden.
@@ -147,33 +154,27 @@ Fase 7 (escalabilidad — ÚLTIMO) ─── #01 paralelismo con tokio async
 
 ## 📝 Notas sobre el orden
 
-1. **#20 Multi-provider primero** porque:
+1. **Spartito (Fase 0) primero** porque:
+   - Define el **contrato fundacional** del ecosistema: `Status`, `Actor`, `Workflow` trait, `story_format`
+   - Es el source of truth compartido entre regista y mezzala
+   - Reemplaza y extiende #04 (workflow configurable) con bifurcaciones
+   - Sin spartito, regista y mezzala dependen de un contrato implícito frágil
+   - `Status` como newtype sobre `String` permite workflows arbitrarios sin recompilar
+   - La migración de regista es el mayor riesgo; conviene hacerla cuanto antes
+
+2. **#20 Multi-provider (Fase 1) después** porque:
    - Define la **interfaz fundacional** del sistema: el trait `AgentProvider`
    - El trait devuelve `Vec<String>` (args), no `Command` → compatible con sync y async
-   - Es la feature con mayor impacto en adopción que NO estaba en el roadmap original
-   - Elimina la dependencia dura de `pi` (vendor lock-in)
-   - Una vez que `agent.rs` usa providers, añadir Claude Code, Aider o cualquier otro es trivial
+   - ✅ Ya implementado
 
-2. **#09 después** porque:
-   - Con providers ya funcionando, los templates de prompt pueden adaptarse a cada stack/provider.
-   - Define el placeholder `{cross_story_context}` que #10 usará para inyectar contexto.
-   - Prepara los prompts genéricos por rol que #04 (workflow configurable) necesita.
+3. **#09 (Fase 2) después** porque:
+   - ✅ Ya implementado. Templates de prompt con vars de stack.
+   - Define el placeholder `{cross_story_context}` que #10 usará.
 
-3. **#14 antes que #10** porque:
-   - Es un quick win (~50 líneas) que no depende de nada más.
-   - #10 se beneficia de tener el ecosistema de plan completo antes de añadir contexto.
+4. **#14 y #10 (Fases 3-4)** porque:
+   - #14 es quick win (~50 líneas).
+   - #10 usa el placeholder de #09 para inyectar contexto.
 
-4. **#10 después de #09 y #14** porque:
-   - Usa el placeholder `{cross_story_context}` definido en #09 para inyectar contexto.
-   - Los resúmenes de historias Done se cachean en `decisions/`, sin llamadas额外 al LLM.
-
-5. **#04 después** porque:
-   - Es el cambio más disruptivo (Status de enum a string, prompts genéricos).
-   - Conviene tener providers, prompts agnósticos y cross-story context estables antes de meterle mano a la máquina de estados.
-   - Para entonces, los prompts ya son genéricos por rol y aceptan contexto dinámico.
-
-6. **#01 al final** porque:
-   - El paralelismo añade complejidad de concurrencia (Arc<Mutex<>>, oleadas, timeouts).
-   - Conviene tener todo el resto del sistema maduro y estable antes de introducir concurrencia.
-   - Se construye LIMPIAMENTE sobre el trait AgentProvider sin hardcodeos a `pi`.
-   - El trait ya está diseñado para ser async-compatible (devuelve args, no `Command`).
+5. **#01 al final (Fase 7)** porque:
+   - El paralelismo añade complejidad de concurrencia.
+   - Conviene tener todo el resto del sistema maduro.

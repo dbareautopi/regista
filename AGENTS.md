@@ -318,22 +318,23 @@ EPIC-XXX
 
 ### Capa `domain/` — Lógica pura (NO importa otras capas del crate)
 
-#### `state.rs` — Máquina de estados
-- `Status` enum: 9 variantes con `Display`, `is_terminal()`, `is_actionable()`, `is_stuck()`
-- `Actor` enum: `ProductOwner`, `QaEngineer`, `Developer`, `Reviewer`, `Orchestrator`
-- `Transition` struct con `Status::ALL` — 14 transiciones canónicas
+#### `state.rs` — Wrapper de tipos + SharedState
+- Re-exports desde `spartito`: `Status` (newtype sobre String, constantes canónicas `&'static str`),
+  `Actor` (newtype sobre String, 5 roles canónicos), `Transition` (con `Guard` opcional)
 - `SharedState`: `Arc<RwLock<HashMap<>>>` para estado compartido entre tareas (paralelismo #01)
   - `reject_cycles`, `story_iterations`, `story_errors`
   - `Clone` comparte el mismo `Arc`; `read()`/`write()` con `RwLock`
-- Tests: 23 tests + tests de `SharedState` (STORY-011)
+  - Es código propio de regista; los tipos vienen de spartito
+- Tests: tests de SharedState + tests de tipos delegados a spartito
 
-#### `story.rs` — Parseo de historias
-- `Story` struct: `id`, `path`, `status`, `epic`, `blockers`, `last_rejection`, `raw_content`
-- `load()`: lee archivo .md y parsea todos los campos
-- `set_status()`: escribe a disco con backup atómico + verificación
+#### `story.rs` — Parseo de historias (delega en spartito)
+- `Story` struct: `id`, `path`, `status: spartito::Status`, `epic`, `blockers`, `last_rejection`, `raw_content`
+- `load()`: lee archivo .md y parsea todos los campos delegando en `spartito::story_format::*`
+- `set_status()`: escribe a disco usando `spartito::story_format::replace_status_in_content()`
 - `advance_status_in_memory()`: muta estado sin tocar disco (dry-run)
 - `last_actor()`: extrae último actor del Activity Log
-- Tests: 12 tests
+- El parser de IDs (STORY-NNN, EPIC-NNN) es zero-regex: iteración manual sobre `&str`
+- Tests: 12 tests (adaptados a Status newtype)
 
 #### `graph.rs` — Grafo de dependencias
 - `DependencyGraph`: `forward` (bloqueador→bloqueados), `reverse`, DFS con colores
@@ -355,11 +356,11 @@ EPIC-XXX
 - `qa_tests()` incluye reglas estrictas (NO crear módulos, NO implementar, solo tests)
 - Tests: 15 tests
 
-#### `workflow.rs` — Trait de workflow extensible
-- `Workflow` trait: `next_status()`, `map_status_to_role()`, `canonical_column_order()`
-- `CanonicalWorkflow`: implementación con las 14 transiciones fijas
-- El trait usa `&self` (no `&mut self`) + `Sync` — compatible con paralelismo
-- Tests: 35 tests (happy path, fix path, determinismo, trait object safety)
+#### `workflow.rs` — ELIMINADO (vive en spartito)
+- El trait `Workflow`, `CanonicalWorkflow` y `ConfigurableWorkflow` están en `spartito::workflow`
+- Regista importa directamente: `use spartito::workflow::{Workflow, CanonicalWorkflow, ConfigurableWorkflow}`
+- Los 35 tests de workflow migran a spartito o se adaptan como tests de integración
+- Ver [`spartito spec`](../../mezzala/docs/spec-spartito.md) para el diseño completo
 
 ### Capa `infra/` — Infraestructura (importa solo `config`)
 
@@ -427,9 +428,14 @@ EPIC-XXX
    `tokio::process::Command` + `tokio::time::timeout` reemplazan busy-polling.  
    Timeout real mata el proceso por PID (sin zombies). Operaciones de bloqueo (git, hooks) usan `spawn_blocking`.
 
-4. **Workflow fijo e inmutable**: las 14 transiciones son canónicas.  
-   No se añaden transiciones en runtime **por diseño**.  
-   El trait `Workflow` abstrae la lógica para que #04 pueda reemplazarla sin tocar el pipeline.
+4. **Workflow externalizado en `spartito`**: el contrato de estados, transiciones, formato de
+   historia y checklists DoD/DoR vive en un crate independiente compartido con `mezzala`.
+   Regista importa `spartito` como dependencia. Esto permite:
+   - Workflow canónico por defecto (14 transiciones fijas, `CanonicalWorkflow`).
+   - Workflow configurable vía `[workflow]` en `.regista/config.toml` (`ConfigurableWorkflow`).
+   - Bifurcaciones: un estado puede tener múltiples destinos; el agente elige (`transitions_from()`).
+   - Single source of truth: si el formato de historia cambia, regista y mezzala se actualizan
+     sincronizadamente con `cargo update`.
 
 5. **`SharedState` con `Arc<RwLock<>>`**: reemplaza `&mut HashMap` pasado por la pila.  
    Clonable, compartible entre tareas, preparado para `tokio::spawn` en paralelismo (#01).
@@ -480,19 +486,47 @@ EPIC-XXX
 20. **`max_reject_cycles = 8`**: por defecto, 8 ciclos de rechazo antes de `Failed`.  
     `max_iterations = 0`: auto-escala a `max(10, historias × 6)`.
 
+21. **Dominio fijo, pipeline configurable**: spartito y regista están especializados en
+    **desarrollo de software** (formato de historia con CA, dependencias, épicas, DoD/DoR).
+    No son orquestadores genéricos. Lo configurable es el pipeline: estados, transiciones,
+    bifurcaciones, y asignación de providers por rol. El dominio no se abstrae.
+
+22. **`Status` newtype sobre `String`, no enum**: un enum no puede extenderse en runtime.
+    El newtype permite workflows con estados arbitrarios definidos en TOML.
+    Las constantes canónicas (`Status::DRAFT` como `&'static str`) preservan ergonomía.
+
+23. **Bifurcaciones sin sintaxis especial**: `transitions_from()` devuelve
+    `Vec<&Transition>`. Si hay N > 1 transiciones desde un estado, hay bifurcación.
+    El prompt presenta las opciones; el agente decide; el orquestador solo valida.
+
+24. **`Guard` enum con variante `Custom`**: 3 guards estándar (`HasUnresolvedDependencies`,
+    `AllDependenciesDone`, `MaxRejectCyclesExceeded`) + `Custom(String)` para extensibilidad.
+
+25. **Zero regex en `spartito::story_format`**: búsqueda de IDs con iteración de caracteres
+    sobre `&str`. Menos dependencias, compatible con WASM.
+
+26. **Migración progresiva**: `domain/state.rs` se conserva como wrapper con re-exports
+    (`pub use spartito::Status;`). `domain/workflow.rs` se elimina por completo.
+    Esto minimiza el riesgo: los imports internos siguen funcionando durante la transición.
+
 ---
 
 ## 🚧 Pendiente (roadmap)
 
-| # | Feature | Esfuerzo | Fase |
-|---|---------|----------|------|
-| 01 | Paralelismo | Alto | 7 (último) |
-| 04 | Workflow configurable | Medio | 5 |
-| 10 | Cross-story context | Medio | 4 |
-| 11 | TUI / dashboard | Medio | 6 |
-| 12 | Cost tracking | Medio | 6 |
-| 14 | Plan `--from-dir` | Bajo | 3 |
-| 15 | Plan `--interactive` | Medio | 6 |
+| # | Feature | Esfuerzo | Fase | Vehículo |
+|---|---------|----------|------|----------|
+| S1 | **Spartito** — crate compartido | Medio | 0 (fundacional) | `crates/spartito` en workspace mezzala |
+| S2 | **Migrar regista a spartito** | Alto | 0 (fundacional) | Adaptación de domain + app |
+| 14 | Plan `--from-dir` | Bajo | 3 | — |
+| 10 | Cross-story context | Medio | 4 | — |
+| 11 | TUI / dashboard | Medio | 6 | — |
+| 12 | Cost tracking | Medio | 6 | — |
+| 15 | Plan `--interactive` | Medio | 6 | — |
+| 01 | Paralelismo | Alto | 7 (último) | — |
+
+> ⚠️ #04 (workflow configurable) ya no es una feature independiente:
+> **spartito ES la implementación de #04**. Cuando spartito esté publicado,
+> #04 estará completado.
 
 ---
 
@@ -521,7 +555,11 @@ Para añadir tests:
   `tests/architecture.rs` detecta estas violaciones.
 
 - ❌ **Añadir transiciones a `Status::ALL`**: rompe la inmutabilidad del workflow.  
-  Las 14 transiciones son el contrato fijo.
+  Las 14 transiciones canónicas son el default. Para workflows custom, se define
+  `[workflow]` en `.regista/config.toml`. No se añaden transiciones en código.
+
+- ❌ **Implementar lógica de workflow en regista**: el trait `Workflow` y sus
+  implementaciones viven en `spartito`. Regista solo consume el trait.
 
 - ❌ **Parsear historias sin usar `extract_section()`**: usa las funciones existentes en `domain/story.rs`.
 

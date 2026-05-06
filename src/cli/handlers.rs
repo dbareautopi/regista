@@ -645,6 +645,7 @@ fn build_run_options(pipeline: &PipelineArgs, quiet: bool) -> app::pipeline::Run
         epics_range,
         dry_run: false, // se sobreescribe en los handlers que usan --dry-run
         quiet,
+        compact: false,
     }
 }
 
