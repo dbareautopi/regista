@@ -232,3 +232,8 @@
 [2m2026-05-06T01:38:05.975012Z[0m [33m WARN[0m [2mregista::app::pipeline[0m[2m:[0m   ⚠ STORY-022: el agente no cambió el estado (sigue en Tests Ready)
 [2m2026-05-06T01:38:05.975632Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 46 ══════
 [2m2026-05-06T01:38:05.991738Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 Dev (implement) (pi) | STORY-022 (Tests Ready → In Review)
+[2m2026-05-06T01:38:06.039180Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   [1/5] invocando pi (./.pi/skills/developer/SKILL.md)
+[2m2026-05-06T01:40:19.787947Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   ✓ agente completado (intento 1)
+[2m2026-05-06T01:40:19.793508Z[0m [33m WARN[0m [2mregista::app::pipeline[0m[2m:[0m   ⚠ STORY-022: el agente no cambió el estado (sigue en Tests Ready)
+[2m2026-05-06T01:40:19.794176Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 47 ══════
+[2m2026-05-06T01:40:19.806076Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 Dev (implement) (pi) | STORY-022 (Tests Ready → In Review)
