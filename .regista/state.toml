@@ -1,8 +1,8 @@
-iteration = 24
+iteration = 25
 
 [reject_cycles]
 
 [story_iterations]
-STORY-022 = 24
+STORY-022 = 25
 
 [story_errors]
