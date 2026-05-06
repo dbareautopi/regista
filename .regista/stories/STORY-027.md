@@ -1,7 +1,7 @@
 # STORY-027: Diff post-agente + acumulación de tokens + resumen final enriquecido
 
 ## Status
-**Business Review**
+**Done**
 
 ## Epic
 EPIC-10
@@ -49,3 +49,4 @@ Integrar tres funcionalidades en `app/pipeline.rs`:
 ## Activity Log
 - 2026-05-06 | Dev | Implementación completa de STORY-027 en app/pipeline.rs. Se integraron 3 funcionalidades: (1) format_agent_line_with_model() a nivel de módulo para loguear cada invocación con el modelo resuelto via AgentsConfig::model_for_role(); (2) parseo y acumulación de tokens post-agente en SharedState.token_usage usando agent::parse_token_count() sobre stdout+stderr combinados; (3) git diff --stat post-agente en modo detallado (!compact, git enabled) logueando archivos modificados con 📁. Se implementó el bloque de cierre enriquecido en run_real() con resumen de tokens totales (input+output), conteo por estado, IDs de fallidas, y timestamp via chrono. Se corrigieron 6 llamadas a process_story() en tests que no pasaban el nuevo parámetro compact. Se aplicaron correcciones de clippy (or_default, and_then). 520 tests pasan, clippy limpio, fmt OK.
 - 2026-05-06 | Reviewer | ✅ Revisión técnica aprobada. DoD verificado: cargo build compila sin errores, 520 tests pasan (0 fallos, 1 ignorado), cargo clippy -- -D warnings limpio, cargo fmt -- --check limpio. Dependencias STORY-019, 020, 021, 022, 026 en Done. Los 13 CAs tienen cobertura de tests específicos en el módulo story027 del pipeline. Transición a Business Review.
+- 2026-05-06 | PO | ✅ Validación de negocio aprobada. Los 13 CAs verificados contra el código en app/pipeline.rs: (1) format_agent_line_with_model() formatea 🎯 rol | id | provider [modelo] usando model_for_role(); (2) parse_token_count() sobre stdout+stderr acumula en shared_state.token_usage; (3) git diff --stat en modo detallado (!compact, git enabled) muestra 📁 Archivos modificados. Bloque de cierre enriquecido con tokens totales, conteo por estado, timestamp. 520 tests pasan, build/clippy/fmt limpios. Dependencias todas en Done. Valor de negocio cumplido. Transición a Done.
