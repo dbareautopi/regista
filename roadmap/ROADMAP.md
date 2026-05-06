@@ -39,6 +39,7 @@ y notas de implementación.
 | 11 | **TUI / dashboard**: visualización en vivo del progreso del pipeline | [`11-tui-dashboard.md`](./11-tui-dashboard.md) | Medio |
 | 12 | **Cost tracking**: estimación y límite de gasto en llamadas LLM | [`12-cost-tracking.md`](./12-cost-tracking.md) | Medio |
 | 1 | **🕐 Paralelismo**: ejecutar múltiples historias independientes simultáneamente | [`01-paralelismo.md`](./01-paralelismo.md) | Alto |
+| 21 | **🐳 Dockerización**: `init --docker` genera Dockerfile + docker-compose con el provider elegido | [`21-docker.md`](./21-docker.md) 💡 | Medio-bajo |
 
 ## 🟢 Generación de backlog — Automatizar la creación de historias
 

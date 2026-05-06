@@ -11,7 +11,7 @@ use std::path::Path;
 ///
 /// Busca líneas como `campo: valor` en el bloque delimitado por `---`.
 /// Devuelve `None` si no hay frontmatter o el campo no existe.
-fn read_yaml_field(path: &Path, field: &str) -> Option<String> {
+pub fn read_yaml_field(path: &Path, field: &str) -> Option<String> {
     let content = std::fs::read_to_string(path).ok()?;
     let mut in_frontmatter = false;
     let mut count = 0u32;

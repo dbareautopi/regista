@@ -155,6 +155,7 @@ pub fn run(
             &prompt,
             &cfg.limits,
             &AgentOptions::default(),
+            false,
         ) {
             Ok(_) => {
                 stories_count = count_files(&stories_dir, &cfg.project.story_pattern);
