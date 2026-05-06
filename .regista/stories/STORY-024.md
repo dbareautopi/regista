@@ -1,7 +1,7 @@
 # STORY-024: Flag `--compact` en `CommonArgs` y propagación al pipeline
 
 ## Status
-**Blocked**
+**Ready**
 
 ## Epic
 EPIC-09

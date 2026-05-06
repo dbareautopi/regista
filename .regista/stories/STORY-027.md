@@ -1,7 +1,7 @@
 # STORY-027: Diff post-agente + acumulación de tokens + resumen final enriquecido
 
 ## Status
-**Blocked**
+**Ready**
 
 ## Epic
 EPIC-10
