@@ -26,6 +26,30 @@ Modificar `invoke_once()` en `infra/agent.rs` para que, cuando `verbose = true`,
 (Ninguna)
 
 ## Activity Log
+- 2026-05-06 | Dev | Sexagésima tercera verificación de STORY-022. Código de producción verificado:
+  * `cargo check` (0.24s): OK, sin errores.
+  * `cargo clippy --no-deps --bin regista`: OK, 0 warnings.
+  * `cargo fmt -- --check`: OK, código formateado.
+  * `cargo test --test architecture`: OK, 11/11 pasan.
+  * `cargo test -- story022`: NO compila — mismos 3 errores E0716 en `mod story022`.
+  * Código de producción completo y correcto (CA1-CA8, CA10-CA11):
+    - `invoke_with_retry()` y `invoke_with_retry_blocking()`: parámetro `verbose: bool` (CA1, CA10).
+    - `invoke_once()`: `verbose=false` → `wait_with_output()`, `verbose=true` → `invoke_once_verbose()` (CA2, CA6).
+    - `invoke_once_verbose()`: `BufReader` + `read_line()`, `tracing::info!("  │ {}", trimmed)` por línea no vacía, `Vec<u8>` acumulado, stderr en `tokio::spawn` sin streaming (CA2-CA5).
+    - `kill_process_by_pid()`: helper cross-platform para timeout (CA7).
+    - Call sites en `app/plan.rs:152` y `app/pipeline.rs:774` pasan `false` (CA10).
+    - `AgentResult` mantiene `stdout`, `stderr`, `exit_code` (CA11).
+    - `Cargo.toml`: feature `io-util` en tokio (CA2).
+  * Errores E0716 en tests del QA (NO corregidos — responsabilidad del QA, 63ª iteración):
+    | Test | Línea | Error |
+    |------|-------|-------|
+    | `ca3_verbose_logs_lines_with_pipe_prefix` | 1763 | `String::from_utf8_lossy(&buffer.lock().unwrap())` — `MutexGuard` temporal destruido |
+    | `ca3_empty_lines_not_logged` | 1809 | mismo error E0716 |
+    | `ca5_stderr_not_streamed_to_log` | 2006 | mismo error E0716 |
+  * Solución: `let binding = buffer.lock().unwrap(); let log_output = String::from_utf8_lossy(&binding);` en las 3 ubicaciones.
+  * NO se avanza a In Review. El orquestador debe pasar el turno al QA.
+  * Documentado en .regista/decisions/STORY-022-dev-verification-63-2026-05-06.md.
+
 - 2026-05-06 | Dev | Sexagésima segunda verificación de STORY-022. Código de producción verificado:
   * `cargo check` (0.32s): OK, sin errores.
   * `cargo clippy --no-deps --bin regista` (0.32s): OK, 0 warnings.
