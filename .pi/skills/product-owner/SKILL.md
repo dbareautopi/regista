@@ -1,7 +1,6 @@
 ---
 name: product-owner
 description: Product Owner role for regista — refines and validates user stories to ensure they deliver business value. Handles Draft→Ready and Business Review→Done transitions.
-model: opencode/minimax-m2.5-free
 ---
 
 # Product Owner Skill

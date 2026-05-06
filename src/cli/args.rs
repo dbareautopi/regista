@@ -546,10 +546,8 @@ mod tests {
     /// CA1: El flag --compact se puede combinar con otros flags.
     #[test]
     fn compact_combined_with_other_flags() {
-        let args = Cli::try_parse_from([
-            "regista", "run", "--compact", "--dry-run", "--once",
-        ])
-        .unwrap();
+        let args =
+            Cli::try_parse_from(["regista", "run", "--compact", "--dry-run", "--once"]).unwrap();
         match args.command {
             Commands::Run(r) => {
                 assert!(r.common.compact, "--compact debe ser true");

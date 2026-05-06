@@ -3872,8 +3872,7 @@ model = "gpt-5"
                 };
                 let verbose = !opts.compact;
                 assert_eq!(
-                    verbose,
-                    !compact_val,
+                    verbose, !compact_val,
                     "verbose debe ser !compact: compact={compact_val} → verbose={verbose}"
                 );
             }

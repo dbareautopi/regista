@@ -1,7 +1,6 @@
 ---
 name: reviewer
 description: Reviewer role for regista — technical gate that verifies code meets standards before business validation. Handles In Review→Business Review and In Review→In Progress (reject) transitions.
-model: opencode/minimax-m2.5-free
 ---
 
 # Reviewer Skill

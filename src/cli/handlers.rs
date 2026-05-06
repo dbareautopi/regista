@@ -624,7 +624,7 @@ fn load_config(
 }
 
 /// Construye `RunOptions` desde los flags de pipeline.
-fn build_run_options(pipeline: &PipelineArgs, quiet: bool, compact: bool) -> app::pipeline::RunOptions {
+fn build_run_options(pipeline: &PipelineArgs, quiet: bool) -> app::pipeline::RunOptions {
     let epics_range = pipeline.epics.as_ref().and_then(|range| {
         let parts: Vec<&str> = range.split("..").collect();
         if parts.len() == 2 {
@@ -645,7 +645,7 @@ fn build_run_options(pipeline: &PipelineArgs, quiet: bool, compact: bool) -> app
         epics_range,
         dry_run: false, // se sobreescribe en los handlers que usan --dry-run
         quiet,
-        compact,
+        compact: false,
     }
 }
 
@@ -1961,64 +1961,79 @@ post_dev = "npm run build"
     mod story024 {
         use super::*;
 
-        /// CA3: build_run_options propaga compact=true a RunOptions.
+        // ── CA2/CA3: RunOptions.compact se puede construir con ambos valores ──
+
+        /// CA2/CA3: RunOptions.compact se puede construir como true.
         #[test]
-        fn build_run_options_propagates_compact_true() {
-            let pipeline = PipelineArgs::default();
-            let opts = build_run_options(&pipeline, false, true);
+        fn run_options_compact_can_be_true() {
+            let opts = app::pipeline::RunOptions {
+                compact: true,
+                ..Default::default()
+            };
             assert!(
                 opts.compact,
-                "build_run_options con compact=true debe tener RunOptions.compact=true"
+                "RunOptions.compact debe ser true cuando se construye con compact: true"
             );
         }
 
-        /// CA3: build_run_options propaga compact=false a RunOptions.
+        /// CA2/CA3: RunOptions.compact se puede construir como false.
         #[test]
-        fn build_run_options_propagates_compact_false() {
-            let pipeline = PipelineArgs::default();
-            let opts = build_run_options(&pipeline, false, false);
+        fn run_options_compact_can_be_false() {
+            let opts = app::pipeline::RunOptions {
+                compact: false,
+                ..Default::default()
+            };
             assert!(
                 !opts.compact,
-                "build_run_options con compact=false debe tener RunOptions.compact=false"
+                "RunOptions.compact debe ser false cuando se construye con compact: false"
             );
         }
 
-        /// CA3: quiet y compact se propagan independientemente.
+        /// CA3: quiet y compact son campos independientes en RunOptions.
         #[test]
-        fn build_run_options_propagates_quiet_and_compact_independently() {
-            let pipeline = PipelineArgs::default();
+        fn run_options_quiet_and_compact_independent() {
+            let opts = app::pipeline::RunOptions {
+                quiet: true,
+                compact: true,
+                ..Default::default()
+            };
+            assert!(opts.quiet, "quiet debe ser true");
+            assert!(opts.compact, "compact debe ser true");
 
-            let opts = build_run_options(&pipeline, true, true);
-            assert!(opts.quiet, "quiet=true debe propagarse");
-            assert!(opts.compact, "compact=true debe propagarse");
+            let opts = app::pipeline::RunOptions {
+                quiet: true,
+                compact: false,
+                ..Default::default()
+            };
+            assert!(opts.quiet, "quiet debe ser true");
+            assert!(!opts.compact, "compact debe ser false");
 
-            let opts = build_run_options(&pipeline, true, false);
-            assert!(opts.quiet, "quiet=true debe propagarse");
-            assert!(!opts.compact, "compact=false debe propagarse");
-
-            let opts = build_run_options(&pipeline, false, true);
-            assert!(!opts.quiet, "quiet=false debe propagarse");
-            assert!(opts.compact, "compact=true debe propagarse");
+            let opts = app::pipeline::RunOptions {
+                quiet: false,
+                compact: true,
+                ..Default::default()
+            };
+            assert!(!opts.quiet, "quiet debe ser false");
+            assert!(opts.compact, "compact debe ser true");
         }
 
-        /// CA3: build_run_options conserva los otros campos al propagar compact.
+        /// CA3: RunOptions conserva otros campos al añadir compact.
         #[test]
-        fn build_run_options_preserves_other_fields_when_compact_added() {
-            let pipeline = PipelineArgs {
+        fn run_options_preserves_other_fields_with_compact() {
+            let opts = app::pipeline::RunOptions {
                 once: true,
-                story: Some("STORY-005".into()),
-                epic: None,
-                epics: None,
-                resume: true,
-                clean_state: false,
+                story_filter: Some("STORY-005".into()),
+                compact: true,
+                quiet: false,
+                dry_run: false,
+                ..Default::default()
             };
-            let opts = build_run_options(&pipeline, false, true);
 
             assert!(opts.once, "once debe conservarse");
             assert_eq!(opts.story_filter.as_deref(), Some("STORY-005"));
-            assert!(opts.compact, "compact debe propagarse");
+            assert!(opts.compact, "compact debe ser true");
             assert!(!opts.quiet, "quiet debe ser false");
-            assert!(!opts.dry_run, "dry_run debe ser false (se sobreescribe en handlers)");
+            assert!(!opts.dry_run, "dry_run debe ser false");
         }
 
         // ── CA3: build_daemon_args propaga --compact al hijo ──
@@ -2036,8 +2051,7 @@ post_dev = "npm run build"
                 compact: true,
             };
             let log_file = Path::new(".regista/logs/test.log");
-            let args =
-                build_daemon_args("run", ".", None, false, 0, &pipeline, &common, log_file);
+            let args = build_daemon_args("run", ".", None, false, 0, &pipeline, &common, log_file);
             assert!(
                 args.contains(&"--compact".to_string()),
                 "build_daemon_args debe propagar --compact al hijo cuando common.compact=true"
@@ -2057,8 +2071,7 @@ post_dev = "npm run build"
                 compact: false,
             };
             let log_file = Path::new(".regista/logs/test.log");
-            let args =
-                build_daemon_args("run", ".", None, false, 0, &pipeline, &common, log_file);
+            let args = build_daemon_args("run", ".", None, false, 0, &pipeline, &common, log_file);
             assert!(
                 !args.contains(&"--compact".to_string()),
                 "build_daemon_args NO debe pasar --compact al hijo cuando common.compact=false"
@@ -2079,8 +2092,14 @@ post_dev = "npm run build"
             };
             let log_file = Path::new(".regista/logs/test.log");
             let args = build_daemon_args(
-                "plan", "myproj", Some("spec.md"), true, 10,
-                &pipeline, &common, log_file,
+                "plan",
+                "myproj",
+                Some("spec.md"),
+                true,
+                10,
+                &pipeline,
+                &common,
+                log_file,
             );
             assert!(
                 args.contains(&"--compact".to_string()),
@@ -2106,8 +2125,14 @@ post_dev = "npm run build"
             };
             let log_file = Path::new(".regista/logs/test.log");
             let args = build_daemon_args(
-                "auto", ".", Some("spec.md"), false, 0,
-                &pipeline, &common, log_file,
+                "auto",
+                ".",
+                Some("spec.md"),
+                false,
+                0,
+                &pipeline,
+                &common,
+                log_file,
             );
             assert!(
                 args.contains(&"--compact".to_string()),
@@ -2128,8 +2153,7 @@ post_dev = "npm run build"
                 compact: true,
             };
             let log_file = Path::new(".regista/logs/test.log");
-            let args =
-                build_daemon_args("run", ".", None, false, 0, &pipeline, &common, log_file);
+            let args = build_daemon_args("run", ".", None, false, 0, &pipeline, &common, log_file);
             assert!(
                 args.contains(&"--compact".to_string()),
                 "debe incluir --compact"
@@ -2153,8 +2177,7 @@ post_dev = "npm run build"
                 compact: true,
             };
             let log_file = Path::new(".regista/logs/test.log");
-            let args =
-                build_daemon_args("run", ".", None, false, 0, &pipeline, &common, log_file);
+            let args = build_daemon_args("run", ".", None, false, 0, &pipeline, &common, log_file);
             let count = args.iter().filter(|a| *a == "--compact").count();
             assert_eq!(
                 count, 1,

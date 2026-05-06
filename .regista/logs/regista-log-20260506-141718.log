@@ -39,3 +39,6 @@
 [2m2026-05-06T15:34:06.648275Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   📝 STORY-024: el archivo fue modificado por el agente (cambios preservados)
 [2m2026-05-06T15:34:06.648995Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 133 ══════
 [2m2026-05-06T15:34:06.663560Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 QA (tests) | STORY-024 | pi [opencode/minimax-m2.5-free]
+[2m2026-05-06T15:34:06.737409Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   [1/5] invocando pi (./.pi/skills/qa-engineer/SKILL.md)
+[2m2026-05-06T15:51:10.972330Z[0m [33m WARN[0m [2mregista::infra::agent[0m[2m:[0m   ✗ agente falló (exit code 143) — intento 1/5
+[2m2026-05-06T15:51:10.973479Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   ↻ reintentando en 10s...
