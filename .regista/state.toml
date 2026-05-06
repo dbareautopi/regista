@@ -1,13 +1,13 @@
-iteration = 130
+iteration = 131
 
 [reject_cycles]
-STORY-024 = 1
+STORY-024 = 2
 STORY-027 = 1
 
 [story_iterations]
 STORY-027 = 4
 STORY-022 = 125
-STORY-024 = 1
+STORY-024 = 2
 
 [story_errors]
 STORY-024 = "el agente completó pero no cambió el estado de STORY-024 (sigue en Ready)"

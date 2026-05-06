@@ -2020,5 +2020,146 @@ post_dev = "npm run build"
             assert!(!opts.quiet, "quiet debe ser false");
             assert!(!opts.dry_run, "dry_run debe ser false (se sobreescribe en handlers)");
         }
+
+        // ── CA3: build_daemon_args propaga --compact al hijo ──
+
+        /// CA3: build_daemon_args incluye --compact cuando common.compact es true.
+        #[test]
+        fn build_daemon_args_includes_compact_when_true() {
+            let pipeline = PipelineArgs::default();
+            let common = CommonArgs {
+                logs: false,
+                dry_run: false,
+                config: None,
+                provider: None,
+                quiet: false,
+                compact: true,
+            };
+            let log_file = Path::new(".regista/logs/test.log");
+            let args =
+                build_daemon_args("run", ".", None, false, 0, &pipeline, &common, log_file);
+            assert!(
+                args.contains(&"--compact".to_string()),
+                "build_daemon_args debe propagar --compact al hijo cuando common.compact=true"
+            );
+        }
+
+        /// CA3: build_daemon_args NO incluye --compact cuando common.compact es false.
+        #[test]
+        fn build_daemon_args_excludes_compact_when_false() {
+            let pipeline = PipelineArgs::default();
+            let common = CommonArgs {
+                logs: false,
+                dry_run: false,
+                config: None,
+                provider: None,
+                quiet: false,
+                compact: false,
+            };
+            let log_file = Path::new(".regista/logs/test.log");
+            let args =
+                build_daemon_args("run", ".", None, false, 0, &pipeline, &common, log_file);
+            assert!(
+                !args.contains(&"--compact".to_string()),
+                "build_daemon_args NO debe pasar --compact al hijo cuando common.compact=false"
+            );
+        }
+
+        /// CA3: build_daemon_args para plan también propaga --compact.
+        #[test]
+        fn build_daemon_args_for_plan_propagates_compact() {
+            let pipeline = PipelineArgs::default();
+            let common = CommonArgs {
+                logs: false,
+                dry_run: false,
+                config: None,
+                provider: Some("pi".into()),
+                quiet: true,
+                compact: true,
+            };
+            let log_file = Path::new(".regista/logs/test.log");
+            let args = build_daemon_args(
+                "plan", "myproj", Some("spec.md"), true, 10,
+                &pipeline, &common, log_file,
+            );
+            assert!(
+                args.contains(&"--compact".to_string()),
+                "build_daemon_args para plan debe incluir --compact"
+            );
+        }
+
+        /// CA3: build_daemon_args para auto también propaga --compact.
+        #[test]
+        fn build_daemon_args_for_auto_propagates_compact() {
+            let pipeline = PipelineArgs {
+                once: true,
+                story: Some("STORY-001".into()),
+                ..PipelineArgs::default()
+            };
+            let common = CommonArgs {
+                logs: false,
+                dry_run: false,
+                config: None,
+                provider: None,
+                quiet: false,
+                compact: true,
+            };
+            let log_file = Path::new(".regista/logs/test.log");
+            let args = build_daemon_args(
+                "auto", ".", Some("spec.md"), false, 0,
+                &pipeline, &common, log_file,
+            );
+            assert!(
+                args.contains(&"--compact".to_string()),
+                "build_daemon_args para auto debe incluir --compact"
+            );
+        }
+
+        /// CA3: --compact y --quiet se propagan simultáneamente vía build_daemon_args.
+        #[test]
+        fn build_daemon_args_combines_compact_and_quiet() {
+            let pipeline = PipelineArgs::default();
+            let common = CommonArgs {
+                logs: false,
+                dry_run: false,
+                config: None,
+                provider: None,
+                quiet: true,
+                compact: true,
+            };
+            let log_file = Path::new(".regista/logs/test.log");
+            let args =
+                build_daemon_args("run", ".", None, false, 0, &pipeline, &common, log_file);
+            assert!(
+                args.contains(&"--compact".to_string()),
+                "debe incluir --compact"
+            );
+            assert!(
+                args.contains(&"--quiet".to_string()),
+                "debe incluir --quiet"
+            );
+        }
+
+        /// CA3: build_daemon_args con compact=true NO añade el flag duplicado.
+        #[test]
+        fn build_daemon_args_compact_flag_not_duplicated() {
+            let pipeline = PipelineArgs::default();
+            let common = CommonArgs {
+                logs: false,
+                dry_run: false,
+                config: None,
+                provider: None,
+                quiet: false,
+                compact: true,
+            };
+            let log_file = Path::new(".regista/logs/test.log");
+            let args =
+                build_daemon_args("run", ".", None, false, 0, &pipeline, &common, log_file);
+            let count = args.iter().filter(|a| *a == "--compact").count();
+            assert_eq!(
+                count, 1,
+                "--compact debe aparecer exactamente 1 vez, no {count}"
+            );
+        }
     }
 }
