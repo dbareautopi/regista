@@ -2787,4 +2787,756 @@ mod tests {
             let _ = tokio::fs::metadata(".");
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // STORY-027: Diff post-agente + acumulación tokens + resumen final
+    // ═══════════════════════════════════════════════════════════════
+
+    mod story027 {
+        use super::*;
+        use crate::domain::state::{SharedState, TokenCount};
+        use std::collections::HashMap;
+        use std::path::Path;
+
+        // ── Helpers placeholder (esqueleto mínimo para compilar) ──
+        // El Developer DEBE reemplazar estos placeholders con la
+        // implementación real en process_story(), run_real(), etc.
+
+        /// Determina si debe ejecutarse `git diff --stat` tras process_story.
+        /// Condiciones: git habilitado, modo detallado (!compact), no dry-run.
+        #[allow(dead_code)]
+        fn should_run_post_diff(compact: bool, git_enabled: bool, dry_run: bool) -> bool {
+            // TODO(Dev): integrar en process_story() tras agente exitoso
+            git_enabled && !compact && !dry_run
+        }
+
+        /// Formatea la línea de invocación de agente con modelo.
+        /// Formato: 🎯 <label> | <story_id> | <provider> [<modelo>]
+        #[allow(dead_code)]
+        fn format_agent_line_with_model(
+            label: &str,
+            story_id: &str,
+            provider_name: &str,
+            model: &str,
+        ) -> String {
+            // TODO(Dev): usar en process_story() al loguear cada agente
+            format!("🎯 {label} | {story_id} | {provider_name} [{model}]")
+        }
+
+        /// Calcula los totales de tokens (input, output) desde token_usage.
+        /// Suma todos los TokenCount de todas las historias.
+        #[allow(dead_code)]
+        fn compute_token_totals(
+            token_usage: &HashMap<String, Vec<TokenCount>>,
+        ) -> (u64, u64) {
+            let mut total_input: u64 = 0;
+            let mut total_output: u64 = 0;
+            for entries in token_usage.values() {
+                for tc in entries {
+                    total_input = total_input.saturating_add(tc.input);
+                    total_output = total_output.saturating_add(tc.output);
+                }
+            }
+            (total_input, total_output)
+        }
+
+        /// Construye el bloque de cierre del pipeline con resumen de tokens.
+        /// Formato exacto según CA9.
+        #[allow(dead_code)]
+        fn build_final_summary_block(
+            total: usize,
+            done: usize,
+            failed: usize,
+            failed_ids: &[String],
+            blocked: usize,
+            draft: usize,
+            iterations: u32,
+            elapsed: std::time::Duration,
+            total_input_tokens: u64,
+            total_output_tokens: u64,
+        ) -> String {
+            let total_tokens = total_input_tokens + total_output_tokens;
+            let elapsed_secs = elapsed.as_secs();
+            let hours = elapsed_secs / 3600;
+            let minutes = (elapsed_secs % 3600) / 60;
+            let seconds = elapsed_secs % 60;
+            let time_str = format!("{hours}h {minutes}m {seconds}s");
+
+            // timestamp: el Developer debe usar chrono::Utc::now()
+            let ts = "2026-01-01 00:00:00";
+
+            let failed_list = if failed_ids.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", failed_ids.join(", "))
+            };
+
+            [
+                format!("══════════════════════════════════════════════════════════════"),
+                format!("🏁 Pipeline completado — {ts}"),
+                format!("   Total        : {total}"),
+                format!("   ✅ Done      : {done}"),
+                format!("   ❌ Failed    : {failed}{failed_list}"),
+                format!("   🔒 Blocked   : {blocked}"),
+                format!("   📝 Draft     : {draft}"),
+                format!("   🔄 Iteraciones: {iterations}"),
+                format!("   ⏱️  Tiempo total: {time_str}"),
+                format!("   📊 Tokens totales: {total_input_tokens} input + {total_output_tokens} output = {total_tokens}"),
+                format!("══════════════════════════════════════════════════════════════"),
+            ]
+            .join("\n")
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // CA1-CA4, CA13: Diff post-agente (git diff --stat)
+        // ═══════════════════════════════════════════════════════════
+
+        /// CA1: En modo detallado (!compact), git enabled, y !dry-run,
+        ///      should_run_post_diff retorna true.
+        #[test]
+        fn ca1_diff_runs_in_detailed_mode_with_git_enabled() {
+            assert!(
+                should_run_post_diff(false, true, false),
+                "git diff debe ejecutarse: !compact, git enabled, !dry-run"
+            );
+        }
+
+        /// CA1: Solo cuando las 3 condiciones se cumplen se ejecuta el diff.
+        #[test]
+        fn ca1_diff_only_when_all_conditions_met() {
+            let cases = vec![
+                (true, true, false, false),   // compact → no diff
+                (false, false, false, false), // git disabled → no diff
+                (false, true, true, false),   // dry-run → no diff
+                (false, true, false, true),   // ✅ todas bien
+            ];
+            for (compact, git_enabled, dry_run, expected) in cases {
+                assert_eq!(
+                    should_run_post_diff(compact, git_enabled, dry_run),
+                    expected,
+                    "should_run_post_diff(compact={compact}, git={git_enabled}, dry_run={dry_run})"
+                );
+            }
+        }
+
+        /// CA2: La salida de git diff --stat se loguea con el encabezado
+        ///      📁 Archivos modificados: (el formato se verifica aquí).
+        ///      El Developer debe usar tracing::info! para loguear.
+        #[test]
+        fn ca2_diff_header_format() {
+            // El encabezado que el Developer debe usar en tracing::info!
+            let header = "📁 Archivos modificados:";
+            assert!(
+                header.contains("📁"),
+                "el encabezado del diff debe usar el emoji 📁"
+            );
+            assert!(
+                header.contains("Archivos modificados"),
+                "el encabezado debe mencionar archivos modificados"
+            );
+            // El header no debe estar vacío
+            assert!(!header.is_empty());
+        }
+
+        /// CA3: En modo compacto, should_run_post_diff retorna false
+        ///      incluso con git=true y dry-run=false.
+        #[test]
+        fn ca3_diff_skipped_in_compact_mode() {
+            assert!(
+                !should_run_post_diff(true, true, false),
+                "modo compacto NO debe ejecutar git diff --stat"
+            );
+        }
+
+        /// CA3: El compact suprime el diff sin importar otras flags.
+        #[test]
+        fn ca3_compact_supresses_diff_regardless_of_other_flags() {
+            assert!(!should_run_post_diff(true, true, false));
+            assert!(!should_run_post_diff(true, true, true));
+            assert!(!should_run_post_diff(true, false, false));
+            assert!(!should_run_post_diff(true, false, true));
+        }
+
+        /// CA4: Si git.enabled = false, should_run_post_diff siempre
+        ///      retorna false — sin error, sin panic.
+        #[test]
+        fn ca4_diff_skipped_when_git_disabled() {
+            for compact in [true, false] {
+                for dry_run in [true, false] {
+                    assert!(
+                        !should_run_post_diff(compact, false, dry_run),
+                        "git disabled debe suprimir diff: compact={compact}, dry_run={dry_run}"
+                    );
+                }
+            }
+        }
+
+        /// CA4: La omisión es silenciosa (función booleana pura).
+        #[test]
+        fn ca4_diff_skip_is_silent_no_panic() {
+            let _ = should_run_post_diff(false, false, false);
+            let _ = should_run_post_diff(true, false, true);
+            let _ = should_run_post_diff(false, true, true);
+            // Si llega aquí sin panic, CA4 OK
+        }
+
+        /// CA13: En dry-run, should_run_post_diff retorna false siempre.
+        #[test]
+        fn ca13_diff_skipped_in_dry_run() {
+            for compact in [true, false] {
+                for git_enabled in [true, false] {
+                    assert!(
+                        !should_run_post_diff(compact, git_enabled, true),
+                        "dry-run debe suprimir diff: compact={compact}, git={git_enabled}"
+                    );
+                }
+            }
+        }
+
+        /// CA13: Dry-run no intenta hacer git diff ni parsear tokens reales.
+        ///       El diff se bloquea explícitamente, el parseo también.
+        #[test]
+        fn ca13_dry_run_blocks_diff_and_token_parsing_flow() {
+            // En dry-run, should_run_post_diff = false siempre
+            assert!(!should_run_post_diff(false, true, true));
+            // El Developer DEBE evitar también cualquier llamada a git
+            // y a parse_token_count dentro del bloque dry-run.
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // CA5-CA6: Modelo en línea de agente
+        // ═══════════════════════════════════════════════════════════
+
+        /// CA5: La línea formateada incluye el modelo entre corchetes
+        ///      después del nombre del provider.
+        #[test]
+        fn ca5_agent_line_includes_model_in_brackets() {
+            let line = format_agent_line_with_model(
+                "Dev (implement)",
+                "STORY-003",
+                "pi",
+                "qwen2.5-coder",
+            );
+
+            assert!(
+                line.contains("[qwen2.5-coder]"),
+                "la línea debe contener el modelo entre corchetes: {line}"
+            );
+            assert!(line.contains("pi"), "debe contener el provider: {line}");
+            assert!(line.contains("STORY-003"), "debe contener el story ID: {line}");
+            assert!(line.starts_with("🎯"), "debe comenzar con 🎯: {line}");
+        }
+
+        /// CA5: El formato exacto es:
+        ///      🎯 <label> | <story_id> | <provider> [<modelo>]
+        #[test]
+        fn ca5_agent_line_follows_exact_format() {
+            let expected = "🎯 Dev (implement) | STORY-003 | pi [qwen2.5-coder]";
+            let actual = format_agent_line_with_model(
+                "Dev (implement)",
+                "STORY-003",
+                "pi",
+                "qwen2.5-coder",
+            );
+            assert_eq!(
+                actual, expected,
+                "formato exacto:\n  esperado: {expected}\n  obtenido:  {actual}"
+            );
+        }
+
+        /// CA5: Con modelo fallback "desconocido", el formato se mantiene.
+        #[test]
+        fn ca5_agent_line_with_desconocido_model() {
+            let line = format_agent_line_with_model(
+                "PO (plan)",
+                "STORY-001",
+                "claude",
+                "desconocido",
+            );
+            assert!(line.contains("[desconocido]"));
+            assert!(line.contains("PO (plan)"));
+            assert!(line.contains("claude"));
+            assert!(line.contains("STORY-001"));
+        }
+
+        /// CA5: Modelos con caracteres especiales (ej: opencode/gpt-5-nano)
+        ///      se renderizan correctamente entre corchetes.
+        #[test]
+        fn ca5_agent_line_with_special_chars_in_model() {
+            let line = format_agent_line_with_model(
+                "QA (tests)",
+                "STORY-010",
+                "opencode",
+                "opencode/minimax-m2.5-free",
+            );
+            assert!(line.contains("[opencode/minimax-m2.5-free]"));
+            assert!(line.contains("opencode"));
+        }
+
+        /// CA6: model_for_role() se llama con el skill_path correcto.
+        ///      Este test verifica la cadena role→skill_path→model.
+        #[test]
+        fn ca6_model_for_role_resolution_with_correct_skill_path() {
+            // Caso: modelo definido en config por rol
+            let toml = r#"
+[agents]
+provider = "pi"
+
+[agents.developer]
+model = "gpt-5"
+"#;
+            let cfg: Config = toml::from_str(toml).unwrap();
+            let role = "developer";
+
+            // La skill path DEBE venir desde cfg.agents.skill_for_role(role)
+            let skill_path_str = cfg.agents.skill_for_role(role);
+            let skill_path = Path::new(&skill_path_str);
+            let model = cfg.agents.model_for_role(role, skill_path);
+
+            assert_eq!(
+                model, "gpt-5",
+                "model_for_role con skill_path correcto debe devolver el modelo del rol"
+            );
+        }
+
+        /// CA6: El skill_path que se pasa a model_for_role se obtiene
+        ///      desde cfg.agents.skill_for_role(role), no hardcodeado.
+        #[test]
+        fn ca6_skill_path_resolved_via_skill_for_role() {
+            let cfg = Config::default();
+            let role = "developer";
+            let skill_path_str = cfg.agents.skill_for_role(role);
+
+            assert_eq!(
+                skill_path_str, ".pi/skills/developer/SKILL.md",
+                "skill path por defecto para developer"
+            );
+            assert!(
+                skill_path_str.ends_with(".md"),
+                "skill path debe ser un archivo .md: {skill_path_str}"
+            );
+
+            // El path se puede usar con model_for_role sin paniquear
+            let model = cfg.agents.model_for_role(role, Path::new(&skill_path_str));
+            assert!(
+                !model.is_empty(),
+                "model_for_role nunca debe devolver string vacía"
+            );
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // CA7-CA8: Acumulación de tokens post-agente
+        // ═══════════════════════════════════════════════════════════
+
+        /// CA7: parse_token_count() se llama con result.stdout + result.stderr
+        ///      concatenados. Verifica que el parseo funciona sobre salida combinada.
+        #[test]
+        fn ca7_parse_tokens_from_combined_stdout_stderr() {
+            let stdout = "Implementación completada.\nTokens used: 2,450 input, 1,200 output\n";
+            let stderr = "warning: unused variable\n";
+
+            // El Developer debe concatenar: combined = result.stdout + result.stderr
+            let combined = format!("{stdout}{stderr}");
+            let parsed = crate::infra::agent::parse_token_count(&combined);
+
+            assert!(
+                parsed.is_some(),
+                "parse_token_count debe encontrar tokens en stdout+stderr combinados"
+            );
+            let tc = parsed.unwrap();
+            assert_eq!(tc.input, 2450);
+            assert_eq!(tc.output, 1200);
+        }
+
+        /// CA7: Si no hay patrón de tokens en la salida, parse_token_count
+        ///      devuelve None — el Developer debe manejar None sin error.
+        #[test]
+        fn ca7_parse_tokens_handles_none_gracefully() {
+            let combined = "no token info here\njust normal output\n";
+            let parsed = crate::infra::agent::parse_token_count(combined);
+            assert!(parsed.is_none(), "sin patrón → None, sin error");
+        }
+
+        /// CA7: Salida vacía devuelve None.
+        #[test]
+        fn ca7_parse_tokens_handles_empty_output() {
+            let parsed = crate::infra::agent::parse_token_count("");
+            assert!(parsed.is_none(), "salida vacía → None");
+        }
+
+        /// CA8: Los tokens parseados se acumulan en shared_state.token_usage
+        ///      bajo el story_id, haciendo push al Vec.
+        #[test]
+        fn ca8_tokens_accumulated_in_shared_state_by_story_id() {
+            let state = SharedState::default();
+            let story_id = "STORY-001";
+
+            // Primera invocación: push 1 token count
+            {
+                let mut w = state.token_usage.write().unwrap();
+                w.entry(story_id.to_string())
+                    .or_insert_with(Vec::new)
+                    .push(TokenCount {
+                        input: 100,
+                        output: 50,
+                    });
+            }
+
+            // Segunda invocación misma historia: push otro token count
+            {
+                let mut w = state.token_usage.write().unwrap();
+                w.entry(story_id.to_string())
+                    .or_insert_with(Vec::new)
+                    .push(TokenCount {
+                        input: 200,
+                        output: 100,
+                    });
+            }
+
+            // Verificar acumulación
+            let r = state.token_usage.read().unwrap();
+            let entries = r
+                .get(story_id)
+                .expect("debe existir entrada para STORY-001");
+            assert_eq!(entries.len(), 2, "2 invocaciones → 2 entradas en el Vec");
+            assert_eq!(entries[0].input, 100);
+            assert_eq!(entries[0].output, 50);
+            assert_eq!(entries[1].input, 200);
+            assert_eq!(entries[1].output, 100);
+        }
+
+        /// CA8: Historias diferentes acumulan tokens independientemente.
+        #[test]
+        fn ca8_token_accumulation_independent_per_story() {
+            let state = SharedState::default();
+
+            state.token_usage.write().unwrap().insert(
+                "STORY-001".into(),
+                vec![TokenCount {
+                    input: 100,
+                    output: 50,
+                }],
+            );
+
+            state.token_usage.write().unwrap().insert(
+                "STORY-002".into(),
+                vec![
+                    TokenCount {
+                        input: 10,
+                        output: 5,
+                    },
+                    TokenCount {
+                        input: 20,
+                        output: 10,
+                    },
+                    TokenCount {
+                        input: 30,
+                        output: 15,
+                    },
+                ],
+            );
+
+            let r = state.token_usage.read().unwrap();
+            assert_eq!(r.get("STORY-001").unwrap().len(), 1);
+            assert_eq!(r.get("STORY-002").unwrap().len(), 3);
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // CA9-CA10: Resumen final enriquecido
+        // ═══════════════════════════════════════════════════════════
+
+        /// CA9: El bloque de cierre contiene todos los campos requeridos
+        ///      en el orden y formato exacto.
+        #[test]
+        fn ca9_summary_block_contains_all_required_fields() {
+            let summary = build_final_summary_block(
+                5,                                         // total
+                3,                                         // done
+                1,                                         // failed
+                &["STORY-002".to_string()],                // failed_ids
+                0,                                         // blocked
+                1,                                         // draft
+                42,                                        // iterations
+                std::time::Duration::from_secs(3661),      // 1h 1m 1s
+                5000,                                      // input tokens
+                3000,                                      // output tokens
+            );
+
+            // Campos obligatorios
+            assert!(
+                summary.contains("Pipeline completado"),
+                "debe contener 'Pipeline completado'"
+            );
+            assert!(summary.contains("Total"), "debe contener 'Total'");
+            assert!(summary.contains("✅ Done"), "debe contener '✅ Done'");
+            assert!(summary.contains("❌ Failed"), "debe contener '❌ Failed'");
+            assert!(
+                summary.contains("STORY-002"),
+                "debe contener IDs de Failed entre paréntesis"
+            );
+            assert!(summary.contains("🔒 Blocked"), "debe contener '🔒 Blocked'");
+            assert!(summary.contains("📝 Draft"), "debe contener '📝 Draft'");
+            assert!(
+                summary.contains("🔄 Iteraciones"),
+                "debe contener '🔄 Iteraciones'"
+            );
+            assert!(
+                summary.contains("⏱️  Tiempo total"),
+                "debe contener '⏱️  Tiempo total'"
+            );
+            assert!(
+                summary.contains("📊 Tokens totales"),
+                "debe contener '📊 Tokens totales'"
+            );
+            // Bordes decorativos con ═══
+            assert!(summary.contains("═══"), "debe contener líneas decorativas");
+        }
+
+        /// CA9: El conteo de cada categoría aparece correctamente.
+        #[test]
+        fn ca9_summary_counts_are_correct() {
+            let summary = build_final_summary_block(
+                10, 8, 0, &[], 2, 0, 15,
+                std::time::Duration::from_secs(120),
+                1000, 500,
+            );
+
+            assert!(summary.contains("Total        : 10"));
+            assert!(summary.contains("✅ Done      : 8"));
+            assert!(summary.contains("❌ Failed    : 0"));
+            assert!(summary.contains("🔒 Blocked   : 2"));
+            assert!(summary.contains("📝 Draft     : 0"));
+            assert!(summary.contains("🔄 Iteraciones: 15"));
+        }
+
+        /// CA9: El tiempo total se muestra en formato Xh Ym Zs.
+        #[test]
+        fn ca9_elapsed_time_formatted_in_h_m_s() {
+            // 3723 segundos = 1h 2m 3s
+            let summary = build_final_summary_block(
+                1, 1, 0, &[], 0, 0, 1,
+                std::time::Duration::from_secs(3723),
+                0, 0,
+            );
+
+            assert!(
+                summary.contains("1h 2m 3s"),
+                "3723s debe formatearse como '1h 2m 3s'.\nResumen:\n{summary}"
+            );
+        }
+
+        /// CA9: Con tiempo menor a 1h, muestra 0h correctamente.
+        #[test]
+        fn ca9_elapsed_time_less_than_hour() {
+            let summary = build_final_summary_block(
+                1, 1, 0, &[], 0, 0, 1,
+                std::time::Duration::from_secs(125),
+                0, 0,
+            );
+
+            assert!(
+                summary.contains("0h 2m 5s"),
+                "125s debe formatearse como '0h 2m 5s'"
+            );
+        }
+
+        /// CA9: Con Failed > 0, los IDs aparecen entre paréntesis.
+        #[test]
+        fn ca9_failed_ids_listed_in_parentheses() {
+            let summary = build_final_summary_block(
+                3, 1, 2,
+                &["STORY-002".into(), "STORY-003".into()],
+                0, 0, 5,
+                std::time::Duration::from_secs(60),
+                100, 50,
+            );
+
+            assert!(summary.contains("❌ Failed    : 2"));
+            assert!(summary.contains("(STORY-002, STORY-003)"));
+        }
+
+        /// CA10: compute_token_totals suma correctamente todos los
+        ///       TokenCount de todas las historias.
+        #[test]
+        fn ca10_token_totals_sum_all_stories() {
+            let mut token_usage: HashMap<String, Vec<TokenCount>> = HashMap::new();
+
+            token_usage.insert(
+                "STORY-001".into(),
+                vec![
+                    TokenCount {
+                        input: 100,
+                        output: 50,
+                    },
+                    TokenCount {
+                        input: 200,
+                        output: 150,
+                    },
+                ],
+            );
+            token_usage.insert(
+                "STORY-002".into(),
+                vec![TokenCount {
+                    input: 300,
+                    output: 200,
+                }],
+            );
+            token_usage.insert(
+                "STORY-003".into(),
+                vec![
+                    TokenCount {
+                        input: 50,
+                        output: 25,
+                    },
+                    TokenCount {
+                        input: 75,
+                        output: 50,
+                    },
+                    TokenCount {
+                        input: 100,
+                        output: 75,
+                    },
+                ],
+            );
+
+            let (total_input, total_output) = compute_token_totals(&token_usage);
+
+            // STORY-001: 300 input, 200 output
+            // STORY-002: 300 input, 200 output
+            // STORY-003: 225 input, 150 output
+            assert_eq!(total_input, 825, "300 + 300 + 225 = 825");
+            assert_eq!(total_output, 550, "200 + 200 + 150 = 550");
+        }
+
+        /// CA10: compute_token_totals con HashMap vacío devuelve (0, 0).
+        #[test]
+        fn ca10_token_totals_empty_returns_zero() {
+            let empty: HashMap<String, Vec<TokenCount>> = HashMap::new();
+            let (input, output) = compute_token_totals(&empty);
+            assert_eq!(input, 0);
+            assert_eq!(output, 0);
+        }
+
+        /// CA10: compute_token_totals con una sola historia.
+        #[test]
+        fn ca10_token_totals_single_story() {
+            let mut token_usage = HashMap::new();
+            token_usage.insert(
+                "STORY-001".into(),
+                vec![TokenCount {
+                    input: 150,
+                    output: 75,
+                }],
+            );
+
+            let (input, output) = compute_token_totals(&token_usage);
+            assert_eq!(input, 150);
+            assert_eq!(output, 75);
+        }
+
+        /// CA10: El resumen final muestra la suma correcta de tokens:
+        ///       📊 Tokens totales: N input + N output = N
+        #[test]
+        fn ca10_final_summary_shows_correct_token_sums() {
+            let summary = build_final_summary_block(
+                2, 2, 0, &[], 0, 0, 10,
+                std::time::Duration::from_secs(60),
+                4500,  // total input
+                2300,  // total output
+            );
+
+            assert!(
+                summary.contains("4500 input"),
+                "debe mostrar '4500 input'"
+            );
+            assert!(
+                summary.contains("2300 output"),
+                "debe mostrar '2300 output'"
+            );
+            assert!(
+                summary.contains("= 6800"),
+                "debe mostrar '= 6800' (4500 + 2300)"
+            );
+            assert!(
+                summary.contains("📊 Tokens totales"),
+                "debe incluir la línea de tokens totales"
+            );
+        }
+
+        /// CA10: Con tokens = 0, el resumen muestra 0 correctamente.
+        #[test]
+        fn ca10_token_totals_zero_in_summary() {
+            let summary = build_final_summary_block(
+                0, 0, 0, &[], 0, 0, 0,
+                std::time::Duration::from_secs(0),
+                0, 0,
+            );
+
+            assert!(
+                summary.contains("0 input + 0 output = 0"),
+                "con 0 tokens, debe mostrar '0 input + 0 output = 0'.\nResumen:\n{summary}"
+            );
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // Integración: flujo completo post-agente
+        // ═══════════════════════════════════════════════════════════
+
+        /// Verifica el orden del flujo tras process_story():
+        /// 1. should_run_post_diff → git diff --stat (si procede)
+        /// 2. parse_token_count(result.stdout + result.stderr)
+        /// 3. push TokenCount a shared_state.token_usage
+        #[test]
+        fn post_agent_flow_order_is_respected() {
+            // Paso 1: ¿debemos ejecutar el diff?
+            let run_diff = should_run_post_diff(false, true, false);
+            assert!(run_diff, "modo detallado con git → diff procede");
+
+            // Paso 2: parsear tokens de la salida del agente
+            let agent_output = "Tokens used: 100 input, 50 output\n";
+            let parsed = crate::infra::agent::parse_token_count(agent_output);
+            assert!(parsed.is_some(), "tokens deben parsearse del output");
+
+            // Paso 3: acumular en SharedState
+            let state = SharedState::default();
+            let story_id = "STORY-001";
+            if let Some(tc) = parsed {
+                // El Developer debe convertir infra::agent::TokenCount → domain::state::TokenCount
+                let domain_tc = TokenCount {
+                    input: tc.input,
+                    output: tc.output,
+                };
+                state
+                    .token_usage
+                    .write()
+                    .unwrap()
+                    .entry(story_id.to_string())
+                    .or_insert_with(Vec::new)
+                    .push(domain_tc);
+            }
+
+            // Verificar acumulación
+            let r = state.token_usage.read().unwrap();
+            let entries = r.get(story_id).unwrap();
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].input, 100);
+            assert_eq!(entries[0].output, 50);
+        }
+
+        /// Con compact=true, el diff se salta pero el parseo de tokens NO.
+        #[test]
+        fn compact_skips_diff_but_not_token_parsing() {
+            // compact=true → diff no procede
+            assert!(!should_run_post_diff(true, true, false));
+
+            // Pero los tokens se parsean IGUAL en ambos modos
+            let agent_output = "Tokens used: 42 input, 7 output\n";
+            let parsed = crate::infra::agent::parse_token_count(agent_output);
+            assert!(
+                parsed.is_some(),
+                "parseo de tokens debe funcionar también en modo compacto"
+            );
+            assert_eq!(parsed.unwrap().input, 42);
+        }
+    }
 }

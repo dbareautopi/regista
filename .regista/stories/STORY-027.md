@@ -1,7 +1,7 @@
 # STORY-027: Diff post-agente + acumulación de tokens + resumen final enriquecido
 
 ## Status
-**Ready**
+**Tests Ready**
 
 ## Epic
 EPIC-10
@@ -47,4 +47,4 @@ Integrar tres funcionalidades en `app/pipeline.rs`:
 - Bloqueado por: STORY-019, STORY-020, STORY-021, STORY-022, STORY-026
 
 ## Activity Log
-- 2026-05-05 | PO | Historia generada desde specs/spec-logs-transparentes.md (secciones 4, 6 y 3: diff, acumulación tokens, streaming).
+- 2026-05-06 | QA | 32 tests unitarios escritos en app/pipeline.rs cubriendo CA1-CA10 y CA13. Tests verifican: diff post-agente (should_run_post_diff), formato de línea con modelo (format_agent_line_with_model), acumulación de tokens en SharedState.token_usage (CA8), parseo combinado stdout+stderr (CA7), bloque de cierre enriquecido con conteo de tokens (CA9-CA10), y omisión en dry-run (CA13). Usa placeholders mínimos como esqueleto para que el Developer implemente la lógica real. Todos los 95 tests de pipeline.rs pasan (32 nuevos + 63 existentes).

@@ -1,7 +1,8 @@
 # regista 🎬
 
-> AI agent director — orquestación multi-provider del ciclo completo de
-> desarrollo: **PO → QA → Dev → Reviewer → Done.**
+> **El director del ecosistema mezzala-regista.**  
+> Lee la partitura (`spartito`), coordina a los músicos (agentes).  
+> Pipeline completo de desarrollo: **PO → QA → Dev → Reviewer → Done.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -24,9 +25,20 @@ Draft ──PO──→ Ready ──QA──→ Tests Ready ──Dev──→ I
 - **100% daemon**: toda ejecución corre en background. Usa `--logs` para ver el progreso.
 - **Spec-first**: escribe una especificación en lenguaje natural, `regista auto` hace el resto.
 - **Multi-provider**: elige entre [`pi`](https://github.com/mariozechner/pi-coding-agent), [Claude Code](https://github.com/anthropics/claude-code), [Codex CLI](https://github.com/openai/codex), u [OpenCode](https://github.com/anomalyco/opencode) — o mezcla por rol.
+- **Workflow configurable**: define tus propios estados, transiciones y bifurcaciones en `.regista/config.toml` (vía `spartito`, el contrato compartido con [`mezzala`](https://github.com/dbareautopi/mezzala)).
 - **Deadlock detection**: si el grafo se estanca, prioriza la historia que más dependencias desbloquea.
 - **Checkpoint/resume**: guarda progreso tras cada iteración. Si algo interrumpe → `--resume`.
 - **Dry-run**: simula el pipeline completo sin gastar créditos de LLM.
+
+## Ecosistema
+
+Regista es parte de un ecosistema de 3 piezas:
+
+| Pieza | Rol | Descripción |
+|-------|-----|-------------|
+| **[spartito](https://github.com/dbareautopi/mezzala/tree/main/crates/spartito)** | 📜 Partitura | Contrato compartido: estados, workflow, formato de historia, DoD/DoR |
+| **regista** | 🎬 Director | Orquestador: lee la partitura, decide quién actúa y cuándo |
+| **[mezzala](https://github.com/dbareautopi/mezzala)** | 🎻 Músico | Agent harness: ejecuta siguiendo la partitura (TUI, WASM, multi-provider) |
 
 ## Filosofía
 
@@ -35,7 +47,8 @@ o lo que sea. Solo necesita tres cosas:
 
 1. **Dónde están tus historias** (archivos `.md`)
 2. **Qué provider y qué instrucciones de rol** usar para PO, QA, Dev, Reviewer
-3. **La máquina de estados fija** que gobierna las transiciones
+3. **La partitura** (`spartito`) que define estados, transiciones y el formato
+   del contrato. Es el source of truth compartido con `mezzala`.
 
 Todo lo demás —código, tests, builds— lo manejan los agentes a través de sus
 instrucciones de rol (skills, agents, commands).
@@ -480,11 +493,14 @@ Arquitectura en **4 capas** con dependencias unidireccionales:
 ```
 src/
 ├── cli/        ← 🟢 CLI (args + handlers) → importa cualquier capa
-├── app/        ← 🟡 Casos de uso → importa domain + infra + config
-├── domain/     ← 🔴 Lógica pura → NO importa otras capas
+├── app/        ← 🟡 Casos de uso → importa domain + infra + config + spartito
+├── domain/     ← 🔴 Lógica pura → importa spartito (crate externo), no otras capas
 ├── infra/      ← 🔵 I/O, procesos → solo importa config
 └── config.rs   ← ⚪ Configuración → no importa nada del crate
 ```
+
+El contrato de workflow (`Status`, `Actor`, `Workflow` trait, `story_format`)
+está externalizado en el crate **[`spartito`](../mezzala/docs/spec-spartito.md)**.
 
 Verificada automáticamente por `tests/architecture.rs` (11 tests, reglas R1-R5).
 Para más detalle, consulta [`AGENTS.md`](AGENTS.md).
