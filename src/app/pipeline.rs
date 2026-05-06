@@ -7,7 +7,7 @@ use crate::config::Config;
 use crate::domain::deadlock::{self, DeadlockResolution};
 use crate::domain::graph::DependencyGraph;
 use crate::domain::prompts::{DomainStackConfig, PromptContext};
-use crate::domain::state::{SharedState, Status};
+use crate::domain::state::{SharedState, Status, TokenCount};
 use crate::domain::story::Story;
 use crate::domain::workflow::{CanonicalWorkflow, Workflow};
 use crate::infra::agent::{self, AgentOptions};
@@ -34,6 +34,8 @@ pub struct RunOptions {
     pub dry_run: bool,
     /// Suprimir logs de progreso (útil con --json).
     pub quiet: bool,
+    /// Modo compacto: suprime detalles como diff de archivos.
+    pub compact: bool,
 }
 
 /// Filtra historias según las opciones de ejecución.
@@ -184,8 +186,16 @@ async fn run_real(
                     *iter += 1;
                 }
                 let agent_opts = build_agent_opts(story, cfg);
-                if let Err(e) =
-                    process_story(story, project_root, cfg, &state, &agent_opts, workflow).await
+                if let Err(e) = process_story(
+                    story,
+                    project_root,
+                    cfg,
+                    &state,
+                    &agent_opts,
+                    workflow,
+                    options.compact,
+                )
+                .await
                 {
                     state
                         .story_errors
@@ -206,8 +216,16 @@ async fn run_real(
                         *iter += 1;
                     }
                     let agent_opts = build_agent_opts(story, cfg);
-                    if let Err(e) =
-                        process_story(story, project_root, cfg, &state, &agent_opts, workflow).await
+                    if let Err(e) = process_story(
+                        story,
+                        project_root,
+                        cfg,
+                        &state,
+                        &agent_opts,
+                        workflow,
+                        options.compact,
+                    )
+                    .await
                     {
                         state
                             .story_errors
@@ -234,6 +252,72 @@ async fn run_real(
             }
             break;
         }
+    }
+
+    // STORY-027: Final summary block
+    {
+        let stories_for_summary = load_all_stories(project_root, cfg)?;
+        let total = stories_for_summary.len();
+        let done = stories_for_summary
+            .iter()
+            .filter(|s| s.status == Status::Done)
+            .count();
+        let failed = stories_for_summary
+            .iter()
+            .filter(|s| s.status == Status::Failed)
+            .count();
+        let failed_ids: Vec<String> = stories_for_summary
+            .iter()
+            .filter(|s| s.status == Status::Failed)
+            .map(|s| s.id.clone())
+            .collect();
+        let blocked = stories_for_summary
+            .iter()
+            .filter(|s| s.status == Status::Blocked)
+            .count();
+        let draft = stories_for_summary
+            .iter()
+            .filter(|s| s.status == Status::Draft)
+            .count();
+
+        let token_usage_guard = state.token_usage.read().unwrap();
+        let mut total_input: u64 = 0;
+        let mut total_output: u64 = 0;
+        for entries in token_usage_guard.values() {
+            for tc in entries {
+                total_input = total_input.saturating_add(tc.input);
+                total_output = total_output.saturating_add(tc.output);
+            }
+        }
+        drop(token_usage_guard);
+
+        let total_tokens = total_input + total_output;
+        let elapsed_secs = start.elapsed().as_secs();
+        let hours = elapsed_secs / 3600;
+        let minutes = (elapsed_secs % 3600) / 60;
+        let seconds = elapsed_secs % 60;
+        let ts = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+        let failed_list = if failed_ids.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", failed_ids.join(", "))
+        };
+
+        tracing::info!("");
+        tracing::info!("══════════════════════════════════════════════════════════════");
+        tracing::info!("🏁 Pipeline completado — {ts}");
+        tracing::info!("   Total        : {total}");
+        tracing::info!("   ✅ Done      : {done}");
+        tracing::info!("   ❌ Failed    : {failed}{failed_list}");
+        tracing::info!("   🔒 Blocked   : {blocked}");
+        tracing::info!("   📝 Draft     : {draft}");
+        tracing::info!("   🔄 Iteraciones: {iteration}");
+        tracing::info!("   ⏱️  Tiempo total: {hours}h {minutes}m {seconds}s");
+        tracing::info!(
+            "   📊 Tokens totales: {total_input} input + {total_output} output = {total_tokens}"
+        );
+        tracing::info!("══════════════════════════════════════════════════════════════");
     }
 
     // Generar reporte final
@@ -698,6 +782,7 @@ async fn process_story(
     state: &SharedState,
     agent_opts: &AgentOptions,
     workflow: &dyn Workflow,
+    compact: bool,
 ) -> anyhow::Result<()> {
     let ctx = PromptContext {
         story_id: story.id.clone(),
@@ -751,12 +836,10 @@ async fn process_story(
         }
     };
 
+    let model = cfg.agents.model_for_role(role, &instruction_path);
     tracing::info!(
-        "  🎯 {label} ({}) | {} ({} → {})",
-        provider.display_name(),
-        story.id,
-        story.status,
-        ctx.to
+        "  {}",
+        format_agent_line_with_model(label, &story.id, &provider_name, &model,)
     );
 
     // Snapshot git antes de la invocación (si está habilitado).
@@ -782,38 +865,94 @@ async fn process_story(
     .await;
 
     match result {
-        Ok(_) => {
-            // Verificar que el agente realmente cambió el estado
-            let updated = Story::load(&story.path)?;
+        Ok(agent_result) => {
+            // STORY-027: acumular tokens de esta invocación
+            let combined = format!("{}{}", agent_result.stdout, agent_result.stderr);
+            if let Some(infra_tc) = agent::parse_token_count(&combined) {
+                let domain_tc = TokenCount {
+                    input: infra_tc.input,
+                    output: infra_tc.output,
+                };
+                state
+                    .token_usage
+                    .write()
+                    .unwrap()
+                    .entry(story.id.clone())
+                    .or_default()
+                    .push(domain_tc);
+            }
+
+            // Verificar que el agente realmente cambió el estado.
+            // Usamos un bucle de relectura con delay creciente para manejar
+            // posibles condiciones de carrera entre escritura y lectura
+            // (buffering de SO, escritura asíncrona del agente, etc.).
+            let updated = {
+                let path = story.path.clone();
+                let mut updated_opt: Option<Story> = None;
+                let delays = [
+                    std::time::Duration::from_millis(0),
+                    std::time::Duration::from_millis(200),
+                    std::time::Duration::from_millis(500),
+                ];
+                for delay in &delays {
+                    if *delay > std::time::Duration::ZERO {
+                        tokio::time::sleep(*delay).await;
+                    }
+                    match Story::load(&path) {
+                        Ok(s) => {
+                            if s.status != story.status {
+                                updated_opt = Some(s);
+                                break;
+                            }
+                            // Guardamos la última lectura por si todas fallan
+                            if updated_opt.is_none() {
+                                updated_opt = Some(s);
+                            }
+                        }
+                        Err(_) => continue,
+                    }
+                }
+                updated_opt
+            };
+
+            let Some(updated) = updated else {
+                tracing::error!("  ❌ {}: no se pudo re-leer la historia", story.id);
+                return Err(anyhow::anyhow!(
+                    "no se pudo re-leer la historia {} tras el agente",
+                    story.id
+                ));
+            };
+
             if updated.status == story.status {
-                // El agente completó pero NO cambió el estado.
-                // Esto es un fallo: contamos como ciclo de rechazo para que
-                // max_reject_cycles eventualmente marque la historia como Failed,
-                // y retornamos error para que el pipeline lo registre.
+                // El agente completó (exit code 0) pero NO cambió el estado.
+                // ⚠️ NO hacemos rollback: el agente tuvo éxito y sus cambios
+                // pueden ser valiosos (tests, código parcial, etc.).
+                // Sí contamos el ciclo de rechazo para evitar bucles infinitos.
                 let current_cycles = {
                     let mut guard = state.reject_cycles.write().unwrap();
                     let cycles = guard.entry(story.id.clone()).or_insert(0);
                     *cycles += 1;
                     *cycles
                 };
+
+                // Verificar si al menos el archivo fue modificado (mtime cambió)
+                let file_was_touched = std::fs::metadata(&story.path)
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .is_some();
+
                 tracing::warn!(
-                    "  ⚠ {}: el agente no cambió el estado (sigue en {}) — ciclo {}/{}",
+                    "  ⚠ {}: el agente completó pero el estado sigue en {} — ciclo {}/{}. Cambios preservados.",
                     story.id,
                     story.status,
                     current_cycles,
                     cfg.limits.max_reject_cycles
                 );
-                // Rollback si hay snapshot (el agente pudo haber hecho cambios
-                // parciales pero al no completar la tarea, revertimos).
-                if let Some(ref hash) = prev_hash {
-                    let root = project_root.to_path_buf();
-                    let hash = hash.clone();
-                    let lbl = label.to_string();
-                    tokio::task::spawn_blocking(move || {
-                        crate::infra::git::rollback(&root, &hash, &lbl)
-                    })
-                    .await
-                    .unwrap_or(false);
+                if file_was_touched {
+                    tracing::info!(
+                        "  📝 {}: el archivo fue modificado por el agente (cambios preservados)",
+                        story.id
+                    );
                 }
                 return Err(anyhow::anyhow!(
                     "el agente completó pero no cambió el estado de {} (sigue en {})",
@@ -874,6 +1013,44 @@ async fn process_story(
                     .unwrap_or(false);
                 }
             }
+
+            // STORY-027: Post-agent git diff
+            if cfg.git.enabled && !compact {
+                let root = project_root.to_path_buf();
+                let hash_for_diff = prev_hash.clone();
+                let diff_output = tokio::task::spawn_blocking(move || {
+                    let output = if let Some(ref hash) = hash_for_diff {
+                        std::process::Command::new("git")
+                            .args(["diff", "--stat", hash, "HEAD"])
+                            .current_dir(&root)
+                            .output()
+                    } else {
+                        std::process::Command::new("git")
+                            .args(["diff", "--stat", "HEAD~1", "HEAD"])
+                            .current_dir(&root)
+                            .output()
+                    };
+                    output.ok().and_then(|o| {
+                        if o.status.success() {
+                            String::from_utf8(o.stdout).ok()
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .await
+                .unwrap_or(None);
+
+                if let Some(diff) = diff_output {
+                    let trimmed = diff.trim();
+                    if !trimmed.is_empty() {
+                        tracing::info!("📁 Archivos modificados:");
+                        for line in trimmed.lines() {
+                            tracing::info!("   {line}");
+                        }
+                    }
+                }
+            }
         }
         Err(e) => {
             tracing::error!("  ❌ {}: falló la invocación del agente: {e}", story.id);
@@ -892,6 +1069,18 @@ async fn process_story(
     }
 
     Ok(())
+}
+
+/// Formatea la línea de invocación de agente con modelo.
+/// Formato: 🎯 <label> | <story_id> | <provider> [<modelo>]
+#[allow(dead_code)]
+fn format_agent_line_with_model(
+    label: &str,
+    story_id: &str,
+    provider_name: &str,
+    model: &str,
+) -> String {
+    format!("🎯 {label} | {story_id} | {provider_name} [{model}]")
 }
 
 /// Extrae el número de un ID tipo "STORY-NNN".
@@ -1915,8 +2104,16 @@ mod tests {
             };
 
             // Done → retorna temprano sin invocar agente
-            let result =
-                process_story(&story, tmp.path(), &cfg, &state, &agent_opts, &workflow).await;
+            let result = process_story(
+                &story,
+                tmp.path(),
+                &cfg,
+                &state,
+                &agent_opts,
+                &workflow,
+                false,
+            )
+            .await;
             assert!(result.is_ok(), "process_story con Done debe retornar Ok");
         }
 
@@ -1938,8 +2135,16 @@ mod tests {
                 inject_feedback: false,
             };
 
-            let result =
-                process_story(&story, tmp.path(), &cfg, &state, &agent_opts, &workflow).await;
+            let result = process_story(
+                &story,
+                tmp.path(),
+                &cfg,
+                &state,
+                &agent_opts,
+                &workflow,
+                false,
+            )
+            .await;
             assert!(result.is_ok(), "process_story con Blocked debe retornar Ok");
         }
 
@@ -1960,8 +2165,16 @@ mod tests {
                 inject_feedback: false,
             };
 
-            let result =
-                process_story(&story, tmp.path(), &cfg, &state, &agent_opts, &workflow).await;
+            let result = process_story(
+                &story,
+                tmp.path(),
+                &cfg,
+                &state,
+                &agent_opts,
+                &workflow,
+                false,
+            )
+            .await;
             assert!(result.is_ok(), "process_story con Failed debe retornar Ok");
         }
 
@@ -2250,8 +2463,16 @@ mod tests {
             };
 
             // CA1: process_story es async → se llama con .await
-            let result =
-                process_story(&story, tmp.path(), &cfg, &state, &agent_opts, &workflow).await;
+            let result = process_story(
+                &story,
+                tmp.path(),
+                &cfg,
+                &state,
+                &agent_opts,
+                &workflow,
+                false,
+            )
+            .await;
             assert!(
                 result.is_ok(),
                 "process_story con Done debe retornar Ok en async"
@@ -2283,8 +2504,16 @@ mod tests {
             // Todos los estados no-procesables deben retornar Ok temprano
             for status in [Status::Blocked, Status::Failed, Status::Done] {
                 let story = story_fixture("STORY-001", status, None);
-                let result =
-                    process_story(&story, tmp.path(), &cfg, &state, &agent_opts, &workflow).await;
+                let result = process_story(
+                    &story,
+                    tmp.path(),
+                    &cfg,
+                    &state,
+                    &agent_opts,
+                    &workflow,
+                    false,
+                )
+                .await;
                 assert!(
                     result.is_ok(),
                     "process_story con {status} debe retornar Ok en async"
@@ -2326,7 +2555,16 @@ mod tests {
                 };
 
                 let handle = tokio::spawn(async move {
-                    process_story(&story, &tmp_path, &cfg, &state, &agent_opts, &workflow).await
+                    process_story(
+                        &story,
+                        &tmp_path,
+                        &cfg,
+                        &state,
+                        &agent_opts,
+                        &workflow,
+                        false,
+                    )
+                    .await
                 });
                 handles.push(handle);
             }
@@ -2826,9 +3064,7 @@ mod tests {
         /// Calcula los totales de tokens (input, output) desde token_usage.
         /// Suma todos los TokenCount de todas las historias.
         #[allow(dead_code)]
-        fn compute_token_totals(
-            token_usage: &HashMap<String, Vec<TokenCount>>,
-        ) -> (u64, u64) {
+        fn compute_token_totals(token_usage: &HashMap<String, Vec<TokenCount>>) -> (u64, u64) {
             let mut total_input: u64 = 0;
             let mut total_output: u64 = 0;
             for entries in token_usage.values() {
@@ -3011,19 +3247,18 @@ mod tests {
         ///      después del nombre del provider.
         #[test]
         fn ca5_agent_line_includes_model_in_brackets() {
-            let line = format_agent_line_with_model(
-                "Dev (implement)",
-                "STORY-003",
-                "pi",
-                "qwen2.5-coder",
-            );
+            let line =
+                format_agent_line_with_model("Dev (implement)", "STORY-003", "pi", "qwen2.5-coder");
 
             assert!(
                 line.contains("[qwen2.5-coder]"),
                 "la línea debe contener el modelo entre corchetes: {line}"
             );
             assert!(line.contains("pi"), "debe contener el provider: {line}");
-            assert!(line.contains("STORY-003"), "debe contener el story ID: {line}");
+            assert!(
+                line.contains("STORY-003"),
+                "debe contener el story ID: {line}"
+            );
             assert!(line.starts_with("🎯"), "debe comenzar con 🎯: {line}");
         }
 
@@ -3032,12 +3267,8 @@ mod tests {
         #[test]
         fn ca5_agent_line_follows_exact_format() {
             let expected = "🎯 Dev (implement) | STORY-003 | pi [qwen2.5-coder]";
-            let actual = format_agent_line_with_model(
-                "Dev (implement)",
-                "STORY-003",
-                "pi",
-                "qwen2.5-coder",
-            );
+            let actual =
+                format_agent_line_with_model("Dev (implement)", "STORY-003", "pi", "qwen2.5-coder");
             assert_eq!(
                 actual, expected,
                 "formato exacto:\n  esperado: {expected}\n  obtenido:  {actual}"
@@ -3047,12 +3278,8 @@ mod tests {
         /// CA5: Con modelo fallback "desconocido", el formato se mantiene.
         #[test]
         fn ca5_agent_line_with_desconocido_model() {
-            let line = format_agent_line_with_model(
-                "PO (plan)",
-                "STORY-001",
-                "claude",
-                "desconocido",
-            );
+            let line =
+                format_agent_line_with_model("PO (plan)", "STORY-001", "claude", "desconocido");
             assert!(line.contains("[desconocido]"));
             assert!(line.contains("PO (plan)"));
             assert!(line.contains("claude"));
@@ -3174,23 +3401,19 @@ model = "gpt-5"
             // Primera invocación: push 1 token count
             {
                 let mut w = state.token_usage.write().unwrap();
-                w.entry(story_id.to_string())
-                    .or_insert_with(Vec::new)
-                    .push(TokenCount {
-                        input: 100,
-                        output: 50,
-                    });
+                w.entry(story_id.to_string()).or_default().push(TokenCount {
+                    input: 100,
+                    output: 50,
+                });
             }
 
             // Segunda invocación misma historia: push otro token count
             {
                 let mut w = state.token_usage.write().unwrap();
-                w.entry(story_id.to_string())
-                    .or_insert_with(Vec::new)
-                    .push(TokenCount {
-                        input: 200,
-                        output: 100,
-                    });
+                w.entry(story_id.to_string()).or_default().push(TokenCount {
+                    input: 200,
+                    output: 100,
+                });
             }
 
             // Verificar acumulación
@@ -3250,16 +3473,16 @@ model = "gpt-5"
         #[test]
         fn ca9_summary_block_contains_all_required_fields() {
             let summary = build_final_summary_block(
-                5,                                         // total
-                3,                                         // done
-                1,                                         // failed
-                &["STORY-002".to_string()],                // failed_ids
-                0,                                         // blocked
-                1,                                         // draft
-                42,                                        // iterations
-                std::time::Duration::from_secs(3661),      // 1h 1m 1s
-                5000,                                      // input tokens
-                3000,                                      // output tokens
+                5,                                    // total
+                3,                                    // done
+                1,                                    // failed
+                &["STORY-002".to_string()],           // failed_ids
+                0,                                    // blocked
+                1,                                    // draft
+                42,                                   // iterations
+                std::time::Duration::from_secs(3661), // 1h 1m 1s
+                5000,                                 // input tokens
+                3000,                                 // output tokens
             );
 
             // Campos obligatorios
@@ -3296,9 +3519,16 @@ model = "gpt-5"
         #[test]
         fn ca9_summary_counts_are_correct() {
             let summary = build_final_summary_block(
-                10, 8, 0, &[], 2, 0, 15,
+                10,
+                8,
+                0,
+                &[],
+                2,
+                0,
+                15,
                 std::time::Duration::from_secs(120),
-                1000, 500,
+                1000,
+                500,
             );
 
             assert!(summary.contains("Total        : 10"));
@@ -3314,9 +3544,16 @@ model = "gpt-5"
         fn ca9_elapsed_time_formatted_in_h_m_s() {
             // 3723 segundos = 1h 2m 3s
             let summary = build_final_summary_block(
-                1, 1, 0, &[], 0, 0, 1,
+                1,
+                1,
+                0,
+                &[],
+                0,
+                0,
+                1,
                 std::time::Duration::from_secs(3723),
-                0, 0,
+                0,
+                0,
             );
 
             assert!(
@@ -3329,9 +3566,16 @@ model = "gpt-5"
         #[test]
         fn ca9_elapsed_time_less_than_hour() {
             let summary = build_final_summary_block(
-                1, 1, 0, &[], 0, 0, 1,
+                1,
+                1,
+                0,
+                &[],
+                0,
+                0,
+                1,
                 std::time::Duration::from_secs(125),
-                0, 0,
+                0,
+                0,
             );
 
             assert!(
@@ -3344,11 +3588,16 @@ model = "gpt-5"
         #[test]
         fn ca9_failed_ids_listed_in_parentheses() {
             let summary = build_final_summary_block(
-                3, 1, 2,
+                3,
+                1,
+                2,
                 &["STORY-002".into(), "STORY-003".into()],
-                0, 0, 5,
+                0,
+                0,
+                5,
                 std::time::Duration::from_secs(60),
-                100, 50,
+                100,
+                50,
             );
 
             assert!(summary.contains("❌ Failed    : 2"));
@@ -3439,16 +3688,19 @@ model = "gpt-5"
         #[test]
         fn ca10_final_summary_shows_correct_token_sums() {
             let summary = build_final_summary_block(
-                2, 2, 0, &[], 0, 0, 10,
+                2,
+                2,
+                0,
+                &[],
+                0,
+                0,
+                10,
                 std::time::Duration::from_secs(60),
-                4500,  // total input
-                2300,  // total output
+                4500, // total input
+                2300, // total output
             );
 
-            assert!(
-                summary.contains("4500 input"),
-                "debe mostrar '4500 input'"
-            );
+            assert!(summary.contains("4500 input"), "debe mostrar '4500 input'");
             assert!(
                 summary.contains("2300 output"),
                 "debe mostrar '2300 output'"
@@ -3467,9 +3719,16 @@ model = "gpt-5"
         #[test]
         fn ca10_token_totals_zero_in_summary() {
             let summary = build_final_summary_block(
-                0, 0, 0, &[], 0, 0, 0,
+                0,
+                0,
+                0,
+                &[],
+                0,
+                0,
+                0,
                 std::time::Duration::from_secs(0),
-                0, 0,
+                0,
+                0,
             );
 
             assert!(
@@ -3511,7 +3770,7 @@ model = "gpt-5"
                     .write()
                     .unwrap()
                     .entry(story_id.to_string())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(domain_tc);
             }
 
