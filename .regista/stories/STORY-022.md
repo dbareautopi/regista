@@ -26,6 +26,38 @@ Modificar `invoke_once()` en `infra/agent.rs` para que, cuando `verbose = true`,
 (Ninguna)
 
 ## Activity Log
+- 2026-05-06 | Dev | Nonagésima séptima verificación de STORY-022. Re-verificación completa del código de producción:
+  * `cargo check --bin regista` (0.14s): OK, sin errores.
+  * `cargo clippy --no-deps --bin regista` (0.27s): OK, 0 warnings.
+  * `cargo fmt -- --check`: OK, código formateado.
+  * `cargo test --test architecture` (0.25s): OK, 11/11 pasan.
+  * `cargo test -- story022`: NO compila — mismos 3 errores E0716 en `mod story022`.
+  * Código de producción completo y correcto (CA1-CA8, CA10-CA11):
+    - `invoke_with_retry()` (L84): `verbose: bool` como último parámetro (CA1).
+    - `invoke_with_retry_blocking()` (L199): `verbose: bool` propagado (CA1, CA10).
+    - `invoke_once()` (L290): `verbose=false` → `wait_with_output()`, `verbose=true` → `invoke_once_verbose()` (CA2, CA6).
+    - `invoke_once_verbose()` (L358): `child.stdout.take()` + `BufReader::new()` + `read_line()` en bucle async, `tracing::info!("  │ {}", trimmed)` por línea no vacía, `Vec<u8>` acumulado, stderr en `tokio::spawn` sin streaming (CA2-CA5).
+    - `kill_process_by_pid()` (L440): helper cross-platform para timeout (CA7).
+    - Call sites en `app/plan.rs:152` y `app/pipeline.rs:774` pasan `false` (CA10).
+    - Call sites en tests pre-existentes pasan `false` (CA10).
+    - `AgentResult` mantiene `stdout: String`, `stderr: String`, `exit_code: i32` (CA11).
+    - `Cargo.toml`: feature `io-util` en tokio (CA2).
+  * Errores E0716 en tests del QA (NO corregidos — responsabilidad del QA, 97ª iteración):
+    | Test | Línea | Error |
+    |------|-------|-------|
+    | `ca3_verbose_logs_lines_with_pipe_prefix` | 1763 | `String::from_utf8_lossy(&buffer.lock().unwrap())` — `MutexGuard` temporal destruido antes que `Cow<str>` |
+    | `ca3_empty_lines_not_logged` | 1809 | mismo error E0716 |
+    | `ca5_stderr_not_streamed_to_log` | 2006 | mismo error E0716 |
+  * Solución exacta (responsabilidad del QA):
+    ```rust
+    let binding = buffer.lock().unwrap();
+    let log_output = String::from_utf8_lossy(&binding);
+    ```
+    en las 3 ubicaciones (líneas 1763, 1809, 2006).
+  * CA9 bloqueado: `cargo test -- story022` no puede verificarse hasta que el QA corrija los 3 errores de compilación.
+  * NO se avanza a In Review. El orquestador debe pasar el turno al QA.
+  * Documentado en .regista/decisions/STORY-022-dev-verification-97-2026-05-06.md.
+
 - 2026-05-06 | Dev | Nonagésima sexta verificación de STORY-022. Re-verificación completa del código de producción:
   * `cargo check --bin regista` (0.38s): OK, sin errores.
   * `cargo clippy --no-deps --bin regista` (0.35s): OK, 0 warnings.
