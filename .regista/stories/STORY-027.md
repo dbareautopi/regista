@@ -1,7 +1,7 @@
 # STORY-027: Diff post-agente + acumulación de tokens + resumen final enriquecido
 
 ## Status
-**Tests Ready**
+**In Review**
 
 ## Epic
 EPIC-10
@@ -47,4 +47,4 @@ Integrar tres funcionalidades en `app/pipeline.rs`:
 - Bloqueado por: STORY-019, STORY-020, STORY-021, STORY-022, STORY-026
 
 ## Activity Log
-- 2026-05-06 | QA | 32 tests unitarios escritos en app/pipeline.rs cubriendo CA1-CA10 y CA13. Tests verifican: diff post-agente (should_run_post_diff), formato de línea con modelo (format_agent_line_with_model), acumulación de tokens en SharedState.token_usage (CA8), parseo combinado stdout+stderr (CA7), bloque de cierre enriquecido con conteo de tokens (CA9-CA10), y omisión en dry-run (CA13). Usa placeholders mínimos como esqueleto para que el Developer implemente la lógica real. Todos los 95 tests de pipeline.rs pasan (32 nuevos + 63 existentes).
+- 2026-05-06 | Dev | Implementación completa de STORY-027 en app/pipeline.rs. Se integraron 3 funcionalidades: (1) format_agent_line_with_model() a nivel de módulo para loguear cada invocación con el modelo resuelto via AgentsConfig::model_for_role(); (2) parseo y acumulación de tokens post-agente en SharedState.token_usage usando agent::parse_token_count() sobre stdout+stderr combinados; (3) git diff --stat post-agente en modo detallado (!compact, git enabled) logueando archivos modificados con 📁. Se implementó el bloque de cierre enriquecido en run_real() con resumen de tokens totales (input+output), conteo por estado, IDs de fallidas, y timestamp via chrono. Se corrigieron 6 llamadas a process_story() en tests que no pasaban el nuevo parámetro compact. Se aplicaron correcciones de clippy (or_default, and_then). 520 tests pasan, clippy limpio, fmt OK.

@@ -1,0 +1,14 @@
+[2m2026-05-06T14:17:18.069479Z[0m [32m INFO[0m [2mregista::cli::handlers[0m[2m:[0m ═══════════════════════════════════════════════════════════
+🛰️  regista v0.9.3 — sesión iniciada 2026-05-06 14:17:18 UTC
+   Proyecto   : .
+   Provider    : pi
+   Modelos     : PO=opencode/minimax-m2.5-free, QA=opencode/minimax-m2.5-free, Dev=opencode/minimax-m2.5-free, Reviewer=opencode/minimax-m2.5-free
+   Límites     : max_iter=168 (28 stories × 6), max_reject=8, timeout=1800s
+   Git         : habilitado
+   Hooks       : ninguno
+═══════════════════════════════════════════════════════════
+[2m2026-05-06T14:17:18.069900Z[0m [32m INFO[0m [2mregista::infra::checkpoint[0m[2m:[0m 📂 checkpoint cargado: iteración 127, 1 ciclos de rechazo acumulados
+[2m2026-05-06T14:17:18.071343Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m 📂 Reanudando desde checkpoint: iteración 127
+[2m2026-05-06T14:17:18.088315Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m max_iterations auto: 168 (28 historias × 6)
+[2m2026-05-06T14:17:18.088351Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 128 ══════
+[2m2026-05-06T14:17:18.094725Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 Reviewer | STORY-027 | pi [opencode/minimax-m2.5-free]
