@@ -12,3 +12,7 @@
 [2m2026-05-06T14:17:18.088315Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m max_iterations auto: 168 (28 historias × 6)
 [2m2026-05-06T14:17:18.088351Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 128 ══════
 [2m2026-05-06T14:17:18.094725Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 Reviewer | STORY-027 | pi [opencode/minimax-m2.5-free]
+[2m2026-05-06T14:17:18.183400Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   [1/5] invocando pi (./.pi/skills/reviewer/SKILL.md)
+[2m2026-05-06T14:25:17.385784Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   ✓ agente completado (intento 1)
+[2m2026-05-06T14:25:17.397472Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 129 ══════
+[2m2026-05-06T14:25:17.415417Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 PO (validate) | STORY-027 | pi [opencode/minimax-m2.5-free]
