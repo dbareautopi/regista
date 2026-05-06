@@ -2184,5 +2184,88 @@ post_dev = "npm run build"
                 "--compact debe aparecer exactamente 1 vez, no {count}"
             );
         }
+
+        // ── CA3: build_run_options propaga compact a RunOptions ──
+
+        /// CA3: build_run_options con compact=true produce RunOptions.compact=true.
+        #[test]
+        fn build_run_options_with_compact_true() {
+            let pipeline = PipelineArgs::default();
+            let opts = build_run_options(&pipeline, false, true);
+            assert!(
+                opts.compact,
+                "build_run_options con compact=true debe producir RunOptions.compact=true"
+            );
+            assert!(!opts.quiet, "quiet debe ser false");
+        }
+
+        /// CA3: build_run_options con compact=false produce RunOptions.compact=false.
+        #[test]
+        fn build_run_options_with_compact_false() {
+            let pipeline = PipelineArgs::default();
+            let opts = build_run_options(&pipeline, false, false);
+            assert!(
+                !opts.compact,
+                "build_run_options con compact=false debe producir RunOptions.compact=false"
+            );
+        }
+
+        /// CA3: build_run_options propaga compact independientemente de quiet.
+        #[test]
+        fn build_run_options_compact_and_quiet_independent() {
+            let pipeline = PipelineArgs::default();
+
+            // quiet=true, compact=true
+            let opts = build_run_options(&pipeline, true, true);
+            assert!(opts.quiet, "quiet debe ser true");
+            assert!(opts.compact, "compact debe ser true");
+
+            // quiet=true, compact=false
+            let opts = build_run_options(&pipeline, true, false);
+            assert!(opts.quiet, "quiet debe ser true");
+            assert!(!opts.compact, "compact debe ser false");
+
+            // quiet=false, compact=true
+            let opts = build_run_options(&pipeline, false, true);
+            assert!(!opts.quiet, "quiet debe ser false");
+            assert!(opts.compact, "compact debe ser true");
+
+            // quiet=false, compact=false
+            let opts = build_run_options(&pipeline, false, false);
+            assert!(!opts.quiet, "quiet debe ser false");
+            assert!(!opts.compact, "compact debe ser false");
+        }
+
+        /// CA3: build_run_options conserva otros campos al añadir compact.
+        #[test]
+        fn build_run_options_preserves_other_pipeline_fields() {
+            let pipeline = PipelineArgs {
+                once: true,
+                story: Some("STORY-007".into()),
+                epic: Some("EPIC-003".into()),
+                ..PipelineArgs::default()
+            };
+
+            let opts = build_run_options(&pipeline, false, true);
+
+            assert!(opts.once, "once debe conservarse");
+            assert_eq!(opts.story_filter.as_deref(), Some("STORY-007"));
+            assert_eq!(opts.epic_filter.as_deref(), Some("EPIC-003"));
+            assert!(opts.compact, "compact debe ser true");
+            assert!(!opts.dry_run, "dry_run debe ser false (se sobreescribe en handlers)");
+        }
+
+        /// CA3: build_run_options con compact=true y pipeline resume.
+        #[test]
+        fn build_run_options_with_compact_and_resume() {
+            let pipeline = PipelineArgs {
+                resume: true,
+                ..PipelineArgs::default()
+            };
+            let opts = build_run_options(&pipeline, true, true);
+            assert!(opts.compact, "compact debe ser true");
+            assert!(opts.quiet, "quiet debe ser true");
+            // resume se maneja en los handlers, no en RunOptions
+        }
     }
 }

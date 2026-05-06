@@ -12,3 +12,9 @@
 [2m2026-05-06T16:17:06.210845Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m max_iterations auto: 168 (28 historias × 6)
 [2m2026-05-06T16:17:06.210879Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 133 ══════
 [2m2026-05-06T16:17:06.220639Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 QA (tests) | STORY-024 | pi [desconocido]
+[2m2026-05-06T16:17:06.325711Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   [1/5] invocando pi (./.pi/skills/qa-engineer/SKILL.md)
+[2m2026-05-06T16:31:22.280639Z[0m [32m INFO[0m [2mregista::infra::agent[0m[2m:[0m   ✓ agente completado (intento 1)
+[2m2026-05-06T16:31:22.988347Z[0m [33m WARN[0m [2mregista::app::pipeline[0m[2m:[0m   ⚠ STORY-024: el agente completó pero el estado sigue en Ready — ciclo 4/8. Cambios preservados.
+[2m2026-05-06T16:31:22.988436Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   📝 STORY-024: el archivo fue modificado por el agente (cambios preservados)
+[2m2026-05-06T16:31:22.989615Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m ══════ Iteración 134 ══════
+[2m2026-05-06T16:31:23.012414Z[0m [32m INFO[0m [2mregista::app::pipeline[0m[2m:[0m   🎯 QA (tests) | STORY-024 | pi [desconocido]
