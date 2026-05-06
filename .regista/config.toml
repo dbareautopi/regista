@@ -24,5 +24,12 @@ retry_delay_base_seconds = 10
 # post_dev = "echo 'Dev phase verified'"
 # post_reviewer = "echo 'Reviewer phase verified'"
 
+[stack]
+build_command = "cargo build"
+test_command = "cargo test"
+lint_command = "cargo clippy -- -D warnings"
+fmt_command = "cargo fmt -- --check"
+src_dir = "src/"
+
 [git]
 enabled = true

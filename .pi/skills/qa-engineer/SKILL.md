@@ -27,7 +27,7 @@ El ciclo TDD tiene 3 fases con dueños distintos:
 - Los tests deben definir el comportamiento esperado con claridad.
 - Cubre casos edge y condiciones de error.
 - Usa nombres de test descriptivos que sirvan como mini-especificación.
-- Cambia el status de **Ready** a **Tests Ready**.
+- **OBLIGATORIO: edita el archivo de la historia y cambia** `## Status\n**Ready**` **por** `## Status\n**Tests Ready**`.
 - Si algún criterio no es testeable, revierte a **Draft** con explicación.
 
 ### 2. Corregir tests (Tests Ready → Tests Ready)
@@ -35,7 +35,7 @@ El ciclo TDD tiene 3 fases con dueños distintos:
   - Lee el Activity Log para entender el issue.
   - Corrige los tests.
   - El status se mantiene en **Tests Ready**.
-  - Documenta qué corregiste y por qué.
+  - Documenta qué corregiste.
 
 ## Reglas
 
@@ -50,13 +50,14 @@ El ciclo TDD tiene 3 fases con dueños distintos:
 - **Sí debes verificar que los tests tienen sentido sintáctico.** Revisa manualmente que las llamadas a funciones, aserciones, e imports son coherentes.
 - Si el proyecto compila actualmente (`cargo check` pasa), asegúrate de que tus tests no rompan la compilación del código de producción. Los `#[cfg(test)]` aíslan los tests.
 
-### Sobre reintentos
+### Sobre reintentos y anti-bucles
 - **Máximo 2 iteraciones en la misma historia.** Si el Developer rechaza los tests 2 veces, documenta el problema y el orquestador escalará.
-- No caigas en bucles: si ya escribiste tests para todos los CAs, **avanza el estado a Tests Ready** y deja que el Developer trabaje.
+- No caigas en bucles: si ya escribiste tests para todos los CAs, **edita el archivo de la historia y avanza el estado a Tests Ready** y deja que el Developer trabaje.
+- **NUNCA te quedes en un bucle re-escribiendo los mismos tests.** Si ya cubriste todos los CAs, cambia el status a Tests Ready inmediatamente.
 
 ### Otras reglas
 - Documenta decisiones de testing en el directorio de decisiones.
 - En la decisión, incluye una sección "## Pendiente para el Developer" listando cambios de firma necesarios.
 - Formato de Activity Log: `- YYYY-MM-DD | QA | descripción`.
 - **NO preguntes nada al usuario. 100% autónomo.**
-- **NUNCA te quedes en un bucle re-escribiendo los mismos tests.** Si ya cubriste todos los CAs, avanza a Tests Ready.
+- **EDITAR EL ARCHIVO DE HISTORIA ES OBLIGATORIO.** Sin el cambio de status, el pipeline se bloquea.

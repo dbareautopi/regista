@@ -7,6 +7,32 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+---
+
+## [0.9.5] — 2026-05-06
+
+### Changed
+- **Skills sincronizadas con `init.rs`**: las 4 plantillas de skill en
+  `src/app/init.rs` ahora coinciden con las versiones mejoradas del disco.
+  `regista init` genera skills completas con reglas TDD, anti-bucles y
+  detección de deadlocks.
+- **Instrucción explícita de edición**: todas las skills ahora exigen
+  "EDITA SIEMPRE el archivo de la historia para cambiar el status.
+  Es obligatorio." — elimina la ambigüedad que causaba que el agente
+  analizara pero no escribiera el cambio de estado.
+- **Sección `[stack]` en config**: `regista init` ahora genera `[stack]`
+  comentado en `.regista/config.toml`. El proyecto regista tiene
+  `[stack]` activo con comandos concretos (`cargo build`, `cargo test`,
+  `cargo clippy`, `cargo fmt`).
+
+### Fixed
+- **Bucle QA→QA resuelto**: el QA ya no reescribe tests indefinidamente.
+  Las skills ahora imponen límites estrictos (máx 2 iteraciones QA,
+  máx 3 iteraciones Dev) y fuerzan el cambio de status al terminar.
+- **Tests TDD huérfanos eliminados**: los `mod story024` generados por
+  QA que asumían código no implementado fueron eliminados de `handlers.rs`
+  y `pipeline.rs`. Eran la causa raíz del bucle de compilación.
+
 ## [0.9.4] — 2026-05-06
 
 ### Changed
@@ -388,6 +414,8 @@ y el versionado sigue [SemVer](https://semver.org/spec/v2.0.0.html).
 - Dry-run, salida JSON, feedback rico en reintentos
 - Hooks post-fase y snapshots git
 
+
+[0.9.5]: https://github.com/dbareautopi/regista/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/dbareautopi/regista/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/dbareautopi/regista/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/dbareautopi/regista/compare/v0.9.1...v0.9.2
