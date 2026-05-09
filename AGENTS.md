@@ -49,7 +49,6 @@ verificadas automáticamente por `tests/architecture.rs`:
 regista/
 ├── AGENTS.md                  ← este archivo
 ├── README.md                  ← descripción general para usuarios
-├── DESIGN.md                  ← diseño del rework v1.0 (orquestador agnóstico + LLM nativo)
 ├── Cargo.toml                 ← dependencias y metadata del crate
 ├── .gitignore
 ├── src/
