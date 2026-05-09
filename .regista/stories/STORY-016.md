@@ -1,7 +1,7 @@
 # STORY-016: Centralizar `extract_numeric` + eliminar duplicación en 4 módulos
 
 ## Status
-**Draft**
+**Ready**
 
 ## Epic
 EPIC-06
@@ -22,3 +22,4 @@ La función `extract_numeric(id: &str) -> u32` está duplicada idénticamente en
 
 ## Activity Log
 - 2026-05-04 | PO | Historia generada desde roadmap/AUDITORIA-ESCALABILIDAD.md (hallazgo #11.1, recomendación #8).
+- 2026-05-08 | PO | DoR cumplida — historia pasa a Ready

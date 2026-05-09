@@ -1,7 +1,7 @@
 # STORY-014: Rotación de logs con `tracing-appender` + mejorar `kill()` del daemon
 
 ## Status
-**Draft**
+**Ready**
 
 ## Epic
 EPIC-05
@@ -23,3 +23,4 @@ Dos mejoras independientes en el daemon: (1) El archivo `daemon.log` crece sin l
 
 ## Activity Log
 - 2026-05-04 | PO | Historia generada desde roadmap/AUDITORIA-ESCALABILIDAD.md (hallazgos #6.3, #6.5, recomendación #11).
+- 2026-05-08 | PO | DoR cumplida — historia pasa a Ready

@@ -1,7 +1,7 @@
 # STORY-018: Benchmarks con `criterion` para escenarios de gran escala
 
 ## Status
-**Draft**
+**Ready**
 
 ## Epic
 EPIC-06
@@ -23,3 +23,4 @@ No existen tests de rendimiento para escenarios grandes (100+ historias, cadenas
 
 ## Activity Log
 - 2026-05-04 | PO | Historia generada desde roadmap/AUDITORIA-ESCALABILIDAD.md (hallazgo #11.4, recomendación #13).
+- 2026-05-08 | PO | DoR cumplida — historia pasa a Ready

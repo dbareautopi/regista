@@ -1,7 +1,7 @@
 # STORY-015: Robustecimiento de `set_status()` + versión del formato de historia
 
 ## Status
-**Draft**
+**Ready**
 
 ## Epic
 EPIC-05
@@ -23,3 +23,4 @@ El método `set_status()` en `domain/story.rs` usa reemplazo posicional frágil 
 
 ## Activity Log
 - 2026-05-04 | PO | Historia generada desde roadmap/AUDITORIA-ESCALABILIDAD.md (hallazgos #9.1, #9.2, #9.3).
+- 2026-05-08 | PO | DoR cumplida — historia pasa a Ready

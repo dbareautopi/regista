@@ -1,7 +1,7 @@
 # STORY-013: Compactación de checkpoint — filtrar historias terminales (Done/Failed)
 
 ## Status
-**Draft**
+**Ready**
 
 ## Epic
 EPIC-05
@@ -23,3 +23,4 @@ El checkpoint actual (`OrchestratorState`) mantiene entradas en `story_iteration
 
 ## Activity Log
 - 2026-05-04 | PO | Historia generada desde roadmap/AUDITORIA-ESCALABILIDAD.md (hallazgos #3.1, #3.2, #3.4, recomendación #9).
+- 2026-05-08 | PO | DoR cumplida — historia pasa a Ready

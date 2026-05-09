@@ -1,7 +1,7 @@
 # STORY-004: `StoryCache` con invalidación por `mtime`
 
 ## Status
-**Draft**
+**Ready**
 
 ## Epic
 EPIC-02
@@ -23,3 +23,4 @@ El pipeline actual llama a `load_all_stories()` al inicio de cada iteración, re
 
 ## Activity Log
 - 2026-05-04 | PO | Historia generada desde roadmap/AUDITORIA-ESCALABILIDAD.md (hallazgo #2.1, recomendación #1).
+- 2026-05-08 | PO | DoR cumplida — historia pasa a Ready

@@ -1334,4 +1334,131 @@ model = "claude-sonnet-4"
             "Caso 4: 'desconocido' cuando no hay modelo en ningún lado"
         );
     }
+
+    // ── validate() tests (STORY-003) ────────────────────────────────────
+
+    #[test]
+    fn validate_stories_dir_exists_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir(root.join("stories")).unwrap();
+
+        let mut cfg = Config::default();
+        cfg.project.stories_dir = "stories".to_string();
+
+        assert!(cfg.validate(root).is_ok());
+    }
+
+    #[test]
+    fn validate_stories_dir_missing_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        let mut cfg = Config::default();
+        cfg.project.stories_dir = "stories".to_string();
+
+        let result = cfg.validate(root);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("no existe"),
+            "Expected 'no existe' in error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_stories_dir_is_file_not_dir_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("stories"), "not a dir").unwrap();
+
+        let mut cfg = Config::default();
+        cfg.project.stories_dir = "stories".to_string();
+
+        let result = cfg.validate(root);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("no es un directorio"),
+            "Expected 'no es un directorio' in error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_epics_dir_exists_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir(root.join("stories")).unwrap();
+        std::fs::create_dir(root.join("epics")).unwrap();
+
+        let mut cfg = Config::default();
+        cfg.project.stories_dir = "stories".to_string();
+        cfg.project.epics_dir = "epics".to_string();
+
+        assert!(cfg.validate(root).is_ok());
+    }
+
+    #[test]
+    fn validate_epics_dir_missing_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir(root.join("stories")).unwrap();
+
+        let mut cfg = Config::default();
+        cfg.project.stories_dir = "stories".to_string();
+        cfg.project.epics_dir = "epics".to_string();
+
+        let result = cfg.validate(root);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("epics"),
+            "Expected mention of 'epics' in error: {err}"
+        );
+        assert!(
+            err.contains("no existe"),
+            "Expected 'no existe' in error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_does_not_create_directories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir(root.join("stories")).unwrap();
+
+        let mut cfg = Config::default();
+        cfg.project.stories_dir = "stories".to_string();
+        cfg.project.decisions_dir = "decisions".to_string();
+        cfg.project.log_dir = "log".to_string();
+
+        assert!(cfg.validate(root).is_ok());
+
+        assert!(
+            !root.join("decisions").exists(),
+            "decisions_dir should NOT exist after validate()"
+        );
+        assert!(
+            !root.join("log").exists(),
+            "log_dir should NOT exist after validate()"
+        );
+    }
+
+    #[test]
+    fn validate_all_dirs_present_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir(root.join("stories")).unwrap();
+        std::fs::create_dir(root.join("epics")).unwrap();
+        std::fs::create_dir(root.join("decisions")).unwrap();
+        std::fs::create_dir(root.join("log")).unwrap();
+
+        let mut cfg = Config::default();
+        cfg.project.stories_dir = "stories".to_string();
+        cfg.project.epics_dir = "epics".to_string();
+        cfg.project.decisions_dir = "decisions".to_string();
+        cfg.project.log_dir = "log".to_string();
+
+        assert!(cfg.validate(root).is_ok());
+    }
 }

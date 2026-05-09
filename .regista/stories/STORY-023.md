@@ -1,7 +1,7 @@
 # STORY-023: `follow()` con parámetro `from_beginning` para volcado de historial completo
 
 ## Status
-**Draft**
+**Ready**
 
 ## Epic
 EPIC-08
@@ -24,3 +24,4 @@ Modificar `daemon::follow()` en `infra/daemon.rs` para que acepte un parámetro 
 
 ## Activity Log
 - 2026-05-05 | PO | Historia generada desde specs/spec-logs-transparentes.md (sección 5: regista logs — historial completo).
+- 2026-05-08 | PO | DoR cumplida — historia pasa a Ready

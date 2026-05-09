@@ -49,8 +49,7 @@ verificadas automáticamente por `tests/architecture.rs`:
 regista/
 ├── AGENTS.md                  ← este archivo
 ├── README.md                  ← descripción general para usuarios
-├── DESIGN.md                  ← diseño completo (máquina de estados, arquitectura, multi-provider)
-├── HANDOFF.md                 ← handoff de la última sesión (lo implementado y pendiente)
+├── DESIGN.md                  ← diseño del rework v1.0 (orquestador agnóstico + LLM nativo)
 ├── Cargo.toml                 ← dependencias y metadata del crate
 ├── .gitignore
 ├── src/
@@ -96,13 +95,6 @@ regista/
 │       ├── story_draft.md
 │       ├── story_blocked.md
 │       └── story_business_review.md
-│
-└── roadmap/                   ← Documentos de diseño de features futuras
-    ├── ROADMAP.md             ← Índice con estado de cada feature y orden de implementación
-    ├── 01-paralelismo.md      ← Diseño detallado (Fase 7, último)
-    ├── 04-workflow-configurable.md ← Diseño detallado (Fase 5)
-    ├── 10-cross-story-context.md   ← Diseño definido (Fase 4)
-    └── ...
 ```
 
 ---
@@ -508,25 +500,6 @@ EPIC-XXX
 26. **Migración progresiva**: `domain/state.rs` se conserva como wrapper con re-exports
     (`pub use spartito::Status;`). `domain/workflow.rs` se elimina por completo.
     Esto minimiza el riesgo: los imports internos siguen funcionando durante la transición.
-
----
-
-## 🚧 Pendiente (roadmap)
-
-| # | Feature | Esfuerzo | Fase | Vehículo |
-|---|---------|----------|------|----------|
-| S1 | **Spartito** — crate compartido | Medio | 0 (fundacional) | `crates/spartito` en workspace mezzala |
-| S2 | **Migrar regista a spartito** | Alto | 0 (fundacional) | Adaptación de domain + app |
-| 14 | Plan `--from-dir` | Bajo | 3 | — |
-| 10 | Cross-story context | Medio | 4 | — |
-| 11 | TUI / dashboard | Medio | 6 | — |
-| 12 | Cost tracking | Medio | 6 | — |
-| 15 | Plan `--interactive` | Medio | 6 | — |
-| 01 | Paralelismo | Alto | 7 (último) | — |
-
-> ⚠️ #04 (workflow configurable) ya no es una feature independiente:
-> **spartito ES la implementación de #04**. Cuando spartito esté publicado,
-> #04 estará completado.
 
 ---
 

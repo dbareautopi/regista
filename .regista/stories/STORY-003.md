@@ -1,7 +1,7 @@
 # STORY-003: Validar `epics_dir` y separar side-effects de `Config::validate()`
 
 ## Status
-**Draft**
+**Ready**
 
 ## Epic
 EPIC-01
@@ -22,3 +22,4 @@ Actualmente `Config::validate()` solo verifica que `stories_dir` existe, pero no
 
 ## Activity Log
 - 2026-05-04 | PO | Historia generada desde roadmap/AUDITORIA-ESCALABILIDAD.md (hallazgos #8.1, #8.2).
+- 2026-05-08 | PO | DoR cumplida — historia pasa a Ready

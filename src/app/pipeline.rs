@@ -860,7 +860,7 @@ async fn process_story(
         &prompt,
         &cfg.limits,
         agent_opts,
-        false,
+        !compact,
     )
     .await;
 

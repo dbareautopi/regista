@@ -198,7 +198,7 @@ fn handle_auto(args: AutoArgs) {
         }
 
         // 2. Pipeline
-        let run_options = build_run_options(&args.pipeline, args.common.quiet);
+        let run_options = build_run_options(&args.pipeline, args.common.quiet, args.common.compact);
         let resume_state = if args.pipeline.resume {
             infra::checkpoint::OrchestratorState::load(project_root)
         } else {
@@ -262,7 +262,7 @@ fn handle_auto(args: AutoArgs) {
         }
 
         // Pipeline dry-run
-        let mut run_options = build_run_options(&args.pipeline, args.common.quiet);
+        let mut run_options = build_run_options(&args.pipeline, args.common.quiet, args.common.compact);
         run_options.dry_run = true;
         match app::pipeline::run(project_root, &cfg, &run_options, None) {
             Ok(report) => print_pipeline_summary(&report),
@@ -320,7 +320,7 @@ fn handle_run(args: RunArgs) {
         let story_count = count_stories(project_root, &cfg);
         emit_session_header(&cfg, project_root, story_count, false);
 
-        let run_options = build_run_options(&args.pipeline, args.common.quiet);
+        let run_options = build_run_options(&args.pipeline, args.common.quiet, args.common.compact);
         let resume_state = if args.pipeline.resume {
             infra::checkpoint::OrchestratorState::load(project_root)
         } else {
@@ -354,7 +354,7 @@ fn handle_run(args: RunArgs) {
             args.common.config.as_deref(),
             args.common.provider.as_deref(),
         );
-        let mut run_options = build_run_options(&args.pipeline, args.common.quiet);
+        let mut run_options = build_run_options(&args.pipeline, args.common.quiet, args.common.compact);
         run_options.dry_run = true;
         match app::pipeline::run(project_root, &cfg, &run_options, None) {
             Ok(report) => print_pipeline_summary(&report),
@@ -624,7 +624,7 @@ fn load_config(
 }
 
 /// Construye `RunOptions` desde los flags de pipeline.
-fn build_run_options(pipeline: &PipelineArgs, quiet: bool) -> app::pipeline::RunOptions {
+fn build_run_options(pipeline: &PipelineArgs, quiet: bool, compact: bool) -> app::pipeline::RunOptions {
     let epics_range = pipeline.epics.as_ref().and_then(|range| {
         let parts: Vec<&str> = range.split("..").collect();
         if parts.len() == 2 {
@@ -645,7 +645,7 @@ fn build_run_options(pipeline: &PipelineArgs, quiet: bool) -> app::pipeline::Run
         epics_range,
         dry_run: false, // se sobreescribe en los handlers que usan --dry-run
         quiet,
-        compact: false,
+        compact,
     }
 }
 
@@ -752,6 +752,9 @@ fn build_daemon_args(
     }
     if common.quiet {
         args.push("--quiet".to_string());
+    }
+    if common.compact {
+        args.push("--compact".to_string());
     }
 
     args

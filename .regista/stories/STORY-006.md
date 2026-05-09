@@ -1,7 +1,7 @@
 # STORY-006: `git add` selectivo para snapshots
 
 ## Status
-**Draft**
+**Ready**
 
 ## Epic
 EPIC-02
@@ -25,3 +25,4 @@ Actualmente `git.rs::snapshot()` ejecuta `git add -A`, que stajea todo el workin
 
 ## Activity Log
 - 2026-05-04 | PO | Historia generada desde roadmap/AUDITORIA-ESCALABILIDAD.md (hallazgo #2.3, recomendación #5).
+- 2026-05-08 | PO | DoR cumplida — historia pasa a Ready

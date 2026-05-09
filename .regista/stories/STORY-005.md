@@ -1,7 +1,7 @@
 # STORY-005: Memoización de `DependencyGraph` en el orchestrator
 
 ## Status
-**Draft**
+**Ready**
 
 ## Epic
 EPIC-02
@@ -22,3 +22,4 @@ Actualmente el `DependencyGraph` se reconstruye 2-3 veces por iteración del pip
 
 ## Activity Log
 - 2026-05-04 | PO | Historia generada desde roadmap/AUDITORIA-ESCALABILIDAD.md (hallazgo #2.2, recomendación #3).
+- 2026-05-08 | PO | DoR cumplida — historia pasa a Ready
