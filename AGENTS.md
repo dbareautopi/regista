@@ -502,6 +502,72 @@ EPIC-XXX
 
 ---
 
+## 🔮 Decisiones de diseño — rework v1.0
+
+Estas decisiones aplican durante el refactor en la rama `rework` y reemplazan
+o amplían las decisiones de v0.x anteriores.
+
+### 27. Unificación de `plan`/`auto`/`run` en `run --plan-only`
+
+v0.x tiene tres comandos de pipeline: `plan` (generar backlog), `auto` (plan + run),
+y `run` (solo pipeline). Con la generalización del motor de workflows, esto se unifica:
+
+- **`regista run`**: único comando de ejecución. Si no hay tareas en `tasks_dir`,
+  ejecuta primero la fase de descomposición del workflow y genera las tareas iniciales,
+  luego ejecuta el pipeline completo sobre ellas.
+- **`regista run --plan-only`**: ejecuta solo la fase de descomposición (genera tareas
+  y termina, sin pipeline). Reemplaza al antiguo `plan`.
+- `plan` y `auto` desaparecen como subcomandos.
+
+La fase de descomposición se define en el workflow como una fase normal con
+`from = "_init_"` o marcada con `decomposition = true`. Si el workflow no declara
+fase de descomposición, `run` espera que las tareas ya existan.
+
+**Motivo**: `plan` y `auto` asumían el dominio software-dev (spec → historias).
+Con presets como `research` o `single-agent`, el concepto de "descomposición" no
+siempre aplica. Unificar en `run` con una fase inicial opcional lo hace genérico.
+
+### 28. `task_format` en config.toml define el formato interno de los .md
+
+Cada archivo de tarea sigue un formato configurable definido en `[workflow.task_format]`:
+
+```toml
+[workflow.task_format]
+id_pattern = "TASK-\\d+"
+section_markers = {
+    status      = "## Status",
+    description = "## Descripción",
+    priority    = "## Priority"
+}
+dependency_marker = "Bloqueado por:"
+```
+
+| Define `task_format` | Define `[project]` |
+|----------------------|---------------------|
+| Qué campos tiene cada .md y cómo se llaman | `tasks_dir` — dónde están los archivos |
+| Patrón de ID (STORY-NNN, TASK-NNN, etc.) | `task_pattern` — glob para encontrarlos |
+| Cómo se marcan las dependencias entre tareas | Resto de directorios (decisions, logs, etc.) |
+
+La ubicación física de los archivos sigue siendo `[project].tasks_dir` (default `.regista/tasks/`).
+
+### 29. Épicas como campo de task, no como archivos separados
+
+v0.x tenía un directorio `epics/` con archivos `EPIC-NNN.md` independientes.
+En v1.0, "épica" es un campo más del `task_format`. Si el preset define:
+
+```toml
+section_markers = { epic = "## Epic" }
+```
+
+Cada tarea puede referenciar una épica directamente (`EPIC-001`). El board puede
+filtrar por épica igual que antes. No hay archivos de épica separados.
+
+**Motivo**: Simplifica el modelo de datos. Una épica no tiene estado ni transiciones
+propias — es solo una etiqueta de agrupación. Tratarla como campo evita el problema
+de sincronizar dos directorios.
+
+---
+
 ## 🧪 Estrategia de testing
 
 - **Tests unitarios**: cada módulo tiene `#[cfg(test)] mod tests` con fixtures inline

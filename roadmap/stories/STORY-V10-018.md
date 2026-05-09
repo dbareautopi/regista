@@ -1,4 +1,4 @@
-# STORY-V10-018: Adaptar plan.rs a agente LLM nativo
+# STORY-V10-018: Fase de descomposición — generar tareas desde input
 
 ## Status
 **Draft**
@@ -7,19 +7,28 @@
 EPIC-V10-04
 
 ## Descripción
-Adaptar `app/plan.rs` para que `regista plan spec.md` use el LLM nativo (a través del `LlmProvider`) en lugar de providers CLI externos. El flujo sigue siendo el mismo: el agente recibe una especificación y genera tasks en el formato definido por el preset.
+Implementar la fase de descomposición del workflow como parte de `regista run --plan-only`.
+Cuando `run` detecta que no existen tareas en `tasks_dir`, ejecuta la fase de descomposición
+definida en el workflow (marcada con `decomposition = true` o con `from = "_init_"`).
 
-El bucle plan→validate (generar tasks, validar dependencias, dar feedback al agente, corregir) debe usar el `task_format` configurable para parsear y validar las dependencias entre tasks, en lugar de asumir el formato STORY-NNN.
+Esta fase invoca al LLM nativo con el input del usuario (archivo de especificación, topic,
+o lo que corresponda al preset) y genera los archivos `.md` iniciales en `tasks_dir` siguiendo
+el `task_format` configurado. Tras generar, aplica un bucle de validación que verifica
+dependencias correctas (sin referencias rotas, sin ciclos) y da feedback al agente si es necesario.
 
-**Valor de negocio**: La generación de backlog funciona con cualquier preset. Un usuario de `research` puede generar TASKs desde una spec igual que uno de `software-dev`.
+El flag `--plan-only` detiene el pipeline tras esta fase sin ejecutar el resto.
+
+**Valor de negocio**: `run` funciona desde cero con cualquier preset. Sin tareas previas, las genera.
+Con `--plan-only`, el usuario puede revisar el backlog antes de ejecutar el pipeline completo.
 
 ## Criterios de aceptación
-- [ ] CA1: `regista plan spec.md` invoca al LLM usando el modelo configurado para el rol `product_owner` (o el primer rol definido en el workflow), con un prompt que incluye el `task_format` para que el agente sepa qué campos debe rellenar
-- [ ] CA2: El bucle de validación (máx `plan_max_iterations`) parsea las tasks generadas, verifica que las dependencias forman un DAG sin ciclos, y si hay problemas, reinyecta feedback concreto al agente ("STORY-003 referencia a STORY-999 que no existe")
-- [ ] CA3: `--max-stories <N>` y `--replace` funcionan con el nuevo dominio: `--replace` borra todas las tasks existentes antes de generar; `--max-stories` limita el número de tasks generadas (0 = sin límite)
+- [ ] CA1: `regista run --plan-only spec.md` invoca al LLM con el modelo del primer rol del workflow, renderiza el prompt de la fase de descomposición con el input, y genera archivos `.md` en `tasks_dir` con el `task_format` definido (id_pattern, section_markers, dependency_marker)
+- [ ] CA2: El bucle de validación post-generación (máx `plan_max_iterations`) parsea las tareas, verifica dependencias sin ciclos ni referencias rotas, y reinyecta feedback al agente si hay problemas
+- [ ] CA3: `--plan-only` detiene el pipeline tras la descomposición. `run` sin `--plan-only` encadena descomposición + pipeline completo en una sola ejecución
 
 ## Dependencias
 - Bloqueado por: STORY-V10-006, STORY-V10-010
 
 ## Activity Log
+- 2026-05-09 | PO | reescrita: plan/auto unificados en run --plan-only
 - 2026-05-08 | PO | historia creada desde DESIGN.md fase 4
