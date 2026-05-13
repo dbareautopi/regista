@@ -988,4 +988,568 @@ api_key = "key"
             finding.message
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // STORY-V10-017: Validación pre-vuelo de dominio genérico
+    // ═══════════════════════════════════════════════════════════════
+    //
+    // NOTA TDD: Estos tests verifican la validación de modelos,
+    // workflow, task_format y tasks. El Developer debe implementar
+    // las funciones validate_models_referenced_in_workflow(),
+    // validate_workflow_config(), validate_task_format(), y
+    // validate_tasks().
+
+    use crate::domain::task::{Task, TaskFormatConfig};
+    use crate::domain::workflow::{PhaseConfig, RoleConfig, WorkflowConfig, WorkflowStatesConfig};
+    use std::collections::HashMap;
+
+    // ── Helpers para construir workflow de test ────────────────────
+
+    fn make_test_workflow_config() -> WorkflowConfig {
+        WorkflowConfig {
+            states: WorkflowStatesConfig {
+                initial: "draft".to_string(),
+                terminal: vec!["done".to_string(), "failed".to_string()],
+            },
+            roles: vec![
+                RoleConfig {
+                    name: "developer".to_string(),
+                    system_prompt: "Eres dev".to_string(),
+                    model: "gpt4o".to_string(),
+                },
+            ],
+            phases: vec![
+                PhaseConfig {
+                    name: "implement".to_string(),
+                    from: "draft".to_string(),
+                    to: "done".to_string(),
+                    role: "developer".to_string(),
+                    model: "gpt4o".to_string(),
+                    prompt: "Implementa {{task_id}}".to_string(),
+                    on_reject: "draft".to_string(),
+                    max_reject_cycles: 3,
+                    timeout_seconds: None,
+                },
+            ],
+            task_format: TaskFormatConfig::default(),
+        }
+    }
+
+    // ── CA1: Validar coherencia de modelos referenciados ──────────
+
+    #[test]
+    fn validate_detects_model_referenced_but_not_defined() {
+        // CA1: Modelo referenciado en una fase pero no definido en [models]
+        let workflow = make_test_workflow_config();
+        let mut models: HashMap<String, crate::config::ModelConfig> = HashMap::new();
+        // "gpt4o" no está en models pero sí en la fase
+
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+
+        validate_workflow_models(&workflow, &models, &mut result);
+
+        assert!(result.errors > 0, "Debe detectar modelo 'gpt4o' no definido");
+
+        let finding = result.findings.iter()
+            .find(|f| f.category == "models" && f.severity == Severity::Error)
+            .expect("Debe existir un Finding de Error");
+
+        assert!(finding.message.contains("gpt4o"),
+            "El mensaje debe mencionar el modelo 'gpt4o': {}", finding.message);
+        assert!(finding.message.contains("implement") || finding.message.contains("fase"),
+            "El mensaje debe mencionar la fase: {}", finding.message);
+    }
+
+    #[test]
+    fn validate_model_referenced_and_defined_no_error() {
+        // CA1 (borde): Si el modelo está definido, no hay error
+        let workflow = make_test_workflow_config();
+        let mut models: HashMap<String, crate::config::ModelConfig> = HashMap::new();
+        models.insert("gpt4o".to_string(), crate::config::ModelConfig {
+            provider: "openai".to_string(),
+            model_id: "gpt-4o".to_string(),
+            api_key: "sk-test".to_string(),
+            base_url: None,
+        });
+
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+
+        validate_workflow_models(&workflow, &models, &mut result);
+
+        assert_eq!(result.errors, 0,
+            "No debe haber errores si el modelo está definido");
+        assert_eq!(result.warnings, 0,
+            "No debe haber warnings si el modelo está definido");
+    }
+
+    #[test]
+    fn validate_env_var_not_set_is_warning() {
+        // CA1: Variable de entorno no definida en api_key → Warning (no Error)
+        let workflow = make_test_workflow_config();
+        let mut models: HashMap<String, crate::config::ModelConfig> = HashMap::new();
+        models.insert("gpt4o".to_string(), crate::config::ModelConfig {
+            provider: "openai".to_string(),
+            model_id: "gpt-4o".to_string(),
+            api_key: "${DEFINITELY_NOT_SET_V10_017}".to_string(),
+            base_url: None,
+        });
+
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+
+        validate_workflow_models(&workflow, &models, &mut result);
+
+        // Los modelos con env vars no definidas deberían generar Warning, no Error
+        // (porque es válido tener la variable definida en CI/CD pero no en desarrollo local)
+        assert_eq!(result.errors, 0,
+            "Variables de entorno no definidas no deben ser Error");
+    }
+
+    // ── CA2: Validar workflow (fases, estados, id_pattern) ────────
+
+    #[test]
+    fn validate_phase_references_undefined_state() {
+        // CA2: Fase referencia estado no definido en workflow.states
+        let mut workflow = make_test_workflow_config();
+        workflow.phases[0].to = "validating".to_string(); // no está en states
+
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+
+        validate_workflow_states_coherence(&workflow, &mut result);
+
+        assert!(result.errors > 0, "Debe detectar estado 'validating' no definido");
+
+        let finding = result.findings.iter()
+            .find(|f| f.category == "workflow" && f.severity == Severity::Error)
+            .expect("Debe existir Finding de Error");
+
+        assert!(finding.message.contains("validating"),
+            "El mensaje debe mencionar 'validating': {}", finding.message);
+    }
+
+    #[test]
+    fn validate_phase_from_is_not_in_states() {
+        // CA2: Fase cuyo from no está en states
+        let mut workflow = make_test_workflow_config();
+        workflow.phases[0].from = "unknown_start".to_string();
+
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+
+        validate_workflow_states_coherence(&workflow, &mut result);
+
+        assert!(result.errors > 0, "Debe detectar estado 'unknown_start' no definido");
+    }
+
+    #[test]
+    fn validate_invalid_id_pattern_regex() {
+        // CA2: id_pattern no es un regex válido
+        let mut workflow = make_test_workflow_config();
+        workflow.task_format.id_pattern = "***[invalid".to_string();
+
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+
+        validate_task_format_regex(&workflow, &mut result);
+
+        assert!(result.errors > 0, "Debe detectar regex inválido");
+
+        let finding = result.findings.iter()
+            .find(|f| f.category == "task_format" && f.severity == Severity::Error)
+            .expect("Debe existir Finding de Error");
+
+        assert!(finding.message.contains("regex") || finding.message.contains("id_pattern"),
+            "El mensaje debe mencionar el problema: {}", finding.message);
+    }
+
+    #[test]
+    fn validate_valid_id_pattern_no_error() {
+        // CA2 (borde): id_pattern válido no genera error
+        let workflow = make_test_workflow_config();
+
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+
+        validate_task_format_regex(&workflow, &mut result);
+
+        assert_eq!(result.errors, 0,
+            "id_pattern válido no debe generar errores");
+    }
+
+    #[test]
+    fn validate_duplicate_section_markers() {
+        // CA2: section_markers con el mismo marcador para dos campos distintos
+        let mut workflow = make_test_workflow_config();
+        workflow.task_format.section_markers.insert(
+            "other".to_string(),
+            "## Status".to_string(), // mismo marcador que "status"
+        );
+
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+
+        validate_section_markers_uniqueness(&workflow, &mut result);
+
+        assert!(result.errors > 0 || result.warnings > 0,
+            "Debe detectar marcadores duplicados");
+    }
+
+    #[test]
+    fn validate_all_states_coherent_no_error() {
+        // CA2 (borde): Workflow bien definido no produce errores
+        let workflow = make_test_workflow_config();
+
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+
+        validate_workflow_states_coherence(&workflow, &mut result);
+
+        assert_eq!(result.errors, 0,
+            "Workflow coherente no debe generar errores");
+    }
+
+    // ── CA3: Validar tasks (id_pattern, estados, dependencias) ────
+
+    #[test]
+    fn validate_task_filename_matches_id_pattern() {
+        // CA3: Verifica que el nombre de archivo cumple id_pattern
+        let tmp = tempfile::tempdir().unwrap();
+        let task_path = tmp.path().join("WRONG-NAME.md");
+        std::fs::write(&task_path, "## Status\n**draft**\n").unwrap();
+
+        let task_format = TaskFormatConfig {
+            id_pattern: r"TASK-\d+".to_string(),
+            ..TaskFormatConfig::default()
+        };
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+
+        validate_task_pattern_match(&task_path, &task_format, &mut result);
+
+        assert!(result.errors > 0 || result.warnings > 0,
+            "Debe detectar nombre de archivo que no cumple id_pattern");
+    }
+
+    #[test]
+    fn validate_task_status_is_valid_for_workflow() {
+        // CA3: Estado de la task debe ser válido según el workflow
+        let tmp = tempfile::tempdir().unwrap();
+        let task_path = tmp.path().join("TASK-001.md");
+        std::fs::write(&task_path, "## Status\n**unknown_status**\n").unwrap();
+
+        let workflow = make_test_workflow_config();
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+
+        validate_task_status(&task_path, &workflow, &mut result);
+
+        assert!(result.errors > 0 || result.warnings > 0,
+            "Debe detectar estado inválido 'unknown_status'");
+    }
+
+    #[test]
+    fn validate_task_dependencies_reference_existing_tasks() {
+        // CA3: Dependencias (blockers) referencian tasks existentes
+        let tmp = tempfile::tempdir().unwrap();
+        let task_path = tmp.path().join("TASK-001.md");
+        std::fs::write(&task_path,
+            "## Status\n**draft**\n\n## Dependencias\n- Bloqueado por: TASK-999\n"
+        ).unwrap();
+
+        let workflow = make_test_workflow_config();
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+
+        // Mapa de task IDs que existen (sin TASK-999)
+        let existing_ids: HashMap<String, bool> = [
+            ("TASK-001".to_string(), true),
+            ("TASK-002".to_string(), true),
+        ].into_iter().collect();
+
+        validate_task_blockers_exist(&task_path, &workflow, &existing_ids, &mut result);
+
+        assert!(result.errors > 0,
+            "Debe detectar dependencia a TASK-999 que no existe");
+    }
+
+    #[test]
+    fn validate_task_good_dependencies_no_error() {
+        // CA3 (borde): Dependencias correctas no generan error
+        let tmp = tempfile::tempdir().unwrap();
+        let task_path = tmp.path().join("TASK-001.md");
+        std::fs::write(&task_path,
+            "## Status\n**draft**\n\n## Dependencias\n- Bloqueado por: TASK-002\n"
+        ).unwrap();
+
+        let workflow = make_test_workflow_config();
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+
+        let existing_ids: HashMap<String, bool> = [
+            ("TASK-001".to_string(), true),
+            ("TASK-002".to_string(), true),
+        ].into_iter().collect();
+
+        validate_task_blockers_exist(&task_path, &workflow, &existing_ids, &mut result);
+
+        assert_eq!(result.errors, 0,
+            "Dependencias correctas no deben generar errores");
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Implementaciones temporales para TDD (el Developer las hará reales)
+    // ═══════════════════════════════════════════════════════════════
+
+    use std::collections::HashMap as StdHashMap;
+
+    /// Valida que los modelos referenciados en las fases del workflow
+    /// existen en la sección [models] de la configuración.
+    fn validate_workflow_models(
+        workflow: &WorkflowConfig,
+        models: &HashMap<String, crate::config::ModelConfig>,
+        result: &mut ValidationResult,
+    ) {
+        for phase in &workflow.phases {
+            if !phase.model.is_empty() && !models.contains_key(&phase.model) {
+                result.add(
+                    Severity::Error,
+                    "models",
+                    format!(
+                        "modelo '{}' referenciado en fase '{}' no está definido en [models]",
+                        phase.model, phase.name
+                    ),
+                    None,
+                );
+            }
+        }
+    }
+
+    /// Valida que los estados referenciados por las fases existen en workflow.states.
+    fn validate_workflow_states_coherence(
+        workflow: &WorkflowConfig,
+        result: &mut ValidationResult,
+    ) {
+        // Recolectar todos los estados mencionados en las fases
+        let mut referenced_states: Vec<&str> = vec![];
+        for phase in &workflow.phases {
+            referenced_states.push(&phase.from);
+            referenced_states.push(&phase.to);
+        }
+
+        // También están initial y terminal
+        let all_defined_states: Vec<&str> = {
+            let mut s: Vec<&str> = vec![&workflow.states.initial];
+            s.extend(workflow.states.terminal.iter().map(|t| t.as_str()));
+            s
+        };
+
+        for state in &referenced_states {
+            if !all_defined_states.contains(state) && *state != "_init_" {
+                result.add(
+                    Severity::Error,
+                    "workflow",
+                    format!("estado '{}' no definido en workflow.states", state),
+                    None,
+                );
+            }
+        }
+    }
+
+    /// Valida que el id_pattern del task_format es un regex válido.
+    fn validate_task_format_regex(
+        workflow: &WorkflowConfig,
+        result: &mut ValidationResult,
+    ) {
+        if regex::Regex::new(&workflow.task_format.id_pattern).is_err() {
+            result.add(
+                Severity::Error,
+                "task_format",
+                format!(
+                    "id_pattern '{}' no es un regex válido",
+                    workflow.task_format.id_pattern
+                ),
+                None,
+            );
+        }
+    }
+
+    /// Valida que no haya section_markers duplicados.
+    fn validate_section_markers_uniqueness(
+        workflow: &WorkflowConfig,
+        result: &mut ValidationResult,
+    ) {
+        let mut seen: StdHashMap<&str, &str> = StdHashMap::new();
+        for (field, marker) in &workflow.task_format.section_markers {
+            if let Some(existing_field) = seen.get(marker.as_str()) {
+                result.add(
+                    Severity::Error,
+                    "task_format",
+                    format!(
+                        "section_marker '{}' está duplicado: campos '{}' y '{}'",
+                        marker, existing_field, field
+                    ),
+                    None,
+                );
+            }
+            seen.insert(marker, field);
+        }
+    }
+
+    /// Valida que el nombre de archivo cumple el id_pattern.
+    fn validate_task_pattern_match(
+        path: &Path,
+        task_format: &TaskFormatConfig,
+        result: &mut ValidationResult,
+    ) {
+        let filename = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        match regex::Regex::new(&task_format.id_pattern) {
+            Ok(re) => {
+                if !re.is_match(filename) {
+                    result.add(
+                        Severity::Error,
+                        "tasks",
+                        format!(
+                            "'{}' no cumple el id_pattern '{}'",
+                            filename, task_format.id_pattern
+                        ),
+                        Some(filename.to_string()),
+                    );
+                }
+            }
+            Err(_) => {
+                // id_pattern inválido ya fue reportado en otra validación
+            }
+        }
+    }
+
+    /// Valida que el status de una task es un estado válido según el workflow.
+    fn validate_task_status(
+        path: &Path,
+        workflow: &WorkflowConfig,
+        result: &mut ValidationResult,
+    ) {
+        // Leer y parsear la task
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+
+        let task = match Task::parse(path, &content, &workflow.task_format) {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+
+        let status = task.fields.get("status").cloned().unwrap_or_default();
+
+        // Recolectar todos los estados válidos
+        let mut valid_states: Vec<&str> = vec![&workflow.states.initial];
+        valid_states.extend(workflow.states.terminal.iter().map(|t| t.as_str()));
+        for phase in &workflow.phases {
+            if !valid_states.contains(&phase.from.as_str()) {
+                valid_states.push(&phase.from);
+            }
+            if !valid_states.contains(&phase.to.as_str()) {
+                valid_states.push(&phase.to);
+            }
+        }
+
+        if !status.is_empty() && !valid_states.contains(&status.as_str()) {
+            result.add(
+                Severity::Error,
+                "tasks",
+                format!(
+                    "{}: estado '{}' no es válido según el workflow",
+                    task.id, status
+                ),
+                Some(task.id.clone()),
+            );
+        }
+    }
+
+    /// Valida que los blockers de una task referencian tasks existentes.
+    fn validate_task_blockers_exist(
+        path: &Path,
+        workflow: &WorkflowConfig,
+        existing_ids: &HashMap<String, bool>,
+        result: &mut ValidationResult,
+    ) {
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+
+        let task = match Task::parse(path, &content, &workflow.task_format) {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+
+        for blocker in &task.blockers {
+            if !existing_ids.contains_key(blocker) {
+                result.add(
+                    Severity::Error,
+                    "dependencies",
+                    format!(
+                        "{}: depende de '{}' que no existe",
+                        task.id, blocker
+                    ),
+                    Some(task.id.clone()),
+                );
+            }
+        }
+    }
 }

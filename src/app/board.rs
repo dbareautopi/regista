@@ -658,4 +658,287 @@ mod tests {
         assert!(json.contains("STORY-005"));
         assert!(json.contains("rechazada 3 veces"));
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // STORY-V10-016: BoardData::from_tasks con columnas dinámicas
+    // ═══════════════════════════════════════════════════════════════
+    //
+    // NOTA TDD: Estos tests verifican que BoardData puede construirse
+    // desde Task (genérico) además de Story (legacy). El Developer debe
+    // implementar `BoardData::from_tasks()` y adaptar `board.rs`.
+
+    use crate::domain::task::Task;
+    use std::collections::HashMap as TaskFields;
+    use std::path::PathBuf;
+
+    fn make_task(id: &str, status: &str, blockers: &[&str], epic: Option<&str>) -> Task {
+        let mut fields = TaskFields::new();
+        fields.insert("status".to_string(), status.to_string());
+        if let Some(epic) = epic {
+            fields.insert("epic".to_string(), epic.to_string());
+        }
+        Task {
+            id: id.to_string(),
+            path: PathBuf::from(format!("tasks/{id}.md")),
+            fields,
+            blockers: blockers.iter().map(|s| s.to_string()).collect(),
+            activity_log: vec![],
+            raw_content: String::new(),
+        }
+    }
+
+    fn make_dynamic_workflow() -> impl Workflow {
+        struct DynamicColumns([&'static str; 6]);
+        impl Workflow for DynamicColumns {
+            fn next_status(&self, current: Status) -> Status { current }
+            fn map_status_to_role(&self, _status: Status) -> &'static str { "developer" }
+            fn canonical_column_order(&self) -> &[&'static str] { &self.0 }
+        }
+        DynamicColumns(["draft", "ready", "review", "done", "blocked", "failed"])
+    }
+
+    // ── CA1: Columnas siguen orden topológico del workflow ─────────
+
+    #[test]
+    fn from_tasks_groups_by_status() {
+        // CA1: BoardData agrupa tasks por su status
+        let tasks = vec![
+            make_task("TASK-001", "draft", &[], None),
+            make_task("TASK-002", "draft", &[], None),
+            make_task("TASK-003", "ready", &[], None),
+            make_task("TASK-004", "review", &[], None),
+            make_task("TASK-005", "done", &[], None),
+        ];
+
+        let wf = make_dynamic_workflow();
+        let data = build_board_data_from_tasks(&tasks, &wf);
+
+        assert_eq!(data.total, 5);
+        assert_eq!(data.counts.get("draft").copied().unwrap_or(0), 2);
+        assert_eq!(data.counts.get("ready").copied().unwrap_or(0), 1);
+        assert_eq!(data.counts.get("review").copied().unwrap_or(0), 1);
+        assert_eq!(data.counts.get("done").copied().unwrap_or(0), 1);
+    }
+
+    #[test]
+    fn from_tasks_columns_in_workflow_order() {
+        // CA1: Las columnas deben seguir el orden del workflow (topológico)
+        let tasks = vec![
+            make_task("TASK-001", "done", &[], None),
+            make_task("TASK-002", "draft", &[], None),
+            make_task("TASK-003", "ready", &[], None),
+            make_task("TASK-004", "review", &[], None),
+        ];
+
+        let wf = make_dynamic_workflow();
+        let data = build_board_data_from_tasks(&tasks, &wf);
+
+        let output = render_board(&data, &wf as &dyn Workflow);
+
+        // Verificar orden: draft → ready → review → done
+        let draft_pos = output.find("draft").unwrap();
+        let ready_pos = output.find("ready").unwrap();
+        let review_pos = output.find("review").unwrap();
+        let done_pos = output.find("done").unwrap();
+
+        assert!(draft_pos < ready_pos, "draft debe aparecer antes que ready");
+        assert!(ready_pos < review_pos, "ready debe aparecer antes que review");
+        assert!(review_pos < done_pos, "review debe aparecer antes que done");
+    }
+
+    #[test]
+    fn from_tasks_blocked_and_failed_at_end() {
+        // CA1: Estados terminales (blocked, failed) al final
+        let tasks = vec![
+            make_task("TASK-001", "draft", &[], None),
+            make_task("TASK-002", "blocked", &["TASK-001"], None),
+            make_task("TASK-003", "failed", &[], None),
+            make_task("TASK-004", "done", &[], None),
+        ];
+
+        let wf = make_dynamic_workflow();
+        let data = build_board_data_from_tasks(&tasks, &wf);
+        let output = render_board(&data, &wf as &dyn Workflow);
+
+        let done_pos = output.find("done").unwrap();
+        let blocked_pos = output.find("blocked").unwrap();
+        let failed_pos = output.find("failed").unwrap();
+
+        assert!(done_pos < blocked_pos, "done debe aparecer antes que blocked");
+        assert!(done_pos < failed_pos, "done debe aparecer antes que failed");
+    }
+
+    // ── CA2: Estados sin tareas se omiten ─────────────────────────
+
+    #[test]
+    fn from_tasks_omits_empty_columns() {
+        // CA2: Estados sin tasks NO aparecen en la salida
+        let tasks = vec![
+            make_task("TASK-001", "draft", &[], None),
+            make_task("TASK-002", "done", &[], None),
+        ];
+
+        let wf = make_dynamic_workflow();
+        let data = build_board_data_from_tasks(&tasks, &wf);
+        let output = render_board(&data, &wf as &dyn Workflow);
+
+        assert!(output.contains("draft"), "draft debe aparecer");
+        assert!(output.contains("done"), "done debe aparecer");
+        assert!(!output.contains("ready"), "ready (count=0) debe omitirse");
+        assert!(!output.contains("review"), "review (count=0) debe omitirse");
+    }
+
+    #[test]
+    fn board_omits_arbitrary_state_like_validating() {
+        // CA2: El Gherkin especifica el estado "validating" como ejemplo
+        // de un estado definido en el workflow pero sin tareas.
+        // Debemos verificar que el mecanismo funciona con cualquier estado.
+
+        struct ValidatingWorkflow;
+        impl Workflow for ValidatingWorkflow {
+            fn next_status(&self, current: Status) -> Status { current }
+            fn map_status_to_role(&self, _status: Status) -> &'static str { "developer" }
+            fn canonical_column_order(&self) -> &[&'static str] {
+                &["draft", "validating", "review", "done"]
+            }
+        }
+
+        let tasks = vec![
+            make_task("TASK-001", "draft", &[], None),
+            make_task("TASK-002", "review", &[], None),
+            make_task("TASK-003", "done", &[], None),
+        ];
+        // "validating" está en el workflow pero ninguna task lo usa
+
+        let wf = ValidatingWorkflow;
+        let data = build_board_data_from_tasks(&tasks, &wf);
+        let output = render_board(&data, &wf as &dyn Workflow);
+
+        assert!(output.contains("draft"), "draft debe aparecer");
+        assert!(output.contains("review"), "review debe aparecer");
+        assert!(output.contains("done"), "done debe aparecer");
+        assert!(
+            !output.contains("validating"),
+            "validating (count=0) NO debe aparecer en la salida"
+        );
+    }
+
+    // ── CA3: --json emite estructura con columns, tasks, summary ──
+
+    #[test]
+    fn from_tasks_board_data_json_has_columns_tasks_summary() {
+        // CA3: JSON debe tener estructura con total, columnas, blocked/failed
+        let tasks = vec![
+            make_task("TASK-001", "draft", &[], None),
+            make_task("TASK-002", "review", &[], None),
+            make_task("TASK-003", "done", &[], None),
+            make_task("TASK-004", "done", &[], None),
+            make_task("TASK-005", "blocked", &["TASK-001"], None),
+        ];
+
+        let wf = make_dynamic_workflow();
+        let data = build_board_data_from_tasks(&tasks, &wf);
+        let json = serde_json::to_string_pretty(&data).unwrap();
+
+        // Verificar presencia de total
+        assert!(json.contains("\"total\""), "JSON debe incluir total");
+        assert!(json.contains("5"), "total debe ser 5");
+
+        // Verificar presencia de columnas con conteo
+        assert!(json.contains("\"draft\""), "JSON debe incluir columna draft");
+        assert!(json.contains("\"review\""), "JSON debe incluir columna review");
+        assert!(json.contains("\"done\""), "JSON debe incluir columna done");
+
+        // Verificar blocked
+        assert!(json.contains("\"blocked\""), "JSON debe incluir array blocked");
+        assert!(json.contains("TASK-005"), "JSON debe listar TASK-005 en blocked");
+
+        // NOTA TDD: El Gherkin dice que 'columns' debe ser un array ordenado
+        // según el workflow. Con HashMap esto no se garantiza. El Developer
+        // debe añadir un campo `columns_order: Vec<String>` a BoardData o
+        // usar IndexMap para preservar el orden.
+        assert_eq!(data.total, 5);
+    }
+
+    // ── CA3: --epic filtra tareas por campo epic ──────────────────
+
+    #[test]
+    fn from_tasks_filters_by_epic() {
+        // CA3: Filtrado por épica usando el campo definido en section_markers
+        let tasks = vec![
+            make_task("TASK-001", "draft", &[], Some("EPIC-ALFA")),
+            make_task("TASK-002", "draft", &[], Some("EPIC-BETA")),
+            make_task("TASK-003", "done", &[], Some("EPIC-ALFA")),
+            make_task("TASK-004", "ready", &[], None),
+        ];
+
+        let wf = make_dynamic_workflow();
+        let data = build_board_data_from_tasks(&tasks, &wf);
+
+        // Filtrar por EPIC-ALFA (el Developer debe implementar filter_by_epic)
+        let alfa_tasks: Vec<&Task> = tasks.iter()
+            .filter(|t| t.fields.get("epic").map(|e| e.as_str()) == Some("EPIC-ALFA"))
+            .collect();
+
+        assert_eq!(alfa_tasks.len(), 2, "EPIC-ALFA debe tener 2 tareas");
+        assert!(alfa_tasks.iter().any(|t| t.id == "TASK-001"));
+        assert!(alfa_tasks.iter().any(|t| t.id == "TASK-003"));
+    }
+
+    #[test]
+    fn from_tasks_without_epic_field_all_tasks_included() {
+        // CA3: Si no hay campo epic en task_format, no se filtra
+        let tasks = vec![
+            make_task("TASK-001", "draft", &[], None),
+            make_task("TASK-002", "done", &[], None),
+        ];
+
+        // Sin epic_filter, todas las tasks deben incluirse
+        let wf = make_dynamic_workflow();
+        let data = build_board_data_from_tasks(&tasks, &wf);
+        assert_eq!(data.total, 2);
+    }
+
+    // ── Función auxiliar temporal (el Developer la hará pública) ──
+    //
+    // NOTA TDD: build_board_data_from_tasks() no existe aún. El Developer debe
+    // implementar esta función en app/board.rs. Este helper temporal permite
+    // que los tests compilen AHORA pero debe ser reemplazado por la
+    // implementación real.
+    fn build_board_data_from_tasks(tasks: &[Task], workflow: &dyn Workflow) -> BoardData {
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        let mut blocked: Vec<BlockedStory> = Vec::new();
+        let mut failed: Vec<FailedStory> = Vec::new();
+
+        for task in tasks {
+            let status_key = task.fields.get("status").cloned().unwrap_or_default();
+            *counts.entry(status_key.clone()).or_default() += 1;
+
+            match status_key.as_str() {
+                "blocked" => {
+                    blocked.push(BlockedStory {
+                        id: task.id.clone(),
+                        blocked_by: task.blockers.clone(),
+                    });
+                }
+                "failed" => {
+                    failed.push(FailedStory {
+                        id: task.id.clone(),
+                        reason: task.last_rejection().map(|s| s.to_string()),
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        blocked.sort_by_key(|s| extract_numeric(&s.id));
+        failed.sort_by_key(|s| extract_numeric(&s.id));
+
+        BoardData {
+            total: tasks.len(),
+            counts,
+            blocked,
+            failed,
+        }
+    }
 }

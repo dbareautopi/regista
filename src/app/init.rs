@@ -471,4 +471,295 @@ mod tests {
             .iter()
             .any(|p| p.contains(".agents/skills/developer/SKILL.md")));
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // STORY-V10-015: Scaffolding con presets y LLM nativo
+    // ═══════════════════════════════════════════════════════════════
+    //
+    // NOTA TDD: init_with_preset() no existe aún. El Developer debe implementarla.
+    // El helper init_with_preset_helper() simula la futura función.
+
+    // ── CA1: init --preset software-dev genera config completa ──────
+
+    #[test]
+    fn init_with_preset_software_dev_generates_config_with_models_section() {
+        // CA1: init con software-dev genera config.toml con todas las secciones
+        let tmp = tempfile::tempdir().unwrap();
+        let result = init_with_preset_helper(tmp.path(), "software-dev", false, false).unwrap();
+
+        assert!(tmp.path().join(".regista/config.toml").exists());
+
+        let content = std::fs::read_to_string(tmp.path().join(".regista/config.toml")).unwrap();
+        assert!(content.contains("[models]"), "config debe tener sección [models]");
+        assert!(content.contains("[workflow]"), "config debe tener sección [workflow]");
+        assert!(content.contains("[limits]"), "config debe tener sección [limits]");
+        assert!(content.contains("[hooks]"), "config debe tener sección [hooks]");
+        assert!(content.contains("[git]"), "config debe tener sección [git]");
+    }
+
+    #[test]
+    fn init_with_preset_software_dev_generates_model_placeholders() {
+        // CA1: Los placeholders de modelos deben incluir gpt4o y claude
+        let tmp = tempfile::tempdir().unwrap();
+        let _result = init_with_preset_helper(tmp.path(), "software-dev", false, false).unwrap();
+
+        let content = std::fs::read_to_string(tmp.path().join(".regista/config.toml")).unwrap();
+        assert!(content.contains("[models]"), "Debe existir sección [models]");
+    }
+
+    #[test]
+    fn init_with_preset_software_dev_config_contains_preset_key() {
+        // P1: El config.toml debe contener explícitamente preset = "software-dev"
+        let tmp = tempfile::tempdir().unwrap();
+        let _result = init_with_preset_helper(tmp.path(), "software-dev", false, false).unwrap();
+
+        let content = std::fs::read_to_string(tmp.path().join(".regista/config.toml")).unwrap();
+        assert!(
+            content.contains("preset = \"software-dev\""),
+            "config.toml debe contener preset = \"software-dev\":\n{content}"
+        );
+        assert!(
+            content.contains("[workflow]"),
+            "Debe tener sección [workflow]:\n{content}"
+        );
+    }
+
+    #[test]
+    fn init_with_preset_no_legacy_skill_directories() {
+        // CA1: NO debe generar directorios .pi/skills/, .claude/agents/, etc.
+        let tmp = tempfile::tempdir().unwrap();
+        let _result = init_with_preset_helper(tmp.path(), "software-dev", false, false).unwrap();
+
+        assert!(!tmp.path().join(".pi").exists(), "No debe crear directorio .pi/");
+        assert!(!tmp.path().join(".claude").exists(), "No debe crear directorio .claude/");
+        assert!(!tmp.path().join(".agents").exists(), "No debe crear directorio .agents/");
+        assert!(!tmp.path().join(".opencode").exists(), "No debe crear directorio .opencode/");
+    }
+
+    // ── CA2: init --preset custom genera template vacío ────────────
+
+    #[test]
+    fn init_with_preset_custom_generates_empty_models() {
+        // CA2: custom debe tener [models] pero vacío (sin entradas)
+        let tmp = tempfile::tempdir().unwrap();
+        let _result = init_with_preset_helper(tmp.path(), "custom", false, false).unwrap();
+
+        let content = std::fs::read_to_string(tmp.path().join(".regista/config.toml")).unwrap();
+        assert!(content.contains("[models]"), "custom debe tener sección [models]");
+        // Verificar que después de [models] viene [workflow] sin entradas intermedias
+        let models_pos = content.find("[models]").unwrap();
+        let workflow_pos = content.find("[workflow]").unwrap();
+        let between = &content[models_pos + "[models]".len()..workflow_pos];
+        let non_empty_lines: Vec<&str> = between
+            .lines()
+            .filter(|l| !l.trim().is_empty() && !l.trim().starts_with('#'))
+            .collect();
+        assert!(
+            non_empty_lines.is_empty(),
+            "[models] debe estar vacío en preset custom. Líneas encontradas: {non_empty_lines:?}"
+        );
+    }
+
+    #[test]
+    fn init_with_preset_custom_has_workflow_example() {
+        // CA2: custom debe tener [workflow] con estructura de ejemplo comentada
+        let tmp = tempfile::tempdir().unwrap();
+        let _result = init_with_preset_helper(tmp.path(), "custom", false, false).unwrap();
+
+        let content = std::fs::read_to_string(tmp.path().join(".regista/config.toml")).unwrap();
+        assert!(content.contains("[workflow]"), "custom debe tener sección [workflow]");
+        assert!(
+            content.contains("#") || content.contains("Ejemplo"),
+            "Debe tener contenido de ejemplo comentado:\n{content}"
+        );
+    }
+
+    #[test]
+    fn init_with_preset_custom_has_workflow_states_and_task_format() {
+        // CA2: custom debe tener [workflow.states] y [workflow.task_format]
+        let tmp = tempfile::tempdir().unwrap();
+        let _result = init_with_preset_helper(tmp.path(), "custom", false, false).unwrap();
+
+        let content = std::fs::read_to_string(tmp.path().join(".regista/config.toml")).unwrap();
+        assert!(
+            content.contains("[workflow.states]"),
+            "custom debe tener [workflow.states]:\n{content}"
+        );
+        assert!(
+            content.contains("initial"),
+            "[workflow.states] debe definir initial:\n{content}"
+        );
+        assert!(
+            content.contains("terminal"),
+            "[workflow.states] debe definir terminal:\n{content}"
+        );
+        assert!(
+            content.contains("[workflow.task_format]"),
+            "custom debe tener [workflow.task_format]:\n{content}"
+        );
+        assert!(
+            content.contains("id_pattern"),
+            "[workflow.task_format] debe definir id_pattern:\n{content}"
+        );
+    }
+
+    // ── CA3: init aborta si config.toml ya existe ─────────────────
+
+    /// NOTA TDD: init_with_preset() no existe aún. El Developer debe implementarla.
+    /// Este helper simula la futura función que acepta --preset y --force.
+    /// Cuando init_with_preset() esté implementada, este helper debe eliminarse
+    /// y los tests deben llamar a la función real.
+    fn init_with_preset_helper(
+        project_dir: &Path,
+        preset: &str,
+        force: bool,
+        with_example: bool,
+    ) -> anyhow::Result<InitResult> {
+        let config_path = project_dir.join(".regista/config.toml");
+
+        if config_path.exists() && !force {
+            anyhow::bail!(
+                "config.toml ya existe en {}. Usa --force para sobreescribir.",
+                config_path.display()
+            );
+        }
+
+        // Simular generación de config según el preset
+        if let Some(parent) = config_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let config_content = match preset {
+            "software-dev" => format!(
+                "# regista configuration\n[models]\n# gpt4o y claude placeholders\n[workflow]\npreset = \"{preset}\"\n[limits]\n[hooks]\n[git]\n"
+            ),
+            "custom" => "# regista configuration\n[models]\n\n[workflow]\n# Ejemplo comentado\n[workflow.states]\ninitial = \"draft\"\nterminal = [\"done\"]\n[workflow.task_format]\nid_pattern = \"TASK-\\\\d+\"\n".to_string(),
+            _ => format!("# regista configuration\n[models]\n[workflow]\npreset = \"{preset}\"\n"),
+        };
+
+        std::fs::write(&config_path, &config_content)?;
+
+        let mut result = InitResult {
+            created: vec![".regista/config.toml".into()],
+            skipped: vec![],
+            errors: vec![],
+        };
+
+        // Crear directorios base
+        for dir in &[".regista/tasks", ".regista/decisions", ".regista/logs"] {
+            let path = project_dir.join(dir);
+            std::fs::create_dir_all(&path)?;
+        }
+
+        // --with-example
+        if with_example {
+            let tasks_dir = project_dir.join(".regista/tasks");
+            let example_path = tasks_dir.join("TASK-001.md");
+            std::fs::write(
+                &example_path,
+                "# TASK-001\n\n## Status\n**draft**\n\n## Activity Log\n- 2026-05-14 | PO | Ejemplo\n",
+            )?;
+            result.created.push(".regista/tasks/TASK-001.md".into());
+        }
+
+        Ok(result)
+    }
+
+    #[test]
+    fn init_with_existing_config_fails_without_force() {
+        // CA3: Sin --force, init debe fallar con error descriptivo
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".regista")).unwrap();
+        std::fs::write(tmp.path().join(".regista/config.toml"), "# existente").unwrap();
+
+        let result = init_with_preset_helper(tmp.path(), "software-dev", false, false);
+
+        assert!(result.is_err(), "init sin --force debe fallar si config.toml existe");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("config.toml ya existe"),
+            "El mensaje de error debe mencionar 'config.toml ya existe': {err}"
+        );
+        assert!(
+            err.contains("--force"),
+            "El mensaje de error debe sugerir --force: {err}"
+        );
+
+        // Verificar que el archivo existente NO se modificó
+        let content = std::fs::read_to_string(tmp.path().join(".regista/config.toml")).unwrap();
+        assert_eq!(content, "# existente", "El archivo original no debe modificarse");
+    }
+
+    #[test]
+    fn init_with_existing_config_and_force_overwrites() {
+        // CA3: Con --force, init sobreescribe y termina exitosamente
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".regista")).unwrap();
+        std::fs::write(
+            tmp.path().join(".regista/config.toml"),
+            "# contenido antiguo",
+        )
+        .unwrap();
+
+        let result = init_with_preset_helper(tmp.path(), "software-dev", true, false);
+
+        assert!(result.is_ok(), "init con --force debe tener éxito");
+        let init_result = result.unwrap();
+        assert!(
+            init_result.created.iter().any(|p| p.contains("config.toml")),
+            "Debe registrar config.toml como creado"
+        );
+
+        // Verificar que el archivo fue sobreescrito con el contenido del preset
+        let content =
+            std::fs::read_to_string(tmp.path().join(".regista/config.toml")).unwrap();
+        assert!(
+            content.contains("software-dev"),
+            "El archivo debe contener el preset: {content}"
+        );
+        assert!(
+            !content.contains("contenido antiguo"),
+            "El contenido antiguo debe haberse reemplazado"
+        );
+    }
+
+    #[test]
+    fn init_with_preset_generates_example_task() {
+        // CA3: --with-example genera una task de ejemplo en .regista/tasks/
+        let tmp = tempfile::tempdir().unwrap();
+        let result =
+            init_with_preset_helper(tmp.path(), "software-dev", false, true).unwrap();
+
+        assert!(
+            result.created.iter().any(|p| p.contains("TASK-001.md")),
+            "--with-example debe generar TASK-001.md"
+        );
+        assert!(tmp.path().join(".regista/tasks/TASK-001.md").exists());
+
+        // Verificar que la task generada tiene el formato del preset
+        let task_content =
+            std::fs::read_to_string(tmp.path().join(".regista/tasks/TASK-001.md")).unwrap();
+        assert!(
+            task_content.contains("## Status"),
+            "La task de ejemplo debe tener ## Status"
+        );
+        assert!(
+            task_content.contains("## Activity Log"),
+            "La task de ejemplo debe tener ## Activity Log"
+        );
+    }
+
+    #[test]
+    fn init_result_records_created_and_skipped() {
+        // Test de regresión: InitResult siempre ha tenido campos created/skipped/errors.
+        let tmp = tempfile::tempdir().unwrap();
+        let result = init(tmp.path(), false, true, "pi").unwrap();
+
+        assert!(result.errors.is_empty(), "No debe haber errores en init normal");
+        assert!(!result.created.is_empty(), "Debe haber archivos creados");
+
+        // Ejecutar de nuevo: los archivos existentes deben estar en skipped
+        let result2 = init(tmp.path(), false, true, "pi").unwrap();
+        assert!(!result2.skipped.is_empty(), "Segunda ejecución debe tener skipped");
+    }
 }

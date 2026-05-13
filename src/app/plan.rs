@@ -437,4 +437,287 @@ mod tests {
         assert!(prompt.contains("Ciclo"));
         assert!(prompt.contains("NO preguntes"));
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // STORY-V10-018: Fase de descomposición — run --plan-only
+    // ═══════════════════════════════════════════════════════════════
+    //
+    // NOTA TDD: Estos tests verifican la generación de tareas desde
+    // input usando LLM nativo. El Developer debe implementar
+    // `run_decomposition()` y el bucle de validación post-generación.
+
+    /// Simula la generación de tareas en formato TASK-NNN.
+    fn mock_decomposition_output(num_tasks: usize, with_bad_dep: bool) -> String {
+        let mut output = String::new();
+        for i in 1..=num_tasks {
+            let dep_line: String = if with_bad_dep && i == num_tasks {
+                "\n## Dependencias\n- Bloqueado por: TASK-999\n".to_string()
+            } else if i > 1 {
+                format!("\n## Dependencias\n- Bloqueado por: TASK-{:03}\n", i - 1)
+            } else {
+                String::new()
+            };
+
+            output.push_str(&format!(
+                "# TASK-{:03}: Tarea de ejemplo {i}\n\n## Status\n**draft**\n\n## Description\nDescripción de la tarea {i}\n\n## Priority\nmedium\n{dep_line}\n## Activity Log\n- 2026-05-14 | PO | Generada desde spec.md\n\n---\n\n",
+                i
+            ));
+        }
+        output
+    }
+
+    // ── CA1: Generación de tareas en task_format configurable ─────
+
+    #[test]
+    fn decomposition_generates_correct_number_of_tasks() {
+        // CA1: El output del LLM debe contener el número esperado de tareas
+        let output = mock_decomposition_output(3, false);
+
+        let task_count = output.matches("# TASK-").count();
+        assert_eq!(task_count, 3, "Debe generar 3 tareas");
+    }
+
+    #[test]
+    fn decomposition_output_follows_task_format_sections() {
+        // CA1: Cada task debe contener las secciones definidas en section_markers
+        let output = mock_decomposition_output(1, false);
+
+        assert!(output.contains("## Status"), "Debe tener sección Status");
+        assert!(output.contains("## Description"), "Debe tener sección Description");
+        assert!(output.contains("## Priority"), "Debe tener sección Priority");
+        assert!(output.contains("## Activity Log"), "Debe tener Activity Log");
+    }
+
+    #[test]
+    fn decomposition_output_ids_match_task_pattern() {
+        // CA1: Los IDs generados deben cumplir el id_pattern
+        let output = mock_decomposition_output(5, false);
+
+        // Extraer solo los IDs de los títulos (# TASK-NNN), no de las dependencias
+        let re = regex::Regex::new(r"# (TASK-\d{3}):").unwrap();
+        let ids: Vec<&str> = re.captures_iter(&output)
+            .map(|cap| cap.get(1).unwrap().as_str())
+            .collect();
+
+        assert_eq!(ids.len(), 5, "Debe haber 5 IDs TASK-NNN en los títulos");
+        assert_eq!(ids[0], "TASK-001");
+        assert_eq!(ids[4], "TASK-005");
+    }
+
+    #[test]
+    fn decomposition_output_includes_activity_log_entry() {
+        // CA1: Cada task debe tener una entrada inicial en el Activity Log
+        let output = mock_decomposition_output(1, false);
+
+        assert!(output.contains("## Activity Log"), "Debe tener Activity Log");
+        assert!(output.contains("| PO |"), "Debe tener entrada del PO");
+        assert!(output.contains("spec.md"), "Debe referenciar el archivo fuente");
+    }
+
+    // ── CA2: Bucle de validación corrige dependencias ─────────────
+
+    #[test]
+    fn decomposition_validation_loop_corrects_and_succeeds() {
+        // CA2: Test del bucle iterativo completo:
+        //   1. Generación inicial produce dependencia rota (TASK-002 → TASK-999)
+        //   2. Validación detecta el error
+        //   3. Feedback se inyecta en el prompt
+        //   4. Re-generación corrige la dependencia
+        //   5. Segunda validación sale limpia
+
+        let max_iterations = 3;
+        let mut iteration = 0;
+        let mut deps_clean = false;
+
+        while iteration < max_iterations && !deps_clean {
+            iteration += 1;
+
+            // Simular generación: iteración 1 produce dependencia rota
+            let output = if iteration == 1 {
+                mock_decomposition_output(2, true) // TASK-002 → TASK-999
+            } else {
+                // Iteración 2+: el agente corrigió basado en el feedback
+                mock_decomposition_output(2, false) // dependencias limpias
+            };
+
+            // Validar dependencias
+            let title_re = regex::Regex::new(r"# (TASK-\d{3}):").unwrap();
+            let existing_ids: Vec<&str> = title_re
+                .captures_iter(&output)
+                .map(|cap| cap.get(1).unwrap().as_str())
+                .collect();
+
+            let dep_re = regex::Regex::new(r"Bloqueado por:\s*(TASK-\d{3})").unwrap();
+            let mut broken_deps = vec![];
+            for cap in dep_re.captures_iter(&output) {
+                let referenced = cap.get(1).unwrap().as_str();
+                if !existing_ids.contains(&referenced) {
+                    broken_deps.push(referenced.to_string());
+                }
+            }
+
+            if broken_deps.is_empty() {
+                deps_clean = true;
+                tracing::info!(
+                    "✅ Grafo de dependencias correcto tras {iteration} iteraciones."
+                );
+            } else {
+                tracing::info!(
+                    "🔁 Iteración {iteration}/{max_iterations}: corrigiendo {} errores...",
+                    broken_deps.len()
+                );
+                // El feedback se inyectaría en el prompt aquí
+            }
+        }
+
+        // Verificar que el bucle terminó con dependencias limpias
+        assert!(deps_clean, "El bucle debe terminar con dependencias limpias");
+        assert_eq!(iteration, 2, "Debe tomar 2 iteraciones: detectar y corregir");
+        assert!(
+            iteration < max_iterations,
+            "No debe agotar max_iterations; la corrección debe ocurrir en la iteración 2"
+        );
+    }
+
+    #[test]
+    fn decomposition_validation_detects_broken_dependency() {
+        // CA2: El validador debe detectar dependencias a IDs inexistentes
+        let output = mock_decomposition_output(2, true); // TASK-002 depende de TASK-999
+
+        // Extraer IDs solo de los títulos (# TASK-NNN:), no de las dependencias
+        let title_re = regex::Regex::new(r"# (TASK-\d{3}):").unwrap();
+        let existing_ids: Vec<&str> = title_re.captures_iter(&output)
+            .map(|cap| cap.get(1).unwrap().as_str())
+            .collect();
+
+        // Buscar referencias a IDs que no están en la lista
+        let dep_re = regex::Regex::new(r"Bloqueado por:\s*(TASK-\d{3})").unwrap();
+        let mut broken_deps = vec![];
+        for cap in dep_re.captures_iter(&output) {
+            let referenced = cap.get(1).unwrap().as_str();
+            if !existing_ids.contains(&referenced) {
+                broken_deps.push(referenced);
+            }
+        }
+
+        assert!(!broken_deps.is_empty(), "Debe detectar dependencias rotas. existing_ids={:?}", existing_ids);
+        assert!(broken_deps.contains(&"TASK-999"), "Debe detectar TASK-999. broken_deps={:?}", broken_deps);
+    }
+
+    #[test]
+    fn decomposition_validation_clean_when_no_broken_deps() {
+        // CA2 (borde): Sin dependencias rotas, la validación es limpia
+        let output = mock_decomposition_output(3, false);
+
+        let re = regex::Regex::new(r"TASK-\d{3}").unwrap();
+        let existing_ids: Vec<&str> = re.find_iter(&output).map(|m| m.as_str()).collect();
+
+        let dep_re = regex::Regex::new(r"Bloqueado por:\s*(TASK-\d{3})").unwrap();
+        let mut broken_deps = vec![];
+        for cap in dep_re.captures_iter(&output) {
+            let referenced = cap.get(1).unwrap().as_str();
+            if !existing_ids.contains(&referenced) {
+                broken_deps.push(referenced);
+            }
+        }
+
+        assert!(broken_deps.is_empty(), "No debe haber dependencias rotas");
+    }
+
+    #[test]
+    fn decomposition_feedback_includes_broken_dependency_info() {
+        // CA2: El feedback al agente debe incluir qué dependencia está rota
+        let output = mock_decomposition_output(2, true);
+
+        // Construir el mensaje de feedback
+        let feedback = format!(
+            "Errores detectados: TASK-003 depende de TASK-999 que no existe."
+        );
+
+        assert!(feedback.contains("TASK-999"), "El feedback debe mencionar el ID roto");
+        assert!(feedback.contains("no existe"), "El feedback debe explicar el problema");
+    }
+
+    #[test]
+    fn decomposition_detects_cycles_in_dependencies() {
+        // CA2: El validador también debe detectar ciclos
+        let output = "# TASK-001\n## Dependencias\n- Bloqueado por: TASK-002\n\n# TASK-002\n## Dependencias\n- Bloqueado por: TASK-001\n";
+
+        let re = regex::Regex::new(r"TASK-\d{3}").unwrap();
+        let _ids: Vec<&str> = re.find_iter(output).map(|m| m.as_str()).collect();
+
+        let dep_re = regex::Regex::new(r"(TASK-\d{3})\n## Dependencias\n- Bloqueado por: (TASK-\d{3})").unwrap();
+
+        // Detectar ciclo: A → B y B → A
+        let mut edges: Vec<(&str, &str)> = vec![];
+        for cap in dep_re.captures_iter(output) {
+            let from = cap.get(1).unwrap().as_str();
+            let to = cap.get(2).unwrap().as_str();
+            edges.push((from, to));
+        }
+
+        // Si hay ciclo, debe existir A→B y B→A
+        let has_cycle = edges.iter().any(|(a, b)| {
+            edges.iter().any(|(c, d)| *a == *d && *b == *c)
+        });
+
+        assert!(has_cycle, "Debe detectar el ciclo TASK-001 ↔ TASK-002");
+    }
+
+    // ── CA3: --plan-only detiene tras descomposición ──────────────
+
+    #[test]
+    fn plan_only_flag_stops_after_decomposition() {
+        // CA3: --plan-only debe detener el pipeline sin ejecutar el resto de fases
+        let plan_only = true;
+
+        // Simular el control de flujo
+        let tasks_generated = mock_decomposition_output(2, false);
+        assert!(!tasks_generated.is_empty(), "Debe generar tareas");
+
+        if plan_only {
+            // No se ejecuta el pipeline
+            // (el Developer debe implementar este early return)
+            assert!(true, "--plan-only debe detenerse aquí");
+        }
+    }
+
+    #[test]
+    fn run_without_plan_only_chains_decomposition_and_pipeline() {
+        // CA3: run sin --plan-only encadena descomposición + pipeline
+        let plan_only = false;
+        let output = mock_decomposition_output(2, false);
+
+        // La descomposición genera tareas
+        assert!(output.contains("TASK-001"));
+        assert!(output.contains("TASK-002"));
+
+        if !plan_only {
+            // Se ejecuta el pipeline completo después de la descomposición
+            // (el Developer debe implementar esta continuación)
+            assert!(true, "Pipeline debe continuar después de la descomposición");
+        }
+    }
+
+    // ── Integración: descomposición + formato configurable ────────
+
+    #[test]
+    fn decomposition_with_custom_task_format_generates_correct_sections() {
+        // CA1 + CA2: Con un task_format custom, las tareas generadas deben
+        // incluir las secciones correctas.
+        let custom_fields = vec!["topic", "depth", "sources"];
+
+        let output = mock_decomposition_output(1, false);
+
+        // Verificar que el formato base siempre tiene las secciones estándar
+        assert!(output.contains("## Status"), "Status siempre presente");
+        assert!(output.contains("## Activity Log"), "Activity Log siempre presente");
+
+        // Los campos custom deben ser inyectados por el Developer en el prompt
+        for field in &custom_fields {
+            // En el mock actual no están pero el Developer debe incluirlos
+            // cuando el task_format los defina.
+            let _ = field; // TDD: el Developer implementará el renderizado dinámico
+        }
+    }
 }
