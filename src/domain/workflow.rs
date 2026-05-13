@@ -469,7 +469,7 @@ impl ConfigurableWorkflow {
     pub fn apply_automatic_transitions(
         &self,
         task: &crate::domain::task::Task,
-        graph: &crate::domain::graph::DependencyGraph,
+        _graph: &crate::domain::graph::DependencyGraph,
         reject_cycles: u32,
         status_map: &HashMap<String, String>,
     ) -> Option<String> {
@@ -825,5 +825,188 @@ mod configurable_workflow_tests {
         // La config original sigue siendo accesible
         assert_eq!(config.states.initial, "draft");
         assert!(wf.is_terminal("done"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Edge cases adicionales y validación de workflow
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn default_workflow_states_config_has_draft_initial() {
+        let cfg = WorkflowStatesConfig::default();
+        assert_eq!(cfg.initial, "draft");
+        assert!(cfg.terminal.contains(&"done".to_string()));
+        assert!(cfg.terminal.contains(&"failed".to_string()));
+        assert_eq!(cfg.terminal.len(), 2);
+    }
+
+    #[test]
+    fn default_workflow_config_is_empty() {
+        let cfg = WorkflowConfig::default();
+        assert_eq!(cfg.states.initial, "draft");
+        assert!(cfg.roles.is_empty());
+        assert!(cfg.phases.is_empty());
+        assert_eq!(cfg.task_format.id_pattern, r"TASK-\d+");
+    }
+
+    #[test]
+    fn phases_for_status_with_custom_states() {
+        let mut config = make_workflow_config();
+        config.phases.push(PhaseConfig {
+            name: "custom_phase".to_string(),
+            from: "custom_state".to_string(),
+            to: "done".to_string(),
+            role: "developer".to_string(),
+            model: "gpt4o".to_string(),
+            prompt: "Work on custom".to_string(),
+            on_reject: "custom_state".to_string(),
+            max_reject_cycles: 5,
+            timeout_seconds: Some(600),
+        });
+
+        let wf = ConfigurableWorkflow::new(&config);
+        let phases = wf.phases_for_status("custom_state");
+        assert_eq!(phases.len(), 1);
+        assert_eq!(phases[0].max_reject_cycles, 5);
+        assert_eq!(phases[0].timeout_seconds, Some(600));
+    }
+
+    #[test]
+    fn is_terminal_with_case_sensitive_match() {
+        let wf = ConfigurableWorkflow::new(&make_workflow_config());
+        // is_terminal debe ser case-sensitive
+        assert!(wf.is_terminal("done"));
+        assert!(!wf.is_terminal("DONE"), "Case should matter unless implemented otherwise");
+        assert!(!wf.is_terminal("Done"));
+    }
+
+    #[test]
+    fn automatic_transition_draft_stays_draft_when_no_blockers_no_reject() {
+        let config = make_workflow_config();
+        let wf = ConfigurableWorkflow::new(&config);
+        let task = make_task("TASK-001", "draft", &[]);
+        let graph = DependencyGraph::default();
+        let status_map = HashMap::new();
+
+        // draft sin blockers ni reject cycles → sin transición automática
+        let result = wf.apply_automatic_transitions(&task, &graph, 0, &status_map);
+        assert_eq!(result, None, "Draft without dependencies should not trigger auto transition");
+    }
+
+    #[test]
+    fn automatic_transition_blocked_when_blockers_not_terminal() {
+        let config = make_workflow_config();
+        let wf = ConfigurableWorkflow::new(&config);
+        let task = make_task("TASK-004", "ready", &["TASK-003"]);
+        let graph = DependencyGraph::default();
+        let mut status_map = HashMap::new();
+        status_map.insert("TASK-003".to_string(), "draft".to_string()); // not terminal
+
+        let result = wf.apply_automatic_transitions(&task, &graph, 0, &status_map);
+        assert_eq!(result, Some("blocked".to_string()));
+    }
+
+    #[test]
+    fn automatic_transition_no_change_for_ready_without_blockers() {
+        let config = make_workflow_config();
+        let wf = ConfigurableWorkflow::new(&config);
+        let task = make_task("TASK-001", "ready", &[]);
+        let graph = DependencyGraph::default();
+        let status_map = HashMap::new();
+
+        let result = wf.apply_automatic_transitions(&task, &graph, 0, &status_map);
+        assert_eq!(result, None, "Ready without blockers should not trigger auto transition");
+    }
+
+    #[test]
+    fn automatic_transition_blocked_unblocks_when_all_blockers_terminal() {
+        let config = make_workflow_config();
+        let wf = ConfigurableWorkflow::new(&config);
+        let task = make_task("TASK-004", "blocked", &["TASK-002", "TASK-003"]);
+        let graph = DependencyGraph::default();
+        let mut status_map = HashMap::new();
+        status_map.insert("TASK-002".to_string(), "done".to_string());
+        status_map.insert("TASK-003".to_string(), "done".to_string());
+
+        let result = wf.apply_automatic_transitions(&task, &graph, 0, &status_map);
+        assert_eq!(result, Some("draft".to_string()), "Blocked should unblock to initial state");
+    }
+
+    #[test]
+    fn reject_cycles_equal_to_max_triggers_failed() {
+        let config = make_workflow_config();
+        let wf = ConfigurableWorkflow::new(&config);
+        let task = make_task("TASK-001", "review", &[]);
+        let graph = DependencyGraph::default();
+        let status_map = HashMap::new();
+
+        // max_reject_cycles para "review" es 2
+        let result = wf.apply_automatic_transitions(&task, &graph, 2, &status_map);
+        assert_eq!(result, Some("failed".to_string()));
+    }
+
+    #[test]
+    fn reject_cycles_exceeding_max_triggers_failed() {
+        let config = make_workflow_config();
+        let wf = ConfigurableWorkflow::new(&config);
+        let task = make_task("TASK-001", "review", &[]);
+        let graph = DependencyGraph::default();
+        let status_map = HashMap::new();
+
+        // max_reject_cycles para "review" es 2; con 5 también debe fallar
+        let result = wf.apply_automatic_transitions(&task, &graph, 5, &status_map);
+        assert_eq!(result, Some("failed".to_string()));
+    }
+
+    #[test]
+    fn configurable_workflow_clone_works() {
+        let config = make_workflow_config();
+        let wf = ConfigurableWorkflow::new(&config);
+        let wf2 = wf.clone();
+        assert_eq!(wf.initial_state(), wf2.initial_state());
+        assert_eq!(wf.phases_for_status("ready").len(), wf2.phases_for_status("ready").len());
+        assert!(wf.is_terminal("done"));
+        assert!(wf2.is_terminal("done"));
+    }
+
+    #[test]
+    fn workflow_config_with_multiple_phases_same_from_different_to() {
+        let mut config = make_workflow_config();
+        // Añadir una segunda fase desde "ready" hacia otro destino
+        config.phases.push(PhaseConfig {
+            name: "alternate".to_string(),
+            from: "ready".to_string(),
+            to: "skipped".to_string(),
+            role: "developer".to_string(),
+            model: "gpt4o".to_string(),
+            prompt: "Alternate path".to_string(),
+            on_reject: "ready".to_string(),
+            max_reject_cycles: 1,
+            timeout_seconds: None,
+        });
+
+        let wf = ConfigurableWorkflow::new(&config);
+        let phases = wf.phases_for_status("ready");
+        assert_eq!(phases.len(), 2, "Two phases should be available from 'ready'");
+        let names: Vec<&str> = phases.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"implement"));
+        assert!(names.contains(&"alternate"));
+    }
+
+    #[test]
+    fn is_terminal_with_multiple_terminal_states() {
+        let mut config = make_workflow_config();
+        config.states.terminal = vec![
+            "done".to_string(),
+            "failed".to_string(),
+            "cancelled".to_string(),
+            "archived".to_string(),
+        ];
+        let wf = ConfigurableWorkflow::new(&config);
+        assert!(wf.is_terminal("done"));
+        assert!(wf.is_terminal("failed"));
+        assert!(wf.is_terminal("cancelled"));
+        assert!(wf.is_terminal("archived"));
+        assert!(!wf.is_terminal("draft"));
     }
 }

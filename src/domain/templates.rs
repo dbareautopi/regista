@@ -423,4 +423,161 @@ mod tests {
             bad_imports.join("\n")
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Edge cases adicionales
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn unclosed_brace_after_task_fields_is_literal() {
+        // "{{task_fields.priority" sin cierre "}}" no debería interpretarse
+        let result = render_template(
+            "Valor: {{task_fields.priority y más texto sin cerrar",
+            &make_task(),
+            &HashMap::new(),
+        );
+        // El texto completo debe conservarse literal
+        assert!(result.contains("{{task_fields.priority"), "Unclosed braces should be preserved: {result}");
+    }
+
+    #[test]
+    fn unknown_variable_outside_known_patterns() {
+        let result = render_template(
+            "{{variable_inventada}}",
+            &make_task(),
+            &HashMap::new(),
+        );
+        // Las variables no reconocidas se quedan como texto literal
+        // (el sistema actual solo procesa patrones conocidos: task_id, task_status,
+        //  task_fields, last_rejection, blockers, context, role_name)
+        assert_eq!(result, "{{variable_inventada}}", "Unknown variable pattern should be kept literal");
+    }
+
+    #[test]
+    fn unclosed_brace_without_final_brackets() {
+        // "{{task_id" sin "}}" es texto literal
+        let result = render_template(
+            "Empieza {{task_id y aquí sigue",
+            &make_task(),
+            &HashMap::new(),
+        );
+        assert!(result.contains("{{task_id"), "Unclosed {{task_id should remain as literal: {result}");
+    }
+
+    #[test]
+    fn empty_braces_remain_literal() {
+        // "{{}}" - braces vacías
+        let result = render_template(
+            "Esto es {{}} vacío",
+            &make_task(),
+            &HashMap::new(),
+        );
+        assert!(result.contains("{{}}"), "Empty braces should remain as literal: {result}");
+    }
+
+    #[test]
+    fn task_fields_with_empty_key() {
+        // "{{task_fields.}}" — punto sin nombre de campo
+        let result = render_template(
+            "{{task_fields.}}",
+            &make_task(),
+            &HashMap::new(),
+        );
+        // El sistema busca el campo "" (vacío), que no existe → "(no definido)"
+        assert_eq!(result, "(no definido)");
+    }
+
+    #[test]
+    fn context_with_empty_key() {
+        // "{{context.}}" — punto sin nombre de clave
+        let result = render_template(
+            "{{context.}}",
+            &make_task(),
+            &HashMap::new(),
+        );
+        assert_eq!(result, "(no definido)");
+    }
+
+    #[test]
+    fn role_name_without_context_returns_placeholder() {
+        // Sin role_name en el context
+        let result = render_template(
+            "Eres {{role_name}}",
+            &make_task(),
+            &HashMap::new(),
+        );
+        assert_eq!(result, "Eres (no definido)");
+    }
+
+    #[test]
+    fn task_fields_bullet_is_sorted_alphabetically() {
+        let result = render_template(
+            "{{task_fields.*}}",
+            &make_task(),
+            &HashMap::new(),
+        );
+        let lines: Vec<&str> = result.lines().collect();
+        // Verificar orden alfabético: effort, priority, status, topic
+        // (aunque effort y priority podrían salir en distinto orden, la idea es que estén ordenados)
+        let effort_pos = lines.iter().position(|l| l.starts_with("- effort:")).unwrap_or(usize::MAX);
+        let priority_pos = lines.iter().position(|l| l.starts_with("- priority:")).unwrap_or(usize::MAX);
+        let status_pos = lines.iter().position(|l| l.starts_with("- status:")).unwrap_or(usize::MAX);
+        let topic_pos = lines.iter().position(|l| l.starts_with("- topic:")).unwrap_or(usize::MAX);
+        assert!(effort_pos < priority_pos, "effort should come before priority alphabetically");
+        assert!(priority_pos < status_pos, "priority should come before status alphabetically");
+        assert!(status_pos < topic_pos, "status should come before topic alphabetically");
+    }
+
+    #[test]
+    fn renders_task_id_when_present() {
+        let result = render_template(
+            "ID: {{task_id}}",
+            &make_task(),
+            &HashMap::new(),
+        );
+        assert_eq!(result, "ID: TASK-005");
+    }
+
+    #[test]
+    fn system_prompt_without_variables_returns_unchanged() {
+        let mut ctx = HashMap::new();
+        ctx.insert("role_name".to_string(), "Developer".to_string());
+        let result = render_template(
+            "Eres un desarrollador senior. Escribe código limpio.",
+            &make_task(),
+            &ctx,
+        );
+        assert_eq!(result, "Eres un desarrollador senior. Escribe código limpio.");
+    }
+
+    #[test]
+    fn renders_task_status_from_fields() {
+        let mut task = make_task();
+        task.fields.insert("status".to_string(), "in_progress".to_string());
+        let result = render_template("Estado: {{task_status}}", &task, &HashMap::new());
+        assert_eq!(result, "Estado: in_progress");
+    }
+
+    #[test]
+    fn task_status_when_status_field_missing() {
+        let mut task = make_task();
+        task.fields.remove("status");
+        let result = render_template("Estado: {{task_status}}", &task, &HashMap::new());
+        assert_eq!(result, "Estado: (no definido)");
+    }
+
+    #[test]
+    fn task_fields_bullet_includes_all_fields_except_nothing() {
+        let result = render_template(
+            "{{task_fields.*}}",
+            &make_task(),
+            &HashMap::new(),
+        );
+        assert!(result.contains("- effort: 5"));
+        assert!(result.contains("- priority: high"));
+        assert!(result.contains("- status: pending"));
+        assert!(result.contains("- topic: IA generativa"));
+        // Exactamente 4 campos
+        assert_eq!(result.lines().count(), 4);
+    }
 }

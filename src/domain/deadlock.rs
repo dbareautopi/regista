@@ -779,4 +779,171 @@ mod tests {
             ),
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Edge cases adicionales
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn v10_configurable_failed_state() {
+        // El estado "failed" debe ser configurable, no hardcodeado
+        let mut config = make_config();
+        // Cambiar el estado terminal "failed" por "rejected"
+        config.states.terminal = vec!["done".to_string(), "rejected".to_string()];
+
+        let wf = ConfigurableWorkflow::new(&config);
+
+        // Verificar que la transición automática usa "rejected" y no "failed"
+        let task = make_task_v10("TASK-001", "review", &[]);
+        let graph = DependencyGraph::default();
+        let status_map = HashMap::new();
+
+        // max_reject_cycles para la única fase (execute, from=ready) no aplica
+        // porque la task está en "review". Pero review no está en ninguna fase
+        // de este workflow simplificado.
+
+        // Crear un task en estado "ready" con reject_cycles = 3 (max es 3)
+        let task2 = make_task_v10("TASK-002", "ready", &[]);
+        let result = wf.apply_automatic_transitions(&task2, &graph, 3, &status_map);
+        // El apply_automatic_transitions busca "failed" o "reject" en terminales
+        // Como cambiamos "failed" por "rejected", debería encontrar "rejected"
+        assert_eq!(result, Some("rejected".to_string()), "Should use 'rejected' from terminal states, not hardcoded 'failed'");
+    }
+
+    #[test]
+    fn v10_deadlock_with_state_not_in_any_phase() {
+        // Tareas en estados no definidos en ninguna fase → no deberían romper
+        let tasks = vec![
+            make_task_v10("TASK-001", "unknown_phase_state", &[]),
+            make_task_v10("TASK-002", "blocked", &["TASK-001"]),
+        ];
+        let graph = DependencyGraph::from_tasks(&tasks);
+        let wf = ConfigurableWorkflow::new(&make_config());
+        let result = analyze_deadlock(&tasks, &graph, &wf);
+
+        match result {
+            DeadlockResolutionV10::NoDeadlock => {}
+            _ => panic!("Expected NoDeadlock for unknown states not in draft/blocked: got {result:?}"),
+        }
+    }
+
+    #[test]
+    fn v10_deadlock_skips_tasks_missing_status_field() {
+        // Si una task no tiene el campo "status", no debería paniquear
+        let mut task_no_status = make_task_v10("TASK-099", "draft", &[]);
+        task_no_status.fields.remove("status");
+
+        let tasks = vec![
+            task_no_status,
+            make_task_v10("TASK-002", "draft", &[]),
+        ];
+        let graph = DependencyGraph::from_tasks(&tasks);
+        let wf = ConfigurableWorkflow::new(&make_config());
+        let result = analyze_deadlock(&tasks, &graph, &wf);
+
+        match result {
+            DeadlockResolutionV10::InvokeAgentFor { task_id, .. } => {
+                // La task sin status no es "draft" ni "blocked", se trata como accionable
+                // (status vacío → no draft, no blocked, no terminal → accionable)
+                // Por tanto NoDeadlock
+                assert!(task_id == "TASK-002" || task_id == "TASK-099",
+                    "Should select one of the draft tasks");
+            }
+            DeadlockResolutionV10::NoDeadlock => {
+                // Si TASK-099 (sin status) se considera accionable → NoDeadlock
+            }
+            _ => panic!("Unexpected result: {result:?}"),
+        }
+    }
+
+    #[test]
+    fn v10_extract_numeric_with_alpha_prefix() {
+        // Función extract_numeric con IDs tipo "EPIC-TASK-042"
+        let id = "EPIC-TASK-042";
+        let num = extract_numeric(id);
+        assert_eq!(num, 42);
+    }
+
+    #[test]
+    fn v10_extract_numeric_no_digits() {
+        let id = "ABC";
+        let num = extract_numeric(id);
+        assert_eq!(num, 0);
+    }
+
+    #[test]
+    fn v10_extract_numeric_leading_zeros() {
+        let id = "TASK-001";
+        let num = extract_numeric(id);
+        assert_eq!(num, 1);
+    }
+
+    #[test]
+    fn v10_priority_with_cycle_and_draft() {
+        // Mezcla: una task en ciclo (blocked) y otra en draft
+        // El draft debe priorizarse si bloquea más
+        let tasks = vec![
+            make_task_v10("TASK-001", "draft", &[]),
+            make_task_v10("TASK-002", "blocked", &["TASK-003"]),
+            make_task_v10("TASK-003", "blocked", &["TASK-002"]),
+            make_task_v10("TASK-004", "blocked", &["TASK-001"]),
+            make_task_v10("TASK-005", "blocked", &["TASK-001"]),
+        ];
+        let graph = DependencyGraph::from_tasks(&tasks);
+        let wf = ConfigurableWorkflow::new(&make_config());
+        let result = analyze_deadlock(&tasks, &graph, &wf);
+
+        match result {
+            DeadlockResolutionV10::InvokeAgentFor {
+                task_id, unblocks, ..
+            } => {
+                // TASK-001 bloquea a TASK-004 y TASK-005 (2),
+                // TASK-002/TASK-003 están en ciclo (1 cada una)
+                assert_eq!(task_id, "TASK-001", "Should prioritize draft that unblocks most");
+                assert_eq!(unblocks, 2);
+            }
+            _ => panic!("Expected InvokeAgentFor, got {result:?}"),
+        }
+    }
+
+    #[test]
+    fn v10_pipeline_complete_with_custom_terminal_states() {
+        let mut config = make_config();
+        config.states.terminal = vec!["completed".to_string(), "cancelled".to_string()];
+
+        let tasks = vec![
+            {
+                let mut t = make_task_v10("TASK-001", "completed", &[]);
+                t.fields.insert("status".to_string(), "completed".to_string());
+                t
+            },
+            {
+                let mut t = make_task_v10("TASK-002", "cancelled", &[]);
+                t.fields.insert("status".to_string(), "cancelled".to_string());
+                t
+            },
+        ];
+
+        let wf = ConfigurableWorkflow::new(&config);
+        let graph = DependencyGraph::from_tasks(&tasks);
+        let result = analyze_deadlock(&tasks, &graph, &wf);
+
+        match result {
+            DeadlockResolutionV10::PipelineComplete => {}
+            _ => panic!("Expected PipelineComplete with custom terminal states, got {result:?}"),
+        }
+    }
+
+    #[test]
+    fn v10_analyze_deadlock_with_empty_tasks() {
+        let tasks: Vec<Task> = vec![];
+        let graph = DependencyGraph::from_tasks(&tasks);
+        let wf = ConfigurableWorkflow::new(&make_config());
+        let result = analyze_deadlock(&tasks, &graph, &wf);
+
+        match result {
+            DeadlockResolutionV10::PipelineComplete => {}
+            _ => panic!("Expected PipelineComplete for empty task list, got {result:?}"),
+        }
+    }
 }

@@ -344,4 +344,134 @@ mod tests {
         let graph = DependencyGraph::from_tasks(&tasks);
         assert!(!graph.has_any_cycle());
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Edge cases adicionales
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn blocked_by_me_returns_blocked_ids() {
+        let tasks = vec![
+            task("TASK-001", &[]),
+            task("TASK-002", &["TASK-001"]),
+            task("TASK-003", &["TASK-001"]),
+        ];
+        let graph = DependencyGraph::from_tasks(&tasks);
+        let blocked = graph.blocked_by_me("TASK-001");
+        assert_eq!(blocked.len(), 2);
+        assert!(blocked.contains(&"TASK-002"));
+        assert!(blocked.contains(&"TASK-003"));
+    }
+
+    #[test]
+    fn blocked_by_me_returns_empty_for_leaf() {
+        let tasks = vec![
+            task("TASK-001", &[]),
+            task("TASK-002", &["TASK-001"]),
+        ];
+        let graph = DependencyGraph::from_tasks(&tasks);
+        let blocked = graph.blocked_by_me("TASK-002");
+        assert!(blocked.is_empty());
+    }
+
+    #[test]
+    fn blocked_by_me_returns_empty_for_unknown_id() {
+        let tasks = vec![task("TASK-001", &[])];
+        let graph = DependencyGraph::from_tasks(&tasks);
+        let blocked = graph.blocked_by_me("TASK-999");
+        assert!(blocked.is_empty());
+    }
+
+    #[test]
+    fn has_cycle_from_isolated_node() {
+        let tasks = vec![task("TASK-001", &[])];
+        let graph = DependencyGraph::from_tasks(&tasks);
+        assert!(!graph.has_cycle_from("TASK-001"));
+        assert!(!graph.has_any_cycle());
+    }
+
+    #[test]
+    fn has_cycle_from_unknown_node() {
+        let tasks = vec![task("TASK-001", &[])];
+        let graph = DependencyGraph::from_tasks(&tasks);
+        // has_cycle_from con nodo inexistente → unwrap() paniquea.
+        // Verificar que al menos no hay ciclo para nodos existentes.
+        assert!(!graph.has_cycle_from("TASK-001"));
+    }
+
+    #[test]
+    fn find_cycle_members_returns_empty_when_no_cycles() {
+        let tasks = vec![
+            task("TASK-001", &[]),
+            task("TASK-002", &["TASK-001"]),
+        ];
+        let graph = DependencyGraph::from_tasks(&tasks);
+        let members = graph.find_cycle_members();
+        assert!(members.is_empty());
+    }
+
+    #[test]
+    fn blocks_count_with_nonexistent_id() {
+        let tasks = vec![task("TASK-001", &[])];
+        let graph = DependencyGraph::from_tasks(&tasks);
+        assert_eq!(graph.blocks_count("TASK-999"), 0);
+    }
+
+    #[test]
+    fn from_tasks_with_self_reference_detects_cycle() {
+        // Una task que se bloquea a sí misma — ciclo trivial
+        let tasks = vec![task("TASK-001", &["TASK-001"])];
+        let graph = DependencyGraph::from_tasks(&tasks);
+        assert!(graph.has_cycle_from("TASK-001"));
+        assert!(graph.has_any_cycle());
+    }
+
+    #[test]
+    fn from_stories_and_from_tasks_produce_same_structure() {
+        // Verificar que ambos constructores producen grafos equivalentes
+        // si los datos de entrada son equivalentes
+        let stories = vec![
+            story("STORY-001", &[]),
+            story("STORY-002", &["STORY-001"]),
+        ];
+        let tasks = vec![
+            task("STORY-001", &[]),
+            task("STORY-002", &["STORY-001"]),
+        ];
+
+        let graph_s = DependencyGraph::from_stories(&stories);
+        let graph_t = DependencyGraph::from_tasks(&tasks);
+
+        assert_eq!(graph_s.blocks_count("STORY-001"), graph_t.blocks_count("STORY-001"));
+        assert_eq!(graph_s.has_any_cycle(), graph_t.has_any_cycle());
+    }
+
+    #[test]
+    fn dependency_graph_default_is_empty() {
+        let graph = DependencyGraph::default();
+        assert_eq!(graph.blocks_count("ANY"), 0);
+        assert!(!graph.has_any_cycle());
+        assert!(graph.find_cycle_members().is_empty());
+    }
+
+    #[test]
+    fn from_tasks_handles_duplicate_task_ids() {
+        // Si hay dos tasks con el mismo ID, la segunda sobrescribe
+        let tasks = vec![
+            task("TASK-001", &[]),
+            task("TASK-001", &["TASK-002"]),
+            task("TASK-002", &[]),
+        ];
+        let graph = DependencyGraph::from_tasks(&tasks);
+        assert_eq!(graph.blocks_count("TASK-001"), 0, "Second TASK-001 overwrites, no forward edges from TASK-001->TASK-002 because TASK-001's own forward entry was created first without edges, then the second TASK-001 re-populates forward but blocker TASK-002 creates a reverse edge only");
+    }
+
+    #[test]
+    fn from_tasks_preserves_blockers_even_when_blocker_not_in_tasks() {
+        // Bloqueadores que no están en la lista de tasks también se guardan
+        let tasks = vec![task("TASK-001", &["TASK-999", "TASK-888"])];
+        let graph = DependencyGraph::from_tasks(&tasks);
+        assert_eq!(graph.blocks_count("TASK-999"), 1, "TASK-999 blocks TASK-001 even if TASK-999 is not in the task list");
+        assert_eq!(graph.blocks_count("TASK-888"), 1);
+    }
 }

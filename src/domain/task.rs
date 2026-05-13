@@ -671,4 +671,179 @@ mod tests {
             bad_imports.join("\n")
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Edge cases adicionales
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn load_extracts_id_with_numeric_prefix_path() {
+        // El ID debe extraerse del nombre sin el path completo
+        let tmp = tempfile::tempdir().unwrap();
+        let task_path = tmp.path().join("TASK-042.md");
+        write_task(&task_path, "## Status\n**draft**\n");
+
+        let task = load_task(&task_path, &default_task_format()).unwrap();
+        assert_eq!(task.id, "TASK-042");
+        assert!(!task.id.contains(".md"), "El ID no debe contener la extensión");
+        assert!(!task.id.contains('/'), "El ID no debe contener separadores de path");
+    }
+
+    #[test]
+    fn load_with_empty_content_produces_no_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        let task_path = tmp.path().join("TASK-001.md");
+        write_task(&task_path, "");
+
+        let format = TaskFormatConfig {
+            id_pattern: r"TASK-\d+".to_string(),
+            section_markers: HashMap::new(),
+            dependency_marker: "Bloqueado por:".to_string(),
+        };
+        let task = load_task(&task_path, &format).unwrap();
+        assert_eq!(task.id, "TASK-001");
+        assert!(task.fields.is_empty());
+        assert!(task.blockers.is_empty());
+        assert!(task.activity_log.is_empty());
+        assert_eq!(task.raw_content, "");
+    }
+
+    #[test]
+    fn load_with_section_markers_containing_special_chars() {
+        let tmp = tempfile::tempdir().unwrap();
+        let task_path = tmp.path().join("TASK-099.md");
+        write_task(
+            &task_path,
+            "## Status\n**draft**\n\n## Prioridad (#)\n**urgente**\n",
+        );
+
+        let mut markers = HashMap::new();
+        markers.insert("status".to_string(), "## Status".to_string());
+        markers.insert("priority".to_string(), "## Prioridad (#)".to_string());
+
+        let format = TaskFormatConfig {
+            id_pattern: r"TASK-\d+".to_string(),
+            section_markers: markers,
+            dependency_marker: "Bloqueado por:".to_string(),
+        };
+        let task = load_task(&task_path, &format).unwrap();
+        assert_eq!(task.fields.get("status").map(|s| s.as_str()), Some("draft"));
+        assert_eq!(task.fields.get("priority").map(|s| s.as_str()), Some("urgente"));
+    }
+
+    #[test]
+    fn render_field_update_preserves_line_count() {
+        let tmp = tempfile::tempdir().unwrap();
+        let task_path = tmp.path().join("TASK-001.md");
+        let content = "# TASK-001\n\n## Status\n**pending**\n\n## Descripción\nFoo\n\n## Notas\nextra\n";
+        let original_lines = content.lines().count();
+        write_task(&task_path, content);
+
+        let format = default_task_format();
+        let task = load_task(&task_path, &format).unwrap();
+        let new_content = task
+            .render_field_update("status", "in_progress", &format.section_markers)
+            .unwrap();
+
+        assert_eq!(
+            new_content.lines().count(),
+            original_lines,
+            "render_field_update no debe cambiar el número de líneas"
+        );
+        assert!(new_content.contains("**in_progress**"));
+        assert!(new_content.contains("## Descripción\nFoo"));
+    }
+
+    #[test]
+    fn render_field_update_handles_value_with_bold_markers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let task_path = tmp.path().join("TASK-001.md");
+        write_task(&task_path, "## Status\n**draft**\n");
+
+        let format = default_task_format();
+        let task = load_task(&task_path, &format).unwrap();
+        let new_content = task
+            .render_field_update("status", "in **review** now", &format.section_markers)
+            .unwrap();
+
+        // El nuevo valor se envuelve en **...**, así que si el valor contiene **,
+        // queda "**in **review** now**" — aceptable porque set_status en infra
+        // escribe y re-parsea; si falla, rollback.
+        assert!(new_content.contains("**in **review** now**"));
+    }
+
+    #[test]
+    fn task_format_config_default_has_status_marker() {
+        let cfg = TaskFormatConfig::default();
+        assert_eq!(cfg.id_pattern, r"TASK-\d+");
+        assert!(cfg.section_markers.contains_key("status"));
+        assert_eq!(cfg.section_markers.get("status").unwrap(), "## Status");
+        assert_eq!(cfg.dependency_marker, "Bloqueado por:");
+    }
+
+    #[test]
+    fn render_field_update_maintains_leading_whitespace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let task_path = tmp.path().join("TASK-001.md");
+        let content = "## Status\n  **pending**\n";
+        write_task(&task_path, content);
+
+        let format = default_task_format();
+        let task = load_task(&task_path, &format).unwrap();
+        let new_content = task
+            .render_field_update("status", "done", &format.section_markers)
+            .unwrap();
+
+        // Debe preservar el leading whitespace de la línea original
+        assert!(new_content.contains("  **done**"));
+    }
+
+    #[test]
+    fn activity_log_entries_are_stable_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        let task_path = tmp.path().join("TASK-001.md");
+        write_task(
+            &task_path,
+            "## Activity Log\n- 2026-01-01 | A | Primero\n- 2026-02-01 | B | Segundo\n- 2026-03-01 | C | Tercero\n",
+        );
+
+        let task = load_task(&task_path, &default_task_format()).unwrap();
+        assert_eq!(task.activity_log.len(), 3);
+        assert_eq!(task.activity_log[0].description, "Primero");
+        assert_eq!(task.activity_log[1].description, "Segundo");
+        assert_eq!(task.activity_log[2].description, "Tercero");
+    }
+
+    #[test]
+    fn parse_blockers_is_case_insensitive_for_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let task_path = tmp.path().join("TASK-001.md");
+        write_task(
+            &task_path,
+            "## Status\n**draft**\n\n- bLoQuEaDo PoR: TASK-005, TASK-006\n",
+        );
+
+        let task = load_task(&task_path, &default_task_format()).unwrap();
+        assert!(task.blockers.contains(&"TASK-005".to_string()));
+        assert!(task.blockers.contains(&"TASK-006".to_string()));
+    }
+
+    #[test]
+    fn load_with_custom_task_format_where_status_marker_is_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let task_path = tmp.path().join("TASK-050.md");
+        write_task(&task_path, "## Title\nMi tarea especial\n");
+
+        let mut markers = HashMap::new();
+        markers.insert("title".to_string(), "## Title".to_string());
+
+        let format = TaskFormatConfig {
+            id_pattern: r"TASK-\d+".to_string(),
+            section_markers: markers,
+            dependency_marker: "Bloqueado por:".to_string(),
+        };
+        let task = load_task(&task_path, &format).unwrap();
+        assert_eq!(task.fields.get("title").map(|s| s.as_str()), Some("Mi tarea especial"));
+        assert!(!task.fields.contains_key("status"));
+    }
 }
