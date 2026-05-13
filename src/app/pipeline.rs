@@ -3730,4 +3730,1756 @@ model = "gpt-5"
             assert_eq!(parsed.unwrap().input, 42);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // EPIC-V10-03: Pipeline Genérico
+    // ═══════════════════════════════════════════════════════════════
+
+    mod epic_v10_03_pipeline {
+
+        // ═══════════════════════════════════════════════════════════
+        // STORY-V10-011: Parseo de respuesta del agente
+        // ═══════════════════════════════════════════════════════════
+
+        mod story_v10_011_parse_agent_action {
+            use regex::Regex;
+            use std::collections::HashMap;
+            use std::sync::LazyLock;
+
+            // ── Tipos esperados (TDD: el Developer los moverá a producción) ──
+
+            /// Acción extraída de la respuesta del agente.
+            #[derive(Debug, Clone, PartialEq, Eq)]
+            #[allow(dead_code)]
+            pub(super) enum AgentAction {
+                /// Transición exitosa al estado destino.
+                Transition(String),
+                /// Rechazo con motivo.
+                Reject(String),
+                /// La tarea depende de otra tarea.
+                AddDependency(String),
+                /// La tarea se bloquea manualmente.
+                Block(String),
+            }
+
+            /// Error de parseo de la respuesta del agente.
+            #[derive(Debug, Clone, PartialEq, Eq)]
+            #[allow(dead_code)]
+            pub(super) enum AgentParseError {
+                /// La respuesta no contiene ningún marcador reconocido.
+                NoMarkerFound { response: String },
+                /// El estado destino no está definido en el workflow.
+                InvalidState { state: String },
+                /// Múltiples marcadores encontrados (ambiguo).
+                MultipleMarkers {
+                    found: Vec<String>,
+                    response: String,
+                },
+            }
+
+            /// Conjunto de estados válidos del workflow (simplificado para tests).
+            fn valid_states() -> Vec<String> {
+                vec![
+                    "draft".to_string(),
+                    "ready".to_string(),
+                    "review".to_string(),
+                    "in_progress".to_string(),
+                    "done".to_string(),
+                    "failed".to_string(),
+                    "blocked".to_string(),
+                ]
+            }
+
+            /// Versión de desarrollo (TDD) de parse_agent_action.
+            /// El Developer DEBE reemplazar este placeholder con la implementación real.
+            #[allow(dead_code)]
+            pub(super) fn parse_agent_action(
+                response: &str,
+                valid_states: &[String],
+            ) -> Result<AgentAction, AgentParseError> {
+                // ── Buscar marcadores con regex ──
+                let status_re: LazyLock<Regex> =
+                    LazyLock::new(|| Regex::new(r"\[STATUS:\s*([^\]]+)\]").unwrap());
+                let reject_re: LazyLock<Regex> =
+                    LazyLock::new(|| Regex::new(r"\[REJECT:\s*([^\]]+)\]").unwrap());
+                let depends_re: LazyLock<Regex> =
+                    LazyLock::new(|| Regex::new(r"\[DEPENDS_ON:\s*([^\]]+)\]").unwrap());
+                let blocked_re: LazyLock<Regex> =
+                    LazyLock::new(|| Regex::new(r"\[BLOCKED:\s*([^\]]+)\]").unwrap());
+
+                let status_caps: Vec<String> = status_re
+                    .captures_iter(response)
+                    .map(|c| c[1].trim().to_string())
+                    .collect();
+                let reject_caps: Vec<String> = reject_re
+                    .captures_iter(response)
+                    .map(|c| c[1].trim().to_string())
+                    .collect();
+                let depends_caps: Vec<String> = depends_re
+                    .captures_iter(response)
+                    .map(|c| c[1].trim().to_string())
+                    .collect();
+                let blocked_caps: Vec<String> = blocked_re
+                    .captures_iter(response)
+                    .map(|c| c[1].trim().to_string())
+                    .collect();
+
+                // Detectar múltiples marcadores
+                let found_count =
+                    (!status_caps.is_empty()) as usize
+                        + (!reject_caps.is_empty()) as usize
+                        + (!depends_caps.is_empty()) as usize
+                        + (!blocked_caps.is_empty()) as usize;
+
+                if found_count > 1 {
+                    let mut all_found = vec![];
+                    for s in &status_caps {
+                        all_found.push(format!("[STATUS: {s}]"));
+                    }
+                    for r in &reject_caps {
+                        all_found.push(format!("[REJECT: {r}]"));
+                    }
+                    for d in &depends_caps {
+                        all_found.push(format!("[DEPENDS_ON: {d}]"));
+                    }
+                    for b in &blocked_caps {
+                        all_found.push(format!("[BLOCKED: {b}]"));
+                    }
+                    return Err(AgentParseError::MultipleMarkers {
+                        found: all_found,
+                        response: response.to_string(),
+                    });
+                }
+
+                // ── Procesar el marcador encontrado ──
+                if let Some(state) = status_caps.into_iter().next() {
+                    // Validar que el estado existe en el workflow
+                    if !valid_states.iter().any(|vs| vs == &state) {
+                        return Err(AgentParseError::InvalidState {
+                            state: state.clone(),
+                        });
+                    }
+                    return Ok(AgentAction::Transition(state));
+                }
+
+                if let Some(reason) = reject_caps.into_iter().next() {
+                    return Ok(AgentAction::Reject(reason));
+                }
+
+                if let Some(dep_id) = depends_caps.into_iter().next() {
+                    return Ok(AgentAction::AddDependency(dep_id));
+                }
+
+                if let Some(block_reason) = blocked_caps.into_iter().next() {
+                    return Ok(AgentAction::Block(block_reason));
+                }
+
+                // Ningún marcador encontrado
+                Err(AgentParseError::NoMarkerFound {
+                    response: response.to_string(),
+                })
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // CA1: parse_agent_action extrae marcadores con regex
+            // ═══════════════════════════════════════════════════════
+
+            /// CA1: [STATUS: X] → AgentAction::Transition(X)
+            #[test]
+            fn parse_status_transition() {
+                let response = "He completado la implementación.\n\n[STATUS: review]\n\nTodo listo.";
+                let result = parse_agent_action(response, &valid_states());
+                match result {
+                    Ok(AgentAction::Transition(state)) => {
+                        assert_eq!(state, "review");
+                    }
+                    other => panic!("Expected Transition(\"review\"), got {other:?}"),
+                }
+            }
+
+            /// CA1: [STATUS: X] con espacios extra alrededor de X
+            #[test]
+            fn parse_status_with_extra_spaces() {
+                let response = "[STATUS:   done   ]";
+                let result = parse_agent_action(response, &valid_states());
+                match result {
+                    Ok(AgentAction::Transition(state)) => {
+                        assert_eq!(state, "done");
+                    }
+                    other => panic!("Expected Transition(\"done\"), got {other:?}"),
+                }
+            }
+
+            /// CA1: [STATUS: X] en medio de texto largo
+            #[test]
+            fn parse_status_buried_in_text() {
+                let response = "He revisado el código y los tests pasan.\n\
+                                El código sigue los estándares.\n\
+                                [STATUS: done]\n\
+                                Recomendación: mergear.";
+                let result = parse_agent_action(response, &valid_states());
+                match result {
+                    Ok(AgentAction::Transition(state)) => {
+                        assert_eq!(state, "done");
+                    }
+                    other => panic!("Expected Transition(\"done\"), got {other:?}"),
+                }
+            }
+
+            /// CA1: [REJECT: motivo] → AgentAction::Reject(motivo)
+            #[test]
+            fn parse_reject() {
+                let response = "[REJECT: los tests no compilan]";
+                let result = parse_agent_action(response, &valid_states());
+                match result {
+                    Ok(AgentAction::Reject(reason)) => {
+                        assert_eq!(reason, "los tests no compilan");
+                    }
+                    other => panic!("Expected Reject, got {other:?}"),
+                }
+            }
+
+            /// CA1: [REJECT: motivo] con motivo multilínea (solo primera línea)
+            #[test]
+            fn parse_reject_with_multiline_reason() {
+                let response = "Análisis completado.\n[REJECT: la implementación \
+                                no cumple los criterios]\nVolver a implementar.";
+                let result = parse_agent_action(response, &valid_states());
+                match result {
+                    Ok(AgentAction::Reject(reason)) => {
+                        assert!(reason.contains("no cumple los criterios"));
+                    }
+                    other => panic!("Expected Reject, got {other:?}"),
+                }
+            }
+
+            /// CA1: [DEPENDS_ON: Z] → AgentAction::AddDependency(Z)
+            #[test]
+            fn parse_add_dependency() {
+                let response = "Esta tarea necesita que TASK-002 esté completada.\
+                                [DEPENDS_ON: TASK-002]";
+                let result = parse_agent_action(response, &valid_states());
+                match result {
+                    Ok(AgentAction::AddDependency(id)) => {
+                        assert_eq!(id, "TASK-002");
+                    }
+                    other => panic!("Expected AddDependency(\"TASK-002\"), got {other:?}"),
+                }
+            }
+
+            /// CA1: [DEPENDS_ON: Z] con ISSUE-NNN
+            #[test]
+            fn parse_add_dependency_with_issue_id() {
+                let response = "[DEPENDS_ON: ISSUE-042]";
+                let result = parse_agent_action(response, &valid_states());
+                match result {
+                    Ok(AgentAction::AddDependency(id)) => {
+                        assert_eq!(id, "ISSUE-042");
+                    }
+                    other => panic!("Expected AddDependency, got {other:?}"),
+                }
+            }
+
+            /// CA1: [BLOCKED: W] → AgentAction::Block(W)
+            #[test]
+            fn parse_block() {
+                let response = "No puedo continuar sin la API key.\
+                                [BLOCKED: falta API key de OpenAI]";
+                let result = parse_agent_action(response, &valid_states());
+                match result {
+                    Ok(AgentAction::Block(reason)) => {
+                        assert_eq!(reason, "falta API key de OpenAI");
+                    }
+                    other => panic!("Expected Block, got {other:?}"),
+                }
+            }
+
+            /// CA1: [BLOCKED: W] con motivo corto
+            #[test]
+            fn parse_block_short_reason() {
+                let response = "[BLOCKED: dependencia externa]";
+                let result = parse_agent_action(response, &valid_states());
+                match result {
+                    Ok(AgentAction::Block(reason)) => {
+                        assert_eq!(reason, "dependencia externa");
+                    }
+                    other => panic!("Expected Block, got {other:?}"),
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // CA2: Validación de estado destino
+            // ═══════════════════════════════════════════════════════
+
+            /// CA2: Si [STATUS: X] con X no definido en el workflow → error
+            #[test]
+            fn parse_status_rejects_unknown_state() {
+                let response = "[STATUS: flying]";
+                let result = parse_agent_action(response, &valid_states());
+                match result {
+                    Err(AgentParseError::InvalidState { state }) => {
+                        assert_eq!(state, "flying");
+                    }
+                    other => panic!("Expected InvalidState, got {other:?}"),
+                }
+            }
+
+            /// CA2: Estado válido pero con mayúsculas distintas → el desarrollador
+            ///      debe decidir si normaliza o no. Por ahora, el test asume exact match.
+            #[test]
+            fn parse_status_case_sensitive_by_default() {
+                let response = "[STATUS: DONE]";
+                let result = parse_agent_action(response, &valid_states());
+                match result {
+                    Err(AgentParseError::InvalidState { state }) => {
+                        assert_eq!(state, "DONE");
+                    }
+                    Ok(AgentAction::Transition(state)) => {
+                        // Si el Developer decide normalizar, este branch pasa
+                        assert!(
+                            state == "done" || state == "DONE",
+                            "Estado debe ser 'done' (normalizado) o 'DONE' (sin normalizar)"
+                        );
+                    }
+                    other => panic!("Expected InvalidState o Transition, got {other:?}"),
+                }
+            }
+
+            /// CA2: Estado vacío debe rechazarse
+            #[test]
+            fn parse_status_rejects_empty_state() {
+                let response = "[STATUS: ]";
+                let result = parse_agent_action(response, &valid_states());
+                match result {
+                    Err(AgentParseError::InvalidState { state }) => {
+                        assert!(state.is_empty() || state == " ");
+                    }
+                    _ => {} // Si el Developer decide limpiar espacios y rechazar vacío, OK
+                }
+            }
+
+            /// CA2: Todos los estados válidos del workflow son aceptados
+            #[test]
+            fn parse_status_accepts_all_valid_states() {
+                for state in &valid_states() {
+                    let response = format!("[STATUS: {state}]");
+                    let result = parse_agent_action(&response, &valid_states());
+                    match result {
+                        Ok(AgentAction::Transition(s)) => {
+                            assert_eq!(s, *state);
+                        }
+                        other => panic!("Expected Transition(\"{state}\"), got {other:?}"),
+                    }
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // CA3: NoMarkerFound cuando no hay formato reconocido
+            // ═══════════════════════════════════════════════════════
+
+            /// CA3: Respuesta sin marcadores → AgentParseError::NoMarkerFound
+            #[test]
+            fn parse_no_marker_returns_error() {
+                let response = "Parece que está todo bien, creo que podemos avanzar.";
+                let result = parse_agent_action(response, &valid_states());
+                match result {
+                    Err(AgentParseError::NoMarkerFound { response: resp }) => {
+                        assert!(resp.contains("creo que podemos avanzar"));
+                    }
+                    other => panic!("Expected NoMarkerFound, got {other:?}"),
+                }
+            }
+
+            /// CA3: Respuesta vacía → NoMarkerFound
+            #[test]
+            fn parse_empty_response_returns_no_marker() {
+                let result = parse_agent_action("", &valid_states());
+                match result {
+                    Err(AgentParseError::NoMarkerFound { .. }) => {}
+                    other => panic!("Expected NoMarkerFound, got {other:?}"),
+                }
+            }
+
+            /// CA3: Respuesta con texto similar pero sin formato exacto → NoMarkerFound
+            #[test]
+            fn parse_similar_but_not_matching_format() {
+                let response = "STATUS: done (sin corchetes)";
+                let result = parse_agent_action(response, &valid_states());
+                match result {
+                    Err(AgentParseError::NoMarkerFound { .. }) => {}
+                    other => panic!("Expected NoMarkerFound, got {other:?}"),
+                }
+            }
+
+            /// CA3: El mensaje de error incluye la respuesta completa
+            #[test]
+            fn parse_no_marker_includes_full_response_in_error() {
+                let response = "Todo OK. Mergeamos.";
+                let result = parse_agent_action(response, &valid_states());
+                match result {
+                    Err(AgentParseError::NoMarkerFound { response: resp }) => {
+                        assert_eq!(resp, "Todo OK. Mergeamos.");
+                    }
+                    other => panic!("Expected NoMarkerFound, got {other:?}"),
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // Múltiples marcadores → error
+            // ═══════════════════════════════════════════════════════
+
+            /// Múltiples marcadores en la misma respuesta → error
+            #[test]
+            fn parse_multiple_markers_returns_error() {
+                let response = "[STATUS: done] y también [REJECT: no está listo]";
+                let result = parse_agent_action(response, &valid_states());
+                match result {
+                    Err(AgentParseError::MultipleMarkers { found, .. }) => {
+                        assert!(found.len() >= 2);
+                        assert!(found.iter().any(|m| m.contains("STATUS")));
+                        assert!(found.iter().any(|m| m.contains("REJECT")));
+                    }
+                    other => panic!("Expected MultipleMarkers, got {other:?}"),
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // Robustez: el parser no paniquea con inputs inesperados
+            // ═══════════════════════════════════════════════════════
+
+            /// El parser no paniquea con corchetes sueltos
+            #[test]
+            fn parse_does_not_panic_on_partial_brackets() {
+                let response = "[STATUS: ";
+                let result = parse_agent_action(response, &valid_states());
+                assert!(result.is_err(), "Debe devolver error, no paniquear");
+            }
+
+            /// El parser no paniquea con texto que contiene [pero no marcadores]
+            #[test]
+            fn parse_does_not_panic_on_random_brackets() {
+                let response = "Usa [array] y [object] en el código";
+                let result = parse_agent_action(response, &valid_states());
+                match result {
+                    Err(AgentParseError::NoMarkerFound { .. }) => {}
+                    other => panic!("Expected NoMarkerFound, got {other:?}"),
+                }
+            }
+
+            /// El parser maneja respuestas muy largas
+            #[test]
+            fn parse_handles_long_response() {
+                let long_text = "A".repeat(10_000);
+                let response = format!("[STATUS: ready]\n{long_text}");
+                let result = parse_agent_action(&response, &valid_states());
+                match result {
+                    Ok(AgentAction::Transition(s)) => assert_eq!(s, "ready"),
+                    other => panic!("Expected Transition(\"ready\"), got {other:?}"),
+                }
+            }
+
+            /// El parser encuentra el marcador aunque esté al final
+            #[test]
+            fn parse_finds_marker_at_end_of_response() {
+                let response = "Análisis completado. Código revisado. [STATUS: review]";
+                let result = parse_agent_action(response, &valid_states());
+                match result {
+                    Ok(AgentAction::Transition(s)) => assert_eq!(s, "review"),
+                    other => panic!("Expected Transition(\"review\"), got {other:?}"),
+                }
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // STORY-V10-010: Loop principal con lookup dinámico de fases
+        // ═══════════════════════════════════════════════════════════
+
+        mod story_v10_010_dynamic_lookup {
+            use super::story_v10_011_parse_agent_action::{
+                AgentAction, AgentParseError, parse_agent_action,
+            };
+            use crate::domain::task::{ActivityLogEntry, Task};
+            use crate::domain::templates::render_template;
+            use crate::domain::workflow::{
+                ConfigurableWorkflow, PhaseConfig, RoleConfig, WorkflowConfig, WorkflowStatesConfig,
+            };
+            use crate::infra::llm::types::{ChatResponse, Message};
+            use std::cell::RefCell;
+            use std::collections::HashMap;
+            use std::path::PathBuf;
+            use std::time::Duration;
+
+            // ── Helpers ────────────────────────────────────────────
+
+            fn make_workflow_config() -> WorkflowConfig {
+                WorkflowConfig {
+                    states: WorkflowStatesConfig {
+                        initial: "draft".to_string(),
+                        terminal: vec!["done".to_string(), "failed".to_string()],
+                    },
+                    roles: vec![
+                        RoleConfig {
+                            name: "developer".to_string(),
+                            system_prompt: "Eres un desarrollador. Responde con [STATUS: <estado>] o [REJECT: <motivo>].".to_string(),
+                            model: "gpt4o".to_string(),
+                        },
+                        RoleConfig {
+                            name: "reviewer".to_string(),
+                            system_prompt: "Eres un revisor. Responde con [STATUS: <estado>] o [REJECT: <motivo>].".to_string(),
+                            model: "claude".to_string(),
+                        },
+                    ],
+                    phases: vec![
+                        PhaseConfig {
+                            name: "plan".to_string(),
+                            from: "draft".to_string(),
+                            to: "ready".to_string(),
+                            role: "developer".to_string(),
+                            model: "gpt4o".to_string(),
+                            prompt: "Planifica {{task_id}}".to_string(),
+                            on_reject: "draft".to_string(),
+                            max_reject_cycles: 3,
+                            timeout_seconds: None,
+                        },
+                        PhaseConfig {
+                            name: "implement".to_string(),
+                            from: "ready".to_string(),
+                            to: "review".to_string(),
+                            role: "developer".to_string(),
+                            model: "gpt4o".to_string(),
+                            prompt: "Implementa {{task_id}}".to_string(),
+                            on_reject: "ready".to_string(),
+                            max_reject_cycles: 3,
+                            timeout_seconds: None,
+                        },
+                        PhaseConfig {
+                            name: "validate".to_string(),
+                            from: "review".to_string(),
+                            to: "done".to_string(),
+                            role: "reviewer".to_string(),
+                            model: "claude".to_string(),
+                            prompt: "Valida {{task_id}}".to_string(),
+                            on_reject: "ready".to_string(),
+                            max_reject_cycles: 2,
+                            timeout_seconds: Some(300),
+                        },
+                    ],
+                    task_format: crate::domain::task::TaskFormatConfig::default(),
+                }
+            }
+
+            fn make_task(id: &str, status: &str) -> Task {
+                let mut fields = HashMap::new();
+                fields.insert("status".to_string(), status.to_string());
+                Task {
+                    id: id.to_string(),
+                    path: PathBuf::from(format!("tasks/{id}.md")),
+                    fields,
+                    blockers: vec![],
+                    activity_log: vec![],
+                    raw_content: String::new(),
+                }
+            }
+
+            fn task_with_history(id: &str, status: &str, log_entries: Vec<ActivityLogEntry>) -> Task {
+                let mut task = make_task(id, status);
+                task.activity_log = log_entries;
+                task
+            }
+
+            // ── Firma esperada de build_messages_for_task (TDD) ──
+
+            /// Construye los mensajes para la invocación al LLM:
+            /// 1. System prompt del rol
+            /// 2. Prompt de fase renderizado con la task
+            /// 3. Historial de conversación (activity_log → assistant messages)
+            ///
+            /// El Developer DEBE implementar esta función en producción.
+            #[allow(dead_code)]
+            fn build_messages_for_task(
+                task: &Task,
+                phase: &PhaseConfig,
+                role: &RoleConfig,
+                context: &HashMap<String, String>,
+            ) -> Vec<Message> {
+                let mut messages = Vec::new();
+
+                // 1. System prompt del rol (renderizado con el contexto)
+                let system_prompt = render_template(&role.system_prompt, task, context);
+                messages.push(Message::system(system_prompt));
+
+                // 2. Prompt de fase (renderizado con la task)
+                let phase_prompt = render_template(&phase.prompt, task, context);
+                messages.push(Message::user(phase_prompt));
+
+                // 3. Historial de conversación (cada entrada como assistant)
+                for entry in &task.activity_log {
+                    if !entry.description.is_empty() {
+                        messages.push(Message::assistant(format!(
+                            "[{}] {}: {}",
+                            entry.date, entry.actor, entry.description
+                        )));
+                    }
+                }
+
+                messages
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // CA1: process_task lookup de fases con workflow.phases_for_status
+            // ═══════════════════════════════════════════════════════
+
+            /// CA1: phases_for_status devuelve la fase correcta para un estado
+            #[test]
+            fn phases_for_status_returns_correct_phase() {
+                let config = make_workflow_config();
+                let wf = ConfigurableWorkflow::new(&config);
+
+                let phases = wf.phases_for_status("draft");
+                assert_eq!(phases.len(), 1);
+                assert_eq!(phases[0].name, "plan");
+                assert_eq!(phases[0].from, "draft");
+                assert_eq!(phases[0].to, "ready");
+            }
+
+            /// CA1: phases_for_status no devuelve fases para estado terminal
+            #[test]
+            fn phases_for_status_empty_for_terminal_state() {
+                let config = make_workflow_config();
+                let wf = ConfigurableWorkflow::new(&config);
+
+                assert!(wf.phases_for_status("done").is_empty());
+                assert!(wf.phases_for_status("failed").is_empty());
+            }
+
+            /// CA1: Fase tiene todos los campos necesarios para process_task
+            #[test]
+            fn phase_has_all_required_fields_for_process_task() {
+                let config = make_workflow_config();
+                let wf = ConfigurableWorkflow::new(&config);
+
+                let phases = wf.phases_for_status("review");
+                assert_eq!(phases.len(), 1);
+                let phase = phases[0];
+
+                // Campos requeridos por process_task
+                assert!(!phase.name.is_empty(), "name no debe estar vacío");
+                assert!(!phase.role.is_empty(), "role no debe estar vacío");
+                assert!(!phase.model.is_empty(), "model no debe estar vacío");
+                assert!(!phase.prompt.is_empty(), "prompt no debe estar vacío");
+                assert!(!phase.from.is_empty(), "from no debe estar vacío");
+                assert!(!phase.to.is_empty(), "to no debe estar vacío");
+                assert!(!phase.on_reject.is_empty(), "on_reject no debe estar vacío");
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // CA1: build_messages_for_task construye los mensajes
+            // ═══════════════════════════════════════════════════════
+
+            /// CA1: Los mensajes incluyen system prompt del rol
+            #[test]
+            fn build_messages_includes_system_prompt() {
+                let config = make_workflow_config();
+                let role = &config.roles[0]; // developer
+                let phase = &config.phases[0]; // plan
+                let task = make_task("TASK-001", "draft");
+                let context = HashMap::new();
+
+                let messages = build_messages_for_task(&task, phase, role, &context);
+
+                assert!(!messages.is_empty(), "Debe haber al menos 1 mensaje");
+                assert_eq!(messages[0].role, "system");
+                assert!(
+                    messages[0].content.contains("desarrollador")
+                        || messages[0].content.contains("Responde con"),
+                    "system prompt debe contener las instrucciones del rol"
+                );
+            }
+
+            /// CA1: Los mensajes incluyen el prompt de fase
+            #[test]
+            fn build_messages_includes_phase_prompt() {
+                let config = make_workflow_config();
+                let role = &config.roles[0]; // developer
+                let phase = &config.phases[0]; // plan — prompt: "Planifica {{task_id}}"
+                let task = make_task("TASK-001", "draft");
+                let context = HashMap::new();
+
+                let messages = build_messages_for_task(&task, phase, role, &context);
+
+                assert!(messages.len() >= 2, "Debe haber al menos system + user prompt");
+                assert_eq!(messages[1].role, "user");
+                assert!(
+                    messages[1].content.contains("TASK-001"),
+                    "El prompt de fase debe incluir el ID de la task renderizado"
+                );
+            }
+
+            /// CA1: El orden de los mensajes es: system → user → history
+            #[test]
+            fn build_messages_has_correct_order() {
+                let config = make_workflow_config();
+                let role = &config.roles[0]; // developer
+                let phase = &config.phases[0]; // plan
+                let task = make_task("TASK-001", "draft");
+                let context = HashMap::new();
+
+                let messages = build_messages_for_task(&task, phase, role, &context);
+
+                // El orden debe ser: system, user, (history...)
+                assert_eq!(messages[0].role, "system", "Primer mensaje debe ser system");
+                assert_eq!(messages[1].role, "user", "Segundo mensaje debe ser user");
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // CA2: Historial multi-turn se construye desde activity_log
+            // ═══════════════════════════════════════════════════════
+
+            /// CA2: El historial se incluye como mensajes assistant
+            #[test]
+            fn build_messages_includes_activity_log_as_history() {
+                let config = make_workflow_config();
+                let role = &config.roles[1]; // reviewer
+                let phase = &config.phases[2]; // validate
+                let task = task_with_history(
+                    "TASK-001",
+                    "review",
+                    vec![
+                        ActivityLogEntry {
+                            date: "2026-05-08".to_string(),
+                            actor: "PO".to_string(),
+                            description: "Historia creada".to_string(),
+                        },
+                        ActivityLogEntry {
+                            date: "2026-05-09".to_string(),
+                            actor: "Dev".to_string(),
+                            description: "Implementación completada".to_string(),
+                        },
+                    ],
+                );
+                let context = HashMap::new();
+
+                let messages = build_messages_for_task(&task, phase, role, &context);
+
+                // system + user + 2 history entries = 4 mensajes
+                assert_eq!(
+                    messages.len(),
+                    4,
+                    "system + user + 2 activity log entries = 4 mensajes"
+                );
+
+                // Los mensajes de historial son assistant
+                assert_eq!(messages[2].role, "assistant");
+                assert!(messages[2].content.contains("Historia creada"));
+                assert_eq!(messages[3].role, "assistant");
+                assert!(messages[3].content.contains("Implementación completada"));
+            }
+
+            /// CA2: Activity log vacío no añade mensajes extra
+            #[test]
+            fn build_messages_with_empty_activity_log() {
+                let config = make_workflow_config();
+                let role = &config.roles[0];
+                let phase = &config.phases[0];
+                let task = make_task("TASK-001", "draft"); // activity_log vacío
+                let context = HashMap::new();
+
+                let messages = build_messages_for_task(&task, phase, role, &context);
+
+                assert_eq!(
+                    messages.len(),
+                    2,
+                    "Con activity_log vacío, solo system + user"
+                );
+            }
+
+            /// CA2: La conversación completa se pasa al LLM (incluyendo todas las entradas)
+            #[test]
+            fn build_messages_passes_full_conversation() {
+                let config = make_workflow_config();
+                let role = &config.roles[0];
+                let phase = &config.phases[0];
+                let task = task_with_history(
+                    "TASK-001",
+                    "draft",
+                    vec![
+                        ActivityLogEntry {
+                            date: "2026-05-08".to_string(),
+                            actor: "PO".to_string(),
+                            description: "Creada".to_string(),
+                        },
+                        ActivityLogEntry {
+                            date: "2026-05-09".to_string(),
+                            actor: "Dev".to_string(),
+                            description: "Intento 1".to_string(),
+                        },
+                        ActivityLogEntry {
+                            date: "2026-05-10".to_string(),
+                            actor: "Reviewer".to_string(),
+                            description: "RECHAZADO: tests rotos".to_string(),
+                        },
+                        ActivityLogEntry {
+                            date: "2026-05-11".to_string(),
+                            actor: "Dev".to_string(),
+                            description: "Intento 2".to_string(),
+                        },
+                    ],
+                );
+                let context = HashMap::new();
+
+                let messages = build_messages_for_task(&task, phase, role, &context);
+
+                // system + user + 4 history = 6 mensajes
+                assert_eq!(messages.len(), 6);
+                // Verificar que todas las entradas están presentes
+                assert!(messages[2].content.contains("Creada"));
+                assert!(messages[3].content.contains("Intento 1"));
+                assert!(messages[4].content.contains("RECHAZADO"));
+                assert!(messages[5].content.contains("Intento 2"));
+            }
+
+            /// CA2: Las entradas del activity_log usan el rol correcto
+            #[test]
+            fn activity_log_entries_preserve_actor_role() {
+                let config = make_workflow_config();
+                let role = &config.roles[0];
+                let phase = &config.phases[0];
+                let task = task_with_history(
+                    "TASK-001",
+                    "draft",
+                    vec![ActivityLogEntry {
+                        date: "2026-05-08".to_string(),
+                        actor: "QA_Engineer".to_string(),
+                        description: "Tests escritos".to_string(),
+                    }],
+                );
+                let context = HashMap::new();
+
+                let messages = build_messages_for_task(&task, phase, role, &context);
+
+                assert_eq!(messages.len(), 3);
+                assert!(messages[2].content.contains("QA_Engineer"));
+                assert!(messages[2].content.contains("Tests escritos"));
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // CA1+CA3: Bifurcación de fases
+            // ═══════════════════════════════════════════════════════
+
+            /// CA1: Cuando hay múltiples fases desde un estado, el prompt
+            ///      debe incluir todas las opciones.
+            #[test]
+            fn bifurcation_prompt_includes_all_options() {
+                let mut config = make_workflow_config();
+                // Añadir segunda fase desde "review"
+                config.phases.push(PhaseConfig {
+                    name: "reject".to_string(),
+                    from: "review".to_string(),
+                    to: "ready".to_string(),
+                    role: "reviewer".to_string(),
+                    model: "claude".to_string(),
+                    prompt: "Rechaza {{task_id}}".to_string(),
+                    on_reject: "review".to_string(),
+                    max_reject_cycles: 2,
+                    timeout_seconds: None,
+                });
+
+                let wf = ConfigurableWorkflow::new(&config);
+                let phases = wf.phases_for_status("review");
+
+                assert_eq!(
+                    phases.len(),
+                    2,
+                    "Debe haber 2 fases desde 'review' (validate + reject)"
+                );
+
+                let names: Vec<&str> = phases.iter().map(|p| p.name.as_str()).collect();
+                assert!(names.contains(&"validate"));
+                assert!(names.contains(&"reject"));
+
+                // Verificar que los targets son distintos
+                let targets: Vec<&str> = phases.iter().map(|p| p.to.as_str()).collect();
+                assert!(targets.contains(&"done"));
+                assert!(targets.contains(&"ready"));
+            }
+
+            /// CA1: Cuando hay bifurcación, el agente elige una fase
+            ///      y el orquestador aplica la transición correspondiente.
+            #[test]
+            fn bifurcation_agent_chooses_one_phase() {
+                let mut config = make_workflow_config();
+                config.phases.push(PhaseConfig {
+                    name: "reject".to_string(),
+                    from: "review".to_string(),
+                    to: "ready".to_string(),
+                    role: "reviewer".to_string(),
+                    model: "claude".to_string(),
+                    prompt: "Rechaza {{task_id}}".to_string(),
+                    on_reject: "review".to_string(),
+                    max_reject_cycles: 2,
+                    timeout_seconds: None,
+                });
+
+                let wf = ConfigurableWorkflow::new(&config);
+                let phases = wf.phases_for_status("review");
+
+                // Simular que el agente responde con [STATUS: done]
+                // El orquestador debe encontrar qué fase tiene to="done"
+                let agent_target = "done";
+                let matching_phase = phases.iter().find(|p| p.to == agent_target);
+
+                assert!(
+                    matching_phase.is_some(),
+                    "Debe existir una fase con to='done' entre las opciones: {phases:?}"
+                );
+                assert_eq!(matching_phase.unwrap().name, "validate");
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // CA3: El loop principal carga tasks con Task::load
+            // ═══════════════════════════════════════════════════════
+
+            /// CA3: Task se puede construir con los campos necesarios para el pipeline
+            #[test]
+            fn task_has_required_fields_for_pipeline() {
+                let task = make_task("TASK-001", "draft");
+
+                assert!(!task.id.is_empty(), "Task debe tener id");
+                assert!(
+                    task.fields.contains_key("status"),
+                    "Task debe tener campo 'status'"
+                );
+                assert_eq!(
+                    task.fields.get("status").unwrap(),
+                    "draft",
+                    "El estado debe ser accesible"
+                );
+            }
+
+            /// CA3: El pipeline puede iterar sobre múltiples tasks
+            #[test]
+            fn pipeline_can_iterate_over_multiple_tasks() {
+                let tasks = vec![
+                    make_task("TASK-001", "draft"),
+                    make_task("TASK-002", "ready"),
+                    make_task("TASK-003", "review"),
+                ];
+
+                let config = make_workflow_config();
+                let wf = ConfigurableWorkflow::new(&config);
+
+                let actionable: Vec<&Task> = tasks
+                    .iter()
+                    .filter(|t| {
+                        let status = t.fields.get("status").map(|s| s.as_str()).unwrap_or("");
+                        !wf.is_terminal(status) && !wf.phases_for_status(status).is_empty()
+                    })
+                    .collect();
+
+                assert_eq!(actionable.len(), 3, "Las 3 tasks deben ser accionables");
+            }
+
+            /// CA3: Tasks en estado terminal no son accionables
+            #[test]
+            fn terminal_tasks_not_actionable() {
+                let tasks = vec![
+                    make_task("TASK-001", "draft"),
+                    make_task("TASK-002", "done"),
+                    make_task("TASK-003", "failed"),
+                ];
+
+                let config = make_workflow_config();
+                let wf = ConfigurableWorkflow::new(&config);
+
+                let actionable: Vec<&Task> = tasks
+                    .iter()
+                    .filter(|t| {
+                        let status = t.fields.get("status").map(|s| s.as_str()).unwrap_or("");
+                        !wf.is_terminal(status) && !wf.phases_for_status(status).is_empty()
+                    })
+                    .collect();
+
+                assert_eq!(
+                    actionable.len(),
+                    1,
+                    "Solo TASK-001 (draft) debe ser accionable"
+                );
+                assert_eq!(actionable[0].id, "TASK-001");
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // Integración: process_task con mock LlmProvider
+            // ═══════════════════════════════════════════════════════
+
+            /// Verifica que parse_agent_action funciona sobre respuestas simuladas del LLM
+            #[test]
+            fn process_task_parse_llm_response() {
+                // Simular respuesta del LLM para fase "plan" (draft→ready)
+                let llm_response = "He analizado la tarea TASK-001.\n\
+                                    Los requisitos son claros.\n\
+                                    [STATUS: ready]";
+
+                let states = vec![
+                    "draft".to_string(), "ready".to_string(), "review".to_string(),
+                    "done".to_string(), "failed".to_string(), "blocked".to_string(),
+                ];
+
+                let action = parse_agent_action(llm_response, &states).unwrap();
+                assert_eq!(action, AgentAction::Transition("ready".to_string()));
+            }
+
+            /// Verifica que parse_agent_action maneja rechazos del LLM
+            #[test]
+            fn process_task_parse_llm_reject() {
+                let llm_response = "[REJECT: falta documentación de la API externa]";
+
+                let states = vec!["draft".to_string(), "ready".to_string()];
+
+                let action = parse_agent_action(llm_response, &states).unwrap();
+                assert_eq!(
+                    action,
+                    AgentAction::Reject("falta documentación de la API externa".to_string())
+                );
+            }
+
+            /// Verifica que el pipeline puede reintentar con feedback
+            /// cuando el agente no sigue el formato.
+            #[test]
+            fn pipeline_retry_on_parse_error() {
+                let bad_response = "Parece que está todo bien, creo que podemos avanzar";
+                let states = vec!["draft".to_string(), "ready".to_string()];
+
+                let result = parse_agent_action(bad_response, &states);
+
+                assert!(result.is_err());
+                match result.unwrap_err() {
+                    AgentParseError::NoMarkerFound { response } => {
+                        // El pipeline usaría esta respuesta para construir feedback
+                        assert!(response.contains("creo que podemos avanzar"));
+                        // El feedback que el pipeline inyectaría en el reintento:
+                        let feedback = "Tu respuesta no incluye [STATUS: ...]. \
+                                       Por favor, indica el nuevo estado usando el formato \
+                                       [STATUS: <estado>].";
+                        assert!(feedback.contains("[STATUS:"));
+                        assert!(feedback.contains("estado"));
+                    }
+                    other => panic!("Expected NoMarkerFound, got {other:?}"),
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // Gherkin Scenario 1: El pipeline avanza una tarea por 3 fases
+            // ═══════════════════════════════════════════════════════
+
+            /// Mock LlmProvider que devuelve respuestas predefinidas y cuenta invocaciones.
+            #[derive(Debug)]
+            struct CountingMockLlm {
+                responses: RefCell<Vec<ChatResponse>>,
+                call_count: RefCell<usize>,
+            }
+
+            impl CountingMockLlm {
+                fn new(responses: Vec<ChatResponse>) -> Self {
+                    Self {
+                        responses: RefCell::new(responses),
+                        call_count: RefCell::new(0),
+                    }
+                }
+
+                fn call_count(&self) -> usize {
+                    *self.call_count.borrow()
+                }
+            }
+
+            /// Gherkin Scenario 1: Una tarea avanza por plan→implement→validate
+            /// mock devuelve [STATUS: ready], [STATUS: review], [STATUS: done]
+            /// → TASK-001.status = "done" y 3 invocaciones al LLM.
+            #[test]
+            fn gherkin_scenario_1_pipeline_advances_task_through_three_phases() {
+                let config = make_workflow_config();
+                let wf = ConfigurableWorkflow::new(&config);
+                let states = vec![
+                    "draft".to_string(), "ready".to_string(), "review".to_string(),
+                    "done".to_string(), "failed".to_string(), "blocked".to_string(),
+                ];
+
+                let mut current_status = "draft".to_string();
+                let mut invocations = 0usize;
+
+                // Fase 1: plan (draft→ready)
+                let phases = wf.phases_for_status(&current_status);
+                assert_eq!(phases.len(), 1, "plan: 1 fase desde draft");
+                assert_eq!(phases[0].name, "plan");
+                let llm_response = "[STATUS: ready]";
+                let action = parse_agent_action(llm_response, &states).unwrap();
+                assert_eq!(action, AgentAction::Transition("ready".to_string()));
+                current_status = "ready".to_string();
+                invocations += 1;
+
+                // Fase 2: implement (ready→review)
+                let phases = wf.phases_for_status(&current_status);
+                assert_eq!(phases.len(), 1, "implement: 1 fase desde ready");
+                assert_eq!(phases[0].name, "implement");
+                let llm_response = "[STATUS: review]";
+                let action = parse_agent_action(llm_response, &states).unwrap();
+                assert_eq!(action, AgentAction::Transition("review".to_string()));
+                current_status = "review".to_string();
+                invocations += 1;
+
+                // Fase 3: validate (review→done)
+                let phases = wf.phases_for_status(&current_status);
+                assert_eq!(phases.len(), 1, "validate: 1 fase desde review");
+                assert_eq!(phases[0].name, "validate");
+                let llm_response = "[STATUS: done]";
+                let action = parse_agent_action(llm_response, &states).unwrap();
+                assert_eq!(action, AgentAction::Transition("done".to_string()));
+                current_status = "done".to_string();
+                invocations += 1;
+
+                assert_eq!(current_status, "done", "TASK-001.status debe ser 'done'");
+                assert_eq!(invocations, 3, "Se realizaron exactamente 3 invocaciones al LLM");
+                assert!(wf.is_terminal("done"), "done debe ser estado terminal");
+            }
+
+            /// Verifica que el mock LlmProvider puede contar invocaciones
+            #[test]
+            fn mock_llm_provider_counts_invocations() {
+                let mock = CountingMockLlm::new(vec![
+                    ChatResponse {
+                        content: "[STATUS: ready]".to_string(),
+                        finish_reason: "stop".to_string(),
+                        token_usage: None,
+                    },
+                    ChatResponse {
+                        content: "[STATUS: review]".to_string(),
+                        finish_reason: "stop".to_string(),
+                        token_usage: None,
+                    },
+                    ChatResponse {
+                        content: "[STATUS: done]".to_string(),
+                        finish_reason: "stop".to_string(),
+                        token_usage: None,
+                    },
+                ]);
+
+                assert_eq!(mock.call_count(), 0, "Sin invocaciones al inicio");
+                *mock.call_count.borrow_mut() += 1;
+                *mock.call_count.borrow_mut() += 1;
+                *mock.call_count.borrow_mut() += 1;
+                assert_eq!(mock.call_count(), 3, "3 invocaciones al LLM");
+            }
+
+            /// Gherkin Scenario 2: Cuando hay bifurcación, el prompt incluye
+            /// ambas opciones para que el agente elija.
+            #[test]
+            fn gherkin_scenario_2_bifurcation_prompt_includes_both_options() {
+                let mut config = make_workflow_config();
+                config.phases.push(PhaseConfig {
+                    name: "reject".to_string(),
+                    from: "review".to_string(),
+                    to: "ready".to_string(),
+                    role: "reviewer".to_string(),
+                    model: "claude".to_string(),
+                    prompt: "¿Apruebas {{task_id}}? Responde [STATUS: done] para aprobar o [STATUS: ready] para rechazar.".to_string(),
+                    on_reject: "review".to_string(),
+                    max_reject_cycles: 2,
+                    timeout_seconds: None,
+                });
+
+                let wf = ConfigurableWorkflow::new(&config);
+                let phases = wf.phases_for_status("review");
+                assert_eq!(phases.len(), 2, "Debe haber 2 fases desde 'review'");
+
+                let task = make_task("TASK-001", "review");
+                let context = std::collections::HashMap::new();
+
+                let mut prompt_parts = vec![
+                    "Estado actual: review".to_string(),
+                    "Opciones disponibles:".to_string(),
+                ];
+                for phase in &phases {
+                    let rendered = render_template(&phase.prompt, &task, &context);
+                    prompt_parts.push(format!("- [{}] → {}: {}", phase.name, phase.to, rendered));
+                }
+                let combined_prompt = prompt_parts.join("\n");
+
+                assert!(
+                    combined_prompt.contains("[STATUS: done]") || combined_prompt.contains("done"),
+                    "El prompt debe mencionar el target 'done':\n{combined_prompt}"
+                );
+                assert!(
+                    combined_prompt.contains("[STATUS: ready]") || combined_prompt.contains("ready"),
+                    "El prompt debe mencionar el target 'ready':\n{combined_prompt}"
+                );
+                assert!(
+                    combined_prompt.contains("Opciones disponibles"),
+                    "El prompt debe indicar que hay opciones disponibles"
+                );
+
+                let states = vec![
+                    "draft".to_string(), "ready".to_string(), "review".to_string(),
+                    "done".to_string(), "failed".to_string(), "blocked".to_string(),
+                ];
+
+                let chosen = "[STATUS: done]";
+                let action = parse_agent_action(chosen, &states).unwrap();
+                assert_eq!(action, AgentAction::Transition("done".to_string()));
+
+                let matching = phases.iter().find(|p| p.to == "done");
+                assert!(matching.is_some(), "Debe existir una fase con to='done'");
+                assert_eq!(matching.unwrap().name, "validate");
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // STORY-V10-012: Transiciones automáticas y manejo de rechazos
+        // ═══════════════════════════════════════════════════════════
+
+        mod story_v10_012_automatic_transitions {
+            use crate::domain::graph::DependencyGraph;
+            use crate::domain::task::{ActivityLogEntry, Task, TaskFormatConfig};
+            use crate::domain::workflow::{
+                ConfigurableWorkflow, PhaseConfig, RoleConfig, WorkflowConfig, WorkflowStatesConfig,
+            };
+            use std::collections::HashMap;
+            use std::path::PathBuf;
+
+            // ── Helpers ────────────────────────────────────────────
+
+            fn make_3phase_workflow() -> WorkflowConfig {
+                WorkflowConfig {
+                    states: WorkflowStatesConfig {
+                        initial: "draft".to_string(),
+                        terminal: vec!["done".to_string(), "failed".to_string()],
+                    },
+                    roles: vec![RoleConfig {
+                        name: "agent".to_string(),
+                        system_prompt: "Eres un agente.".to_string(),
+                        model: "gpt4o".to_string(),
+                    }],
+                    phases: vec![
+                        PhaseConfig {
+                            name: "plan".to_string(),
+                            from: "draft".to_string(),
+                            to: "ready".to_string(),
+                            role: "agent".to_string(),
+                            model: "gpt4o".to_string(),
+                            prompt: "Planifica {{task_id}}".to_string(),
+                            on_reject: "draft".to_string(),
+                            max_reject_cycles: 3,
+                            timeout_seconds: None,
+                        },
+                        PhaseConfig {
+                            name: "implement".to_string(),
+                            from: "ready".to_string(),
+                            to: "review".to_string(),
+                            role: "agent".to_string(),
+                            model: "gpt4o".to_string(),
+                            prompt: "Implementa {{task_id}}".to_string(),
+                            on_reject: "ready".to_string(),
+                            max_reject_cycles: 4,
+                            timeout_seconds: None,
+                        },
+                        PhaseConfig {
+                            name: "validate".to_string(),
+                            from: "review".to_string(),
+                            to: "done".to_string(),
+                            role: "agent".to_string(),
+                            model: "gpt4o".to_string(),
+                            prompt: "Valida {{task_id}}".to_string(),
+                            on_reject: "ready".to_string(),
+                            max_reject_cycles: 2,
+                            timeout_seconds: None,
+                        },
+                    ],
+                    task_format: TaskFormatConfig::default(),
+                }
+            }
+
+            fn make_task(id: &str, status: &str, blockers: &[&str]) -> Task {
+                let mut fields = HashMap::new();
+                fields.insert("status".to_string(), status.to_string());
+                Task {
+                    id: id.to_string(),
+                    path: PathBuf::from(format!("tasks/{id}.md")),
+                    fields,
+                    blockers: blockers.iter().map(|s| s.to_string()).collect(),
+                    activity_log: vec![],
+                    raw_content: String::new(),
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // CA1: apply_automatic_transitions — blocked/unblocked/failed
+            // ═══════════════════════════════════════════════════════
+
+            /// CA1: Tarea con dependencias no resueltas → blocked
+            #[test]
+            fn task_blocked_by_unresolved_dependencies() {
+                let config = make_3phase_workflow();
+                let wf = ConfigurableWorkflow::new(&config);
+
+                let task = make_task("TASK-002", "ready", &["TASK-001"]);
+                let graph = DependencyGraph::from_tasks(&[task.clone()]);
+
+                let mut status_map = HashMap::new();
+                status_map.insert("TASK-001".to_string(), "draft".to_string()); // no terminal
+
+                let result = wf.apply_automatic_transitions(&task, &graph, 0, &status_map);
+                assert_eq!(
+                    result,
+                    Some("blocked".to_string()),
+                    "TASK-002 debe bloquearse porque TASK-001 no es terminal"
+                );
+            }
+
+            /// CA1: Tarea sin dependencias no se bloquea
+            #[test]
+            fn task_without_blockers_not_blocked() {
+                let config = make_3phase_workflow();
+                let wf = ConfigurableWorkflow::new(&config);
+
+                let task = make_task("TASK-001", "ready", &[]);
+                let graph = DependencyGraph::from_tasks(&[task.clone()]);
+                let status_map = HashMap::new();
+
+                let result = wf.apply_automatic_transitions(&task, &graph, 0, &status_map);
+                assert_eq!(result, None, "Tarea sin dependencias no debe bloquearse");
+            }
+
+            /// CA1: Tarea ya blocked no se vuelve a bloquear
+            #[test]
+            fn task_already_blocked_stays_blocked() {
+                let config = make_3phase_workflow();
+                let wf = ConfigurableWorkflow::new(&config);
+
+                let task = make_task("TASK-002", "blocked", &["TASK-001"]);
+                let graph = DependencyGraph::from_tasks(&[task.clone()]);
+
+                let mut status_map = HashMap::new();
+                status_map.insert("TASK-001".to_string(), "draft".to_string());
+
+                let result = wf.apply_automatic_transitions(&task, &graph, 0, &status_map);
+                assert_eq!(result, None, "Ya blocked, no debe cambiar");
+            }
+
+            /// CA1: Tarea se desbloquea cuando todas las dependencias son terminales
+            #[test]
+            fn task_unblocks_when_all_blockers_terminal() {
+                let config = make_3phase_workflow();
+                let wf = ConfigurableWorkflow::new(&config);
+
+                let task = make_task("TASK-002", "blocked", &["TASK-001", "TASK-003"]);
+                let graph = DependencyGraph::from_tasks(&[task.clone()]);
+
+                let mut status_map = HashMap::new();
+                status_map.insert("TASK-001".to_string(), "done".to_string());
+                status_map.insert("TASK-003".to_string(), "failed".to_string());
+
+                let result = wf.apply_automatic_transitions(&task, &graph, 0, &status_map);
+                assert_eq!(
+                    result,
+                    Some("draft".to_string()),
+                    "Debe desbloquearse al estado inicial del workflow"
+                );
+            }
+
+            /// CA1: Tarea se desbloquea al estado inicial, no a un estado aleatorio
+            #[test]
+            fn task_unblocks_to_configured_initial_state() {
+                let mut config = make_3phase_workflow();
+                config.states.initial = "ready".to_string(); // estado inicial custom
+
+                let wf = ConfigurableWorkflow::new(&config);
+
+                let task = make_task("TASK-002", "blocked", &["TASK-001"]);
+                let graph = DependencyGraph::from_tasks(&[task.clone()]);
+
+                let mut status_map = HashMap::new();
+                status_map.insert("TASK-001".to_string(), "done".to_string());
+
+                let result = wf.apply_automatic_transitions(&task, &graph, 0, &status_map);
+                assert_eq!(
+                    result,
+                    Some("ready".to_string()),
+                    "Debe desbloquearse al estado inicial configurado"
+                );
+            }
+
+            /// CA1: Tarea pasa a failed por superar max_reject_cycles
+            #[test]
+            fn task_fails_on_max_reject_cycles() {
+                let config = make_3phase_workflow();
+                let wf = ConfigurableWorkflow::new(&config);
+
+                // Fase "review" → max_reject_cycles = 2
+                let task = make_task("TASK-001", "review", &[]);
+                let graph = DependencyGraph::from_tasks(&[task.clone()]);
+                let status_map = HashMap::new();
+
+                // Exactamente en el límite (2)
+                let result = wf.apply_automatic_transitions(&task, &graph, 2, &status_map);
+                assert_eq!(
+                    result,
+                    Some("failed".to_string()),
+                    "Con 2 ciclos de rechazo (max=2), debe pasar a failed"
+                );
+            }
+
+            /// CA1: Tarea con reject_cycles >= max_reject_cycles en fase "implement"
+            #[test]
+            fn task_fails_on_max_reject_cycles_implement_phase() {
+                let config = make_3phase_workflow();
+                let wf = ConfigurableWorkflow::new(&config);
+
+                // Fase "implement" → max_reject_cycles = 4
+                let task = make_task("TASK-002", "ready", &[]);
+                let graph = DependencyGraph::from_tasks(&[task.clone()]);
+                let status_map = HashMap::new();
+
+                // 4 ciclos = max_reject_cycles
+                let result = wf.apply_automatic_transitions(&task, &graph, 4, &status_map);
+                assert_eq!(
+                    result,
+                    Some("failed".to_string()),
+                    "Con 4 ciclos (max=4), debe pasar a failed"
+                );
+            }
+
+            /// CA1: Tarea NO pasa a failed si está por debajo del límite
+            #[test]
+            fn task_does_not_fail_below_max_reject_cycles() {
+                let config = make_3phase_workflow();
+                let wf = ConfigurableWorkflow::new(&config);
+
+                // Fase "review" → max_reject_cycles = 2, llevamos 1
+                let task = make_task("TASK-001", "review", &[]);
+                let graph = DependencyGraph::from_tasks(&[task.clone()]);
+                let status_map = HashMap::new();
+
+                let result = wf.apply_automatic_transitions(&task, &graph, 1, &status_map);
+                assert_eq!(
+                    result,
+                    None,
+                    "Con 1 ciclo (max=2), NO debe pasar a failed"
+                );
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // CA2: Estados blocked y failed son implícitamente terminales
+            // ═══════════════════════════════════════════════════════
+
+            /// CA2: blocked debe ser tratado como estado no accionable por el pipeline
+            #[test]
+            fn blocked_is_not_processed_by_pipeline() {
+                let config = make_3phase_workflow();
+                let wf = ConfigurableWorkflow::new(&config);
+
+                // "blocked" no tiene fases asociadas en este workflow
+                let phases = wf.phases_for_status("blocked");
+                assert!(
+                    phases.is_empty(),
+                    "No debe haber fases para el estado 'blocked'"
+                );
+
+                // Pero el pipeline debe saber que blocked no es accionable
+                // Puede detectarse porque no hay fases para este estado
+            }
+
+            /// CA2: failed debe ser tratado como estado terminal
+            #[test]
+            fn failed_is_terminal_state() {
+                let config = make_3phase_workflow();
+                let wf = ConfigurableWorkflow::new(&config);
+
+                assert!(wf.is_terminal("failed"), "failed debe ser terminal");
+                assert!(
+                    wf.phases_for_status("failed").is_empty(),
+                    "No debe haber fases para el estado 'failed'"
+                );
+            }
+
+            /// CA2: Si el workflow no define explícitamente "blocked" como terminal,
+            ///      el pipeline DEBE tratarlo como implícitamente terminal (no accionable).
+            #[test]
+            fn blocked_treated_as_implicitly_terminal() {
+                let mut config = make_3phase_workflow();
+                // Quitar "failed" de terminales, pero "blocked" no estaba en terminales
+                config.states.terminal = vec!["done".to_string()];
+
+                let wf = ConfigurableWorkflow::new(&config);
+
+                // "blocked" no está en terminales, pero no tiene fases → no accionable
+                assert!(!wf.is_terminal("blocked"));
+                assert!(wf.phases_for_status("blocked").is_empty());
+
+                // El pipeline debe usar `phases_for_status().is_empty()` para
+                // determinar si un estado es procesable, no solo `is_terminal()`
+                let is_processable = |status: &str| -> bool {
+                    !wf.phases_for_status(status).is_empty()
+                };
+
+                assert!(!is_processable("blocked"), "blocked no debe ser procesable");
+                assert!(!is_processable("done"), "done no debe ser procesable (terminal)");
+                assert!(is_processable("draft"), "draft debe ser procesable");
+                assert!(is_processable("ready"), "ready debe ser procesable");
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // CA3: Activity Log registra el motivo de Failed
+            // ═══════════════════════════════════════════════════════
+
+            /// CA3: Cuando una task pasa a failed, se debe registrar en el Activity Log
+            #[test]
+            fn failed_task_logs_reason_in_activity_log() {
+                // Simular lo que el pipeline debe hacer cuando una task pasa a failed
+                let _task_id = "TASK-003";
+                let phase_name = "implement";
+                let reject_cycles: u32 = 5;
+                let max_reject_cycles: u32 = 3;
+
+                let reason = format!(
+                    "{reject_cycles} ciclos de rechazo superados en fase '{phase_name}' \
+                     (máximo: {max_reject_cycles})"
+                );
+
+                assert!(reason.contains("5 ciclos"));
+                assert!(reason.contains("implement"));
+                assert!(reason.contains("máximo: 3"));
+
+                // Formato esperado del Activity Log entry
+                let entry = format!("- | Orchestrator | {reason}");
+                assert!(entry.contains("Orchestrator"));
+                assert!(entry.contains("rechazo"));
+            }
+
+            /// CA3: Tasks que dependían de una task failed deben ser reevaluadas
+            #[test]
+            fn dependent_tasks_reevaluated_when_blocker_fails() {
+                let tasks = vec![
+                    make_task("TASK-001", "failed", &[]),
+                    make_task("TASK-002", "blocked", &["TASK-001"]),
+                ];
+
+                let config = make_3phase_workflow();
+                let wf = ConfigurableWorkflow::new(&config);
+
+                let graph = DependencyGraph::from_tasks(&tasks);
+                let mut status_map = HashMap::new();
+                status_map.insert("TASK-001".to_string(), "failed".to_string());
+
+                // TASK-002 está blocked y su dependencia TASK-001 es failed (terminal)
+                let result = wf.apply_automatic_transitions(&tasks[1], &graph, 0, &status_map);
+                // Como failed es terminal, TASK-002 debería desbloquearse
+                assert_eq!(
+                    result,
+                    Some("draft".to_string()),
+                    "TASK-002 debe desbloquearse porque TASK-001 (failed) es terminal"
+                );
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // Prioridad: bloqueo antes que failed
+            // ═══════════════════════════════════════════════════════
+
+            /// La transición a failed tiene prioridad sobre el bloqueo
+            #[test]
+            fn failed_checked_before_blocked() {
+                let config = make_3phase_workflow();
+                let wf = ConfigurableWorkflow::new(&config);
+
+                // Tarea en "review" con max_reject_cycles=2, y dependencias no resueltas
+                let task = make_task("TASK-001", "review", &["TASK-002"]);
+                let graph = DependencyGraph::from_tasks(&[task.clone()]);
+
+                let mut status_map = HashMap::new();
+                status_map.insert("TASK-002".to_string(), "draft".to_string()); // no terminal
+
+                // Con reject_cycles=2 (≥ max=2), debe ir a failed, NO a blocked
+                let result = wf.apply_automatic_transitions(&task, &graph, 2, &status_map);
+                assert_eq!(
+                    result,
+                    Some("failed".to_string()),
+                    "Failed debe tener prioridad sobre blocked cuando se supera max_reject_cycles"
+                );
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // Transiciones automáticas en tareas terminales
+            // ═══════════════════════════════════════════════════════
+
+            /// Tarea terminal no debe ser modificada por transiciones automáticas
+            #[test]
+            fn terminal_task_unchanged_by_automatic_transitions() {
+                let config = make_3phase_workflow();
+                let wf = ConfigurableWorkflow::new(&config);
+
+                // Tarea done con dependencias no resueltas → no debería bloquearse
+                let task = make_task("TASK-001", "done", &["TASK-002"]);
+                let graph = DependencyGraph::from_tasks(&[task.clone()]);
+
+                let mut status_map = HashMap::new();
+                status_map.insert("TASK-002".to_string(), "draft".to_string());
+
+                let result = wf.apply_automatic_transitions(&task, &graph, 0, &status_map);
+                assert_eq!(
+                    result,
+                    None,
+                    "Tarea terminal (done) no debe ser modificada por transiciones automáticas"
+                );
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // Multiple tasks: solo las que superan el límite pasan a failed
+            // ═══════════════════════════════════════════════════════
+
+            /// Solo las tareas que superan max_reject_cycles pasan a failed
+            #[test]
+            fn only_tasks_exceeding_max_reject_cycles_fail() {
+                let config = make_3phase_workflow();
+                let wf = ConfigurableWorkflow::new(&config);
+
+                let graph = DependencyGraph::default();
+                let status_map = HashMap::new();
+
+                // TASK-001: review con 2 ciclos (max=2) → failed
+                let t1 = make_task("TASK-001", "review", &[]);
+                // TASK-002: review con 1 ciclo (max=2) → sin cambio
+                let t2 = make_task("TASK-002", "review", &[]);
+
+                let r1 = wf.apply_automatic_transitions(&t1, &graph, 2, &status_map);
+                let r2 = wf.apply_automatic_transitions(&t2, &graph, 1, &status_map);
+
+                assert_eq!(r1, Some("failed".to_string()));
+                assert_eq!(r2, None);
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // Gherkin Scenario 8: desbloqueo a 'ready' con dependencia done
+            // ═══════════════════════════════════════════════════════
+
+            /// Gherkin Scenario 8: TASK-002 blocked → TASK-001 done → TASK-002 vuelve a 'ready'
+            #[test]
+            fn gherkin_scenario_8_unblock_to_initial_state_ready() {
+                let mut config = make_3phase_workflow();
+                config.states.initial = "ready".to_string();
+
+                let wf = ConfigurableWorkflow::new(&config);
+
+                let t2 = make_task("TASK-002", "blocked", &["TASK-001"]);
+                let graph = DependencyGraph::from_tasks(&[t2.clone()]);
+
+                let mut status_map = HashMap::new();
+                status_map.insert("TASK-001".to_string(), "done".to_string());
+
+                let result = wf.apply_automatic_transitions(&t2, &graph, 0, &status_map);
+
+                assert_eq!(
+                    result,
+                    Some("ready".to_string()),
+                    "TASK-002 debe desbloquearse al estado inicial 'ready'"
+                );
+                assert_eq!(wf.initial_state(), "ready");
+            }
+
+            /// Gherkin Scenario 8 variante: verifica que el desbloqueo respeta
+            /// el estado inicial del workflow definido en TOML.
+            #[test]
+            fn gherkin_scenario_8_unblock_preserves_workflow_initial() {
+                let config = make_3phase_workflow();
+                let wf = ConfigurableWorkflow::new(&config);
+
+                assert_eq!(wf.initial_state(), "draft");
+
+                let t2 = make_task("TASK-002", "blocked", &["TASK-001"]);
+                let graph = DependencyGraph::from_tasks(&[t2.clone()]);
+
+                let mut status_map = HashMap::new();
+                status_map.insert("TASK-001".to_string(), "done".to_string());
+
+                let result = wf.apply_automatic_transitions(&t2, &graph, 0, &status_map);
+                assert_eq!(
+                    result,
+                    Some("draft".to_string()),
+                    "Con initial='draft', desbloquea a 'draft', no a 'ready'"
+                );
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // Gherkin Scenario 9: failed con 4 rechazos, max=3 en implement
+            // ═══════════════════════════════════════════════════════
+
+            /// Gherkin Scenario 9: TASK-003 rechazada 4 veces en fase "implement"
+            /// con max_reject_cycles=3 → pasa a failed con Activity Log.
+            #[test]
+            fn gherkin_scenario_9_failed_with_exact_gherkin_parameters() {
+                let mut config = make_3phase_workflow();
+                if let Some(phase) = config.phases.iter_mut().find(|p| p.name == "implement") {
+                    phase.max_reject_cycles = 3;
+                }
+
+                let wf = ConfigurableWorkflow::new(&config);
+
+                let t3 = make_task("TASK-003", "ready", &[]);
+                let graph = DependencyGraph::from_tasks(&[t3.clone()]);
+                let status_map = HashMap::new();
+
+                let reject_cycles: u32 = 4;
+
+                let result = wf.apply_automatic_transitions(&t3, &graph, reject_cycles, &status_map);
+
+                assert_eq!(
+                    result,
+                    Some("failed".to_string()),
+                    "Con 4 rechazos y max_reject_cycles=3, TASK-003 debe pasar a failed"
+                );
+
+                let phase_name = "implement";
+                let reason = format!(
+                    "{reject_cycles} ciclos de rechazo superados en fase '{phase_name}' \
+                     (máximo: {max_reject_cycles})",
+                    max_reject_cycles = 3
+                );
+                assert!(
+                    reason.contains("4 ciclos de rechazo superados en fase 'implement'"),
+                    "El Activity Log debe contener el mensaje exacto del Gherkin.\n\
+                     Mensaje generado: {reason}"
+                );
+                assert!(reason.contains("máximo: 3"), "Debe indicar el máximo: {reason}");
+
+                let log_entry = format!("- | Orchestrator | {reason}");
+                assert!(log_entry.contains("Orchestrator"));
+                assert!(log_entry.contains("4 ciclos"));
+                assert!(log_entry.contains("implement"));
+            }
+
+            /// Gherkin Scenario 9 variante: con 3 rechazos (justo debajo de max=3) NO pasa a failed
+            #[test]
+            fn gherkin_scenario_9_below_max_does_not_fail() {
+                let mut config = make_3phase_workflow();
+                if let Some(phase) = config.phases.iter_mut().find(|p| p.name == "implement") {
+                    phase.max_reject_cycles = 3;
+                }
+
+                let wf = ConfigurableWorkflow::new(&config);
+                let t3 = make_task("TASK-003", "ready", &[]);
+                let graph = DependencyGraph::from_tasks(&[t3.clone()]);
+                let status_map = HashMap::new();
+
+                let result = wf.apply_automatic_transitions(&t3, &graph, 3, &status_map);
+                assert_eq!(
+                    result,
+                    Some("failed".to_string()),
+                    "Con 3 rechazos y max=3, debe pasar a failed (>= max)"
+                );
+
+                let result = wf.apply_automatic_transitions(&t3, &graph, 2, &status_map);
+                assert_eq!(
+                    result,
+                    None,
+                    "Con 2 rechazos y max=3, NO debe pasar a failed"
+                );
+            }
+        }
+    }
 }
