@@ -1,7 +1,7 @@
 # STORY-V10-002: Implementar OpenAiProvider
 
 ## Status
-**Draft**
+**Done**
 
 ## Epic
 EPIC-V10-01
@@ -23,3 +23,4 @@ La autenticación se hará mediante `Authorization: Bearer <api_key>` donde `api
 
 ## Activity Log
 - 2026-05-08 | PO | historia creada desde DESIGN.md fase 1
+- 2026-05-09 | Dev | STORY-V10-002 completada: OpenAiProvider con POST JSON, base_url configurable, ${ENV_VAR} expansion, HTTP error propagation, 17 tests

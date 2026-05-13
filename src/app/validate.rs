@@ -101,6 +101,11 @@ pub fn validate(project_root: &Path, config_path: Option<&Path>) -> ValidationRe
         validate_git(project_root, cfg, &mut result);
     }
 
+    // ── 7. Models (STORY-V10-005 CA3) ───────────────────────────────
+    if let Some(ref cfg) = cfg {
+        validate_models(cfg, &mut result);
+    }
+
     // Contar OKs: cada categoría sin hallazgos cuenta como OK
     let categories: HashSet<&str> = result
         .findings
@@ -114,6 +119,7 @@ pub fn validate(project_root: &Path, config_path: Option<&Path>) -> ValidationRe
         "stories",
         "dependencies",
         "git",
+        "models",
     ];
     result.ok = all_categories
         .iter()
@@ -193,7 +199,7 @@ fn validate_skills(project_root: &Path, cfg: &Config, result: &mut ValidationRes
 
     let mut found = 0;
     for (i, role) in roles.iter().enumerate() {
-        let path_str = cfg.agents.skill_for_role(role);
+        let path_str = crate::app::resolver::skill_path(&cfg.agents, role);
         let path = project_root.join(&path_str);
         let label = role_names[i];
         if path.exists() && path.is_file() {
@@ -263,7 +269,7 @@ fn validate_stories(
             }
         };
 
-        match Story::load(&path) {
+        match crate::app::story_io::load(&path) {
             Ok(story) => {
                 // Validar ID: STORY-NNN
                 if !story.id.chars().any(|c| c.is_ascii_digit()) {
@@ -484,6 +490,80 @@ fn find_in_path(binary: &str) -> bool {
     false
 }
 
+/// Valida los modelos LLM definidos en `[models]` (STORY-V10-005 CA3).
+///
+/// Para cada modelo definido:
+/// - Verifica que el provider es "openai" o "anthropic" (Error si no)
+/// - Intenta expandir `${ENV_VAR}` en `api_key` (Error si la variable no existe)
+/// - Advierte si `api_key` está vacío (compatible con Ollama)
+fn validate_models(cfg: &Config, result: &mut ValidationResult) {
+    if cfg.models.is_empty() {
+        // Sin modelos definidos: nada que validar. La categoría "models" queda OK.
+        return;
+    }
+
+    let valid_providers = ["openai", "anthropic"];
+
+    for (name, model) in &cfg.models {
+        // CA3a: Verificar que el provider es conocido
+        let provider_lower = model.provider.to_lowercase();
+        if !valid_providers.contains(&provider_lower.as_str()) {
+            result.add(
+                Severity::Error,
+                "models",
+                format!(
+                    "Modelo '{name}': provider '{}' desconocido. Providers válidos: openai, anthropic",
+                    model.provider
+                ),
+                None,
+            );
+            continue; // No seguir validando este modelo si el provider es inválido
+        }
+
+        // CA3b: Intentar expandir variables de entorno
+        // Si api_key tiene ${...}, verificar que la variable existe
+        if model.api_key.contains("${") {
+            match crate::config::expand_env_vars(&model.api_key) {
+                Ok(expanded) => {
+                    // CA3c: Warning si api_key expandido está vacío (caso Ollama)
+                    if expanded.is_empty() || expanded == model.api_key {
+                        // api_key vacío es válido para Ollama local, solo warning
+                        result.add(
+                            Severity::Warning,
+                            "models",
+                            format!(
+                                "Modelo '{name}': api_key está vacío. Esto es válido para Ollama o proxies locales, \
+                                 pero asegúrate de que el endpoint acepta requests sin autenticación."
+                            ),
+                            None,
+                        );
+                    }
+                }
+                Err(e) => {
+                    result.add(
+                        Severity::Error,
+                        "models",
+                        format!("Modelo '{name}': {e}"),
+                        None,
+                    );
+                }
+            }
+        } else {
+            // api_key no tiene ${...}, verificar si está vacío
+            if model.api_key.is_empty() {
+                result.add(
+                    Severity::Warning,
+                    "models",
+                    format!(
+                        "Modelo '{name}': api_key está vacío. Esto es válido para Ollama o proxies locales."
+                    ),
+                    None,
+                );
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -693,5 +773,219 @@ provider = "codex"
                 assert_eq!(f.severity, Severity::Warning);
             }
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // STORY-V10-005 CA3: validate models
+    // ═══════════════════════════════════════════════════════════════
+
+    /// CA3: validate_models con modelos vacíos no produce hallazgos.
+    #[test]
+    fn story_v10005_ca3_empty_models_no_findings() {
+        let cfg = Config::default();
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+        validate_models(&cfg, &mut result);
+        assert!(result.findings.is_empty());
+    }
+
+    /// CA3: validate_models detecta provider desconocido como Error.
+    #[test]
+    fn story_v10005_ca3_unknown_provider_error() {
+        let toml = r#"
+[models.mistral]
+provider = "mistral"
+model_id = "mistral-large"
+api_key = "sk-test"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+        validate_models(&cfg, &mut result);
+
+        assert_eq!(result.errors, 1);
+        let finding = result
+            .findings
+            .iter()
+            .find(|f| f.category == "models")
+            .unwrap();
+        assert_eq!(finding.severity, Severity::Error);
+        assert!(
+            finding.message.contains("mistral"),
+            "error debe mencionar el provider: {}",
+            finding.message
+        );
+    }
+
+    /// CA3: validate_models acepta openai como provider válido.
+    #[test]
+    fn story_v10005_ca3_valid_openai_provider_no_error() {
+        let toml = r#"
+[models.gpt4o]
+provider = "openai"
+model_id = "gpt-4o"
+api_key = "sk-test"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+        validate_models(&cfg, &mut result);
+        assert_eq!(result.errors, 0);
+    }
+
+    /// CA3: validate_models acepta anthropic como provider válido.
+    #[test]
+    fn story_v10005_ca3_valid_anthropic_provider_no_error() {
+        let toml = r#"
+[models.claude]
+provider = "anthropic"
+model_id = "claude-sonnet"
+api_key = "sk-ant-test"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+        validate_models(&cfg, &mut result);
+        assert_eq!(result.errors, 0);
+    }
+
+    /// CA3: validate_models reporta Error si la variable de entorno no está definida.
+    #[test]
+    fn story_v10005_ca3_missing_env_var_error() {
+        let toml = r#"
+[models.broken]
+provider = "openai"
+model_id = "gpt-4o"
+api_key = "${DEFINITELY_NOT_SET_V10_005_CA3}"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+        validate_models(&cfg, &mut result);
+
+        assert_eq!(result.errors, 1);
+        let finding = result
+            .findings
+            .iter()
+            .find(|f| f.category == "models" && f.severity == Severity::Error)
+            .unwrap();
+        assert!(
+            finding.message.contains("DEFINITELY_NOT_SET_V10_005_CA3"),
+            "error debe mencionar la variable: {}",
+            finding.message
+        );
+    }
+
+    /// CA3: validate_models reporta Warning si api_key está vacío (Ollama).
+    #[test]
+    fn story_v10005_ca3_empty_api_key_warning() {
+        let toml = r#"
+[models.ollama]
+provider = "openai"
+model_id = "llama3"
+api_key = ""
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+        validate_models(&cfg, &mut result);
+
+        assert_eq!(result.errors, 0);
+        assert_eq!(result.warnings, 1);
+        let finding = result
+            .findings
+            .iter()
+            .find(|f| f.category == "models" && f.severity == Severity::Warning)
+            .unwrap();
+        assert!(
+            finding.message.contains("ollama") || finding.message.contains("vacío"),
+            "warning debe mencionar el modelo: {}",
+            finding.message
+        );
+    }
+
+    /// CA3: validate_models con variable de entorno definida no produce Error.
+    #[test]
+    fn story_v10005_ca3_valid_env_var_no_error() {
+        std::env::set_var("TEST_V10_005_VALIDATE_KEY", "sk-valid-test-key");
+
+        let toml = r#"
+[models.gpt4o]
+provider = "openai"
+model_id = "gpt-4o"
+api_key = "${TEST_V10_005_VALIDATE_KEY}"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+        validate_models(&cfg, &mut result);
+
+        assert_eq!(result.errors, 0);
+        assert_eq!(result.warnings, 0);
+    }
+
+    /// CA3: validate_models con múltiples modelos mixtos.
+    #[test]
+    fn story_v10005_ca3_mixed_models() {
+        let toml = r#"
+[models.good]
+provider = "openai"
+model_id = "gpt-4o"
+api_key = "sk-test"
+
+[models.bad]
+provider = "unknown"
+model_id = "bad-model"
+api_key = "key"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let mut result = ValidationResult {
+            ok: 0,
+            warnings: 0,
+            errors: 0,
+            findings: vec![],
+        };
+        validate_models(&cfg, &mut result);
+
+        // Solo "bad" debe generar error
+        assert_eq!(result.errors, 1);
+        let finding = result
+            .findings
+            .iter()
+            .find(|f| f.category == "models" && f.severity == Severity::Error)
+            .unwrap();
+        assert!(
+            finding.message.contains("bad"),
+            "error debe mencionar el modelo 'bad': {}",
+            finding.message
+        );
     }
 }

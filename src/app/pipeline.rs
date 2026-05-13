@@ -13,7 +13,7 @@ use crate::domain::workflow::{CanonicalWorkflow, Workflow};
 use crate::infra::agent::{self, AgentOptions};
 use crate::infra::checkpoint::OrchestratorState;
 use crate::infra::providers;
-use serde::Serialize;
+use crate::app::report::{self, RunReport, StoryRecord};
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
@@ -95,7 +95,7 @@ async fn run_real(
     let start = Instant::now();
     let max_wall = std::time::Duration::from_secs(cfg.limits.max_wall_time_seconds);
 
-    let (state, start_iteration) = if let Some(resume) = resume_state {
+    let (state, start_iteration) = if let Some(ref resume) = resume_state {
         tracing::info!(
             "📂 Reanudando desde checkpoint: iteración {}",
             resume.iteration
@@ -103,9 +103,9 @@ async fn run_real(
         let iteration = resume.iteration;
         (
             SharedState::new(
-                resume.reject_cycles,
-                resume.story_iterations,
-                resume.story_errors,
+                resume.reject_cycles.clone(),
+                resume.story_iterations.clone(),
+                resume.story_errors.clone(),
             ),
             iteration,
         )
@@ -116,6 +116,18 @@ async fn run_real(
     let mut iteration: u32 = start_iteration;
     let mut stop_reason: Option<String> = None;
     let workflow: &dyn Workflow = &CanonicalWorkflow;
+
+    // STORY-003 CA3: Crear directorios necesarios (movido desde Config::validate())
+    // Solo en la primera ejecución (no en resume)
+    if resume_state.is_none() {
+        for dir in [&cfg.project.decisions_dir, &cfg.project.log_dir] {
+            let path = project_root.join(dir);
+            std::fs::create_dir_all(&path)?;
+        }
+        // También crear epics_dir si no existe (lo necesita plan.rs)
+        let epics_path = project_root.join(&cfg.project.epics_dir);
+        std::fs::create_dir_all(&epics_path)?;
+    }
 
     // Calcular límite efectivo de iteraciones una sola vez al inicio.
     // Si el usuario no lo configuró (0), se escala con el nº de historias.
@@ -322,7 +334,7 @@ async fn run_real(
 
     // Generar reporte final
     let stories = filter_stories(load_all_stories(project_root, cfg)?, options);
-    let report = build_report(
+    let report = report::build(
         &stories,
         iteration,
         start.elapsed(),
@@ -345,7 +357,7 @@ fn run_dry(project_root: &Path, cfg: &Config, options: &RunOptions) -> anyhow::R
     let mut stories = filter_stories(load_all_stories(project_root, cfg)?, options);
     if stories.is_empty() {
         tracing::info!("Sin historias que procesar.");
-        return build_report(
+        return report::build(
             &stories,
             0,
             start.elapsed(),
@@ -495,7 +507,7 @@ fn run_dry(project_root: &Path, cfg: &Config, options: &RunOptions) -> anyhow::R
         est_minutes * 2
     );
 
-    build_report(
+    report::build(
         &stories,
         iteration,
         start.elapsed(),
@@ -504,90 +516,6 @@ fn run_dry(project_root: &Path, cfg: &Config, options: &RunOptions) -> anyhow::R
         &story_errors,
         None, // dry-run no tiene stop_reason relevante
     )
-}
-
-/// Construye el RunReport final a partir del estado de las historias.
-fn build_report(
-    stories: &[Story],
-    iterations: u32,
-    elapsed: std::time::Duration,
-    story_iterations: &HashMap<String, u32>,
-    reject_cycles: &HashMap<String, u32>,
-    story_errors: &HashMap<String, String>,
-    stop_reason: Option<String>,
-) -> anyhow::Result<RunReport> {
-    let done = stories.iter().filter(|s| s.status == Status::Done).count();
-    let failed = stories
-        .iter()
-        .filter(|s| s.status == Status::Failed)
-        .count();
-    let blocked = stories
-        .iter()
-        .filter(|s| s.status == Status::Blocked)
-        .count();
-    let draft = stories.iter().filter(|s| s.status == Status::Draft).count();
-    let total = stories.len();
-
-    let story_records: Vec<StoryRecord> = stories
-        .iter()
-        .map(|s| {
-            let iter_count = story_iterations.get(&s.id).copied().unwrap_or(0);
-            let rej_count = reject_cycles.get(&s.id).copied().unwrap_or(0);
-            let error = story_errors.get(&s.id).cloned();
-            StoryRecord {
-                id: s.id.clone(),
-                status: s.status.to_string(),
-                epic: s.epic.clone(),
-                iterations: iter_count,
-                reject_cycles: rej_count,
-                error,
-            }
-        })
-        .collect();
-
-    Ok(RunReport {
-        total,
-        done,
-        failed,
-        blocked,
-        draft,
-        iterations,
-        elapsed,
-        elapsed_seconds: elapsed.as_secs(),
-        stories: story_records,
-        stop_reason,
-    })
-}
-
-/// Reporte final de la ejecución del orquestador.
-#[derive(Debug, Clone, Serialize)]
-pub struct RunReport {
-    pub total: usize,
-    pub done: usize,
-    pub failed: usize,
-    pub blocked: usize,
-    pub draft: usize,
-    pub iterations: u32,
-    #[serde(skip)]
-    pub elapsed: std::time::Duration,
-    pub elapsed_seconds: u64,
-    pub stories: Vec<StoryRecord>,
-    /// Razón de parada temprana (None = pipeline terminó naturalmente).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stop_reason: Option<String>,
-}
-
-/// Registro individual de una historia para el reporte JSON.
-#[derive(Debug, Clone, Serialize)]
-pub struct StoryRecord {
-    pub id: String,
-    pub status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub epic: Option<String>,
-    pub iterations: u32,
-    pub reject_cycles: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────
@@ -600,7 +528,7 @@ pub(crate) fn load_all_stories(project_root: &Path, cfg: &Config) -> anyhow::Res
     let mut stories = vec![];
     for entry in glob::glob(pattern.to_str().unwrap())? {
         let path = entry?;
-        match Story::load(&path) {
+        match crate::app::story_io::load(&path) {
             Ok(story) => stories.push(story),
             Err(e) => tracing::warn!("Error cargando {}: {e}", path.display()),
         }
@@ -645,7 +573,8 @@ fn apply_automatic_transitions(
             if simulate {
                 story.advance_status_in_memory(Status::Failed);
             } else {
-                story.set_status(Status::Failed)?;
+                crate::app::story_io::save_status(story, Status::Failed)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
             }
             continue;
         }
@@ -655,7 +584,8 @@ fn apply_automatic_transitions(
             if simulate {
                 story.advance_status_in_memory(Status::Failed);
             } else {
-                story.set_status(Status::Failed)?;
+                crate::app::story_io::save_status(story, Status::Failed)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
             }
         }
     }
@@ -684,7 +614,8 @@ fn apply_automatic_transitions(
             if simulate {
                 story.advance_status_in_memory(unblock_target);
             } else {
-                story.set_status(unblock_target)?;
+                crate::app::story_io::save_status(story, unblock_target)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
             }
         }
     }
@@ -711,7 +642,8 @@ fn apply_automatic_transitions(
             if simulate {
                 story.advance_status_in_memory(Status::Blocked);
             } else {
-                story.set_status(Status::Blocked)?;
+                crate::app::story_io::save_status(story, Status::Blocked)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
             }
         }
     }
@@ -804,7 +736,7 @@ async fn process_story(
     let role = workflow.map_status_to_role(story.status);
     let provider_name = cfg.agents.provider_for_role(role);
     let provider = providers::from_name(&provider_name)?;
-    let skill_path_str = cfg.agents.skill_for_role(role);
+    let skill_path_str = crate::app::resolver::skill_path(&cfg.agents, role);
     let instruction_path = project_root.join(&skill_path_str);
 
     // Prompt según el estado (sin cambios)
@@ -836,7 +768,7 @@ async fn process_story(
         }
     };
 
-    let model = cfg.agents.model_for_role(role, &instruction_path);
+    let model = crate::app::resolver::model(&cfg.agents, role, &instruction_path);
     tracing::info!(
         "  {}",
         format_agent_line_with_model(label, &story.id, &provider_name, &model,)
@@ -898,7 +830,7 @@ async fn process_story(
                     if *delay > std::time::Duration::ZERO {
                         tokio::time::sleep(*delay).await;
                     }
-                    match Story::load(&path) {
+                    match crate::app::story_io::load(&path) {
                         Ok(s) => {
                             if s.status != story.status {
                                 updated_opt = Some(s);
@@ -1860,7 +1792,7 @@ mod tests {
                     "provider para rol {role} debería ser {expected_provider}"
                 );
 
-                let skill_path = cfg.agents.skill_for_role(role);
+                let skill_path = crate::app::resolver::skill_path(&cfg.agents, role);
                 assert!(
                     !skill_path.is_empty(),
                     "skill_path para rol {role} no debe estar vacío"
@@ -1939,8 +1871,8 @@ mod tests {
             assert_eq!(can_provider, "pi");
             assert_eq!(alt_provider, "pi");
 
-            let can_skill = cfg.agents.skill_for_role(can_role);
-            let alt_skill = cfg.agents.skill_for_role(alt_role);
+            let can_skill = crate::app::resolver::skill_path(&cfg.agents, can_role);
+            let alt_skill = crate::app::resolver::skill_path(&cfg.agents, alt_role);
             assert_ne!(
                 can_skill, alt_skill,
                 "skill paths deben diferir cuando el rol difiere: {can_skill} vs {alt_skill}"
@@ -3315,10 +3247,10 @@ model = "gpt-5"
             let cfg: Config = toml::from_str(toml).unwrap();
             let role = "developer";
 
-            // La skill path DEBE venir desde cfg.agents.skill_for_role(role)
-            let skill_path_str = cfg.agents.skill_for_role(role);
+            // La skill path DEBE venir desde crate::app::resolver::skill_path(&cfg.agents, role)
+            let skill_path_str = crate::app::resolver::skill_path(&cfg.agents, role);
             let skill_path = Path::new(&skill_path_str);
-            let model = cfg.agents.model_for_role(role, skill_path);
+            let model = crate::app::resolver::model(&cfg.agents, role, skill_path);
 
             assert_eq!(
                 model, "gpt-5",
@@ -3327,12 +3259,12 @@ model = "gpt-5"
         }
 
         /// CA6: El skill_path que se pasa a model_for_role se obtiene
-        ///      desde cfg.agents.skill_for_role(role), no hardcodeado.
+        ///      desde crate::app::resolver::skill_path(&cfg.agents, role), no hardcodeado.
         #[test]
         fn ca6_skill_path_resolved_via_skill_for_role() {
             let cfg = Config::default();
             let role = "developer";
-            let skill_path_str = cfg.agents.skill_for_role(role);
+            let skill_path_str = crate::app::resolver::skill_path(&cfg.agents, role);
 
             assert_eq!(
                 skill_path_str, ".pi/skills/developer/SKILL.md",
@@ -3344,7 +3276,7 @@ model = "gpt-5"
             );
 
             // El path se puede usar con model_for_role sin paniquear
-            let model = cfg.agents.model_for_role(role, Path::new(&skill_path_str));
+            let model = crate::app::resolver::model(&cfg.agents, role, Path::new(&skill_path_str));
             assert!(
                 !model.is_empty(),
                 "model_for_role nunca debe devolver string vacía"

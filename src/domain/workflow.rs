@@ -370,3 +370,460 @@ mod tests {
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// STORY-V10-007: ConfigurableWorkflow desde TOML
+// ═══════════════════════════════════════════════════════════════════════
+
+use std::collections::HashMap;
+
+/// Configuración de estados del workflow.
+///
+/// Vive en `config/workflow.rs` en producción. Definido aquí temporalmente
+/// para que el dominio pueda consumirlo sin depender de la capa config.
+#[derive(Debug, Clone)]
+pub struct WorkflowStatesConfig {
+    pub initial: String,
+    pub terminal: Vec<String>,
+}
+
+impl Default for WorkflowStatesConfig {
+    fn default() -> Self {
+        Self {
+            initial: "draft".to_string(),
+            terminal: vec!["done".to_string(), "failed".to_string()],
+        }
+    }
+}
+
+/// Configuración de un rol en el workflow.
+#[derive(Debug, Clone)]
+pub struct RoleConfig {
+    pub name: String,
+    pub system_prompt: String,
+    pub model: String,
+}
+
+/// Configuración de una fase (transición) del workflow.
+#[derive(Debug, Clone)]
+pub struct PhaseConfig {
+    pub name: String,
+    pub from: String,
+    pub to: String,
+    pub role: String,
+    pub model: String,
+    pub prompt: String,
+    pub on_reject: String,
+    pub max_reject_cycles: u32,
+    pub timeout_seconds: Option<u64>,
+}
+
+/// Configuración completa del workflow cargable desde TOML.
+#[derive(Debug, Clone, Default)]
+pub struct WorkflowConfig {
+    pub states: WorkflowStatesConfig,
+    pub roles: Vec<RoleConfig>,
+    pub phases: Vec<PhaseConfig>,
+    pub task_format: crate::domain::task::TaskFormatConfig,
+}
+
+/// Workflow configurable en runtime.
+///
+/// Recibe un `&WorkflowConfig` (que vive en la capa `config/`) y expone
+/// consultas sobre estados, fases, roles y transiciones automáticas.
+#[derive(Debug, Clone)]
+pub struct ConfigurableWorkflow {
+    states: WorkflowStatesConfig,
+    phases: Vec<PhaseConfig>,
+}
+
+impl ConfigurableWorkflow {
+    /// Construye un workflow configurable a partir de la configuración.
+    pub fn new(config: &WorkflowConfig) -> Self {
+        Self {
+            states: config.states.clone(),
+            phases: config.phases.clone(),
+        }
+    }
+
+    /// Devuelve todas las fases cuyo `from` coincide con el estado actual.
+    /// Si hay más de una, hay bifurcación y el agente elige.
+    pub fn phases_for_status(&self, status: &str) -> Vec<&PhaseConfig> {
+        self.phases.iter().filter(|p| p.from == status).collect()
+    }
+
+    /// ¿Es este estado terminal? (el pipeline no vuelve a tocar la task).
+    pub fn is_terminal(&self, status: &str) -> bool {
+        self.states.terminal.iter().any(|t| t == status)
+    }
+
+    /// Estado inicial del workflow.
+    pub fn initial_state(&self) -> &str {
+        &self.states.initial
+    }
+
+    /// Aplica transiciones automáticas a una task según su estado y dependencias.
+    ///
+    /// Retorna `Some(nuevo_estado)` si se debe hacer una transición automática,
+    /// o `None` si no corresponde.
+    pub fn apply_automatic_transitions(
+        &self,
+        task: &crate::domain::task::Task,
+        graph: &crate::domain::graph::DependencyGraph,
+        reject_cycles: u32,
+        status_map: &HashMap<String, String>,
+    ) -> Option<String> {
+        let current_status = task.fields.get("status").cloned().unwrap_or_default();
+
+        // 1. ¿max_reject_cycles agotado?
+        for phase in &self.phases {
+            if phase.from == current_status && reject_cycles >= phase.max_reject_cycles {
+                // Encontrar el estado "failed" configurado
+                let failed_state = self
+                    .states
+                    .terminal
+                    .iter()
+                    .find(|t| {
+                        t.to_lowercase().contains("fail") || t.to_lowercase().contains("reject")
+                    })
+                    .cloned()
+                    .unwrap_or_else(|| "failed".to_string());
+                return Some(failed_state);
+            }
+        }
+
+        // 2. Bloquear por dependencias no resueltas
+        if !task.blockers.is_empty() {
+            let all_blockers_done = task.blockers.iter().all(|blocker| {
+                status_map
+                    .get(blocker)
+                    .is_some_and(|s| self.is_terminal(s))
+            });
+
+            if !all_blockers_done {
+                // Solo bloquear si no es ya blocked y no es terminal
+                if current_status != "blocked" && !self.is_terminal(&current_status) {
+                    return Some("blocked".to_string());
+                }
+            } else if current_status == "blocked" {
+                // Desbloquear: todos los blockers están en terminal
+                return Some(self.states.initial.clone());
+            }
+        }
+
+        None
+    }
+}
+
+#[cfg(test)]
+mod configurable_workflow_tests {
+    use super::*;
+    use crate::domain::graph::DependencyGraph;
+    use crate::domain::task::{ActivityLogEntry, Task, TaskFormatConfig};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    // ── Helpers ──────────────────────────────────────────────────────
+
+    fn make_workflow_config() -> WorkflowConfig {
+        WorkflowConfig {
+            states: WorkflowStatesConfig {
+                initial: "draft".to_string(),
+                terminal: vec!["done".to_string(), "failed".to_string()],
+            },
+            roles: vec![
+                RoleConfig {
+                    name: "developer".to_string(),
+                    system_prompt: "Eres un desarrollador senior.".to_string(),
+                    model: "gpt4o".to_string(),
+                },
+                RoleConfig {
+                    name: "reviewer".to_string(),
+                    system_prompt: "Eres un revisor de código.".to_string(),
+                    model: "claude".to_string(),
+                },
+            ],
+            phases: vec![
+                PhaseConfig {
+                    name: "implement".to_string(),
+                    from: "ready".to_string(),
+                    to: "review".to_string(),
+                    role: "developer".to_string(),
+                    model: "gpt4o".to_string(),
+                    prompt: "Implementa {{task_id}}".to_string(),
+                    on_reject: "ready".to_string(),
+                    max_reject_cycles: 3,
+                    timeout_seconds: None,
+                },
+                PhaseConfig {
+                    name: "review".to_string(),
+                    from: "review".to_string(),
+                    to: "done".to_string(),
+                    role: "reviewer".to_string(),
+                    model: "claude".to_string(),
+                    prompt: "Revisa {{task_id}}".to_string(),
+                    on_reject: "ready".to_string(),
+                    max_reject_cycles: 2,
+                    timeout_seconds: Some(300),
+                },
+            ],
+            task_format: TaskFormatConfig::default(),
+        }
+    }
+
+    fn make_task(id: &str, status: &str, blockers: &[&str]) -> Task {
+        let mut fields = HashMap::new();
+        fields.insert("status".to_string(), status.to_string());
+        Task {
+            id: id.to_string(),
+            path: PathBuf::from(format!("tasks/{id}.md")),
+            fields,
+            blockers: blockers.iter().map(|s| s.to_string()).collect(),
+            activity_log: vec![],
+            raw_content: String::new(),
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // CA1: WorkflowConfig contiene todos los campos
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn workflow_config_has_states_roles_phases() {
+        let config = make_workflow_config();
+        assert_eq!(config.states.initial, "draft");
+        assert!(config.states.terminal.contains(&"done".to_string()));
+        assert_eq!(config.roles.len(), 2);
+        assert_eq!(config.roles[0].name, "developer");
+        assert_eq!(config.phases.len(), 2);
+        assert_eq!(config.phases[0].name, "implement");
+    }
+
+    #[test]
+    fn phase_config_includes_optional_timeout() {
+        let config = make_workflow_config();
+        assert!(config.phases[0].timeout_seconds.is_none());
+        assert_eq!(config.phases[1].timeout_seconds, Some(300));
+    }
+
+    #[test]
+    fn task_format_is_included_in_workflow_config() {
+        let config = make_workflow_config();
+        assert_eq!(config.task_format.id_pattern, r"TASK-\d+");
+        assert!(config.task_format.section_markers.contains_key("status"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // CA2: phases_for_status
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn phases_for_status_returns_matching_phases() {
+        let wf = ConfigurableWorkflow::new(&make_workflow_config());
+        let phases = wf.phases_for_status("ready");
+        assert_eq!(phases.len(), 1);
+        assert_eq!(phases[0].name, "implement");
+        assert_eq!(phases[0].from, "ready");
+        assert_eq!(phases[0].to, "review");
+    }
+
+    #[test]
+    fn phases_for_status_with_bifurcation() {
+        let mut config = make_workflow_config();
+        // Añadir una segunda fase desde "in_review"
+        config.phases.push(PhaseConfig {
+            name: "approve".to_string(),
+            from: "in_review".to_string(),
+            to: "done".to_string(),
+            role: "reviewer".to_string(),
+            model: "claude".to_string(),
+            prompt: "Aprueba".to_string(),
+            on_reject: "in_progress".to_string(),
+            max_reject_cycles: 2,
+            timeout_seconds: None,
+        });
+        config.phases.push(PhaseConfig {
+            name: "request_changes".to_string(),
+            from: "in_review".to_string(),
+            to: "in_progress".to_string(),
+            role: "reviewer".to_string(),
+            model: "claude".to_string(),
+            prompt: "Solicita cambios".to_string(),
+            on_reject: "in_review".to_string(),
+            max_reject_cycles: 2,
+            timeout_seconds: None,
+        });
+
+        let wf = ConfigurableWorkflow::new(&config);
+        let phases = wf.phases_for_status("in_review");
+        assert_eq!(phases.len(), 2);
+        let names: Vec<&str> = phases.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"approve"));
+        assert!(names.contains(&"request_changes"));
+    }
+
+    #[test]
+    fn phases_for_status_returns_empty_for_terminal_state() {
+        let wf = ConfigurableWorkflow::new(&make_workflow_config());
+        let phases = wf.phases_for_status("done");
+        assert!(phases.is_empty());
+    }
+
+    #[test]
+    fn phases_for_status_returns_empty_for_unknown_state() {
+        let wf = ConfigurableWorkflow::new(&make_workflow_config());
+        let phases = wf.phases_for_status("unknown_state");
+        assert!(phases.is_empty());
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // CA3: is_terminal
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn is_terminal_returns_true_for_done() {
+        let wf = ConfigurableWorkflow::new(&make_workflow_config());
+        assert!(wf.is_terminal("done"));
+        assert!(wf.is_terminal("failed"));
+    }
+
+    #[test]
+    fn is_terminal_returns_false_for_non_terminal() {
+        let wf = ConfigurableWorkflow::new(&make_workflow_config());
+        assert!(!wf.is_terminal("draft"));
+        assert!(!wf.is_terminal("ready"));
+        assert!(!wf.is_terminal("in_progress"));
+    }
+
+    #[test]
+    fn is_terminal_returns_false_for_unknown_state() {
+        let wf = ConfigurableWorkflow::new(&make_workflow_config());
+        assert!(!wf.is_terminal("unknown"));
+    }
+
+    #[test]
+    fn is_terminal_with_custom_terminal_states() {
+        let mut config = make_workflow_config();
+        config.states.terminal = vec!["completed".to_string(), "cancelled".to_string()];
+        let wf = ConfigurableWorkflow::new(&config);
+        assert!(wf.is_terminal("completed"));
+        assert!(wf.is_terminal("cancelled"));
+        assert!(!wf.is_terminal("done"), "done no debería ser terminal si no está en la lista");
+    }
+
+    #[test]
+    fn is_terminal_with_empty_terminal_list() {
+        let mut config = make_workflow_config();
+        config.states.terminal = vec![];
+        let wf = ConfigurableWorkflow::new(&config);
+        assert!(!wf.is_terminal("done"));
+        assert!(!wf.is_terminal("failed"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Transiciones automáticas
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn automatic_transition_to_blocked_for_unresolved_dependencies() {
+        let config = make_workflow_config();
+        let wf = ConfigurableWorkflow::new(&config);
+        let task = make_task("TASK-004", "ready", &["TASK-003"]);
+        let graph = DependencyGraph::default(); // simplificado
+        let mut status_map = HashMap::new();
+        status_map.insert("TASK-003".to_string(), "draft".to_string());
+
+        let result = wf.apply_automatic_transitions(&task, &graph, 0, &status_map);
+        assert_eq!(result, Some("blocked".to_string()));
+    }
+
+    #[test]
+    fn automatic_transition_to_unblocked_when_all_blockers_terminal() {
+        let config = make_workflow_config();
+        let wf = ConfigurableWorkflow::new(&config);
+        let task = make_task("TASK-004", "blocked", &["TASK-003"]);
+        let graph = DependencyGraph::default();
+        let mut status_map = HashMap::new();
+        status_map.insert("TASK-003".to_string(), "done".to_string());
+
+        let result = wf.apply_automatic_transitions(&task, &graph, 0, &status_map);
+        assert_eq!(result, Some("draft".to_string())); // initial state
+    }
+
+    #[test]
+    fn automatic_transition_stays_blocked_if_not_all_blockers_terminal() {
+        let config = make_workflow_config();
+        let wf = ConfigurableWorkflow::new(&config);
+        let task = make_task("TASK-004", "blocked", &["TASK-002", "TASK-003"]);
+        let graph = DependencyGraph::default();
+        let mut status_map = HashMap::new();
+        status_map.insert("TASK-002".to_string(), "done".to_string());
+        status_map.insert("TASK-003".to_string(), "draft".to_string());
+
+        let result = wf.apply_automatic_transitions(&task, &graph, 0, &status_map);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn automatic_transition_to_failed_on_max_reject_cycles() {
+        let config = make_workflow_config();
+        let wf = ConfigurableWorkflow::new(&config);
+        let task = make_task("TASK-001", "review", &[]);
+        let graph = DependencyGraph::default();
+        let status_map = HashMap::new();
+
+        // max_reject_cycles para la fase "review" es 2
+        let result = wf.apply_automatic_transitions(&task, &graph, 2, &status_map);
+        assert_eq!(result, Some("failed".to_string()));
+    }
+
+    #[test]
+    fn no_automatic_transition_below_max_reject_cycles() {
+        let config = make_workflow_config();
+        let wf = ConfigurableWorkflow::new(&config);
+        let task = make_task("TASK-001", "review", &[]);
+        let graph = DependencyGraph::default();
+        let status_map = HashMap::new();
+
+        // max_reject_cycles para "review" es 2, llevamos 1
+        let result = wf.apply_automatic_transitions(&task, &graph, 1, &status_map);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn automatic_transition_no_change_for_terminal_task() {
+        let config = make_workflow_config();
+        let wf = ConfigurableWorkflow::new(&config);
+        let task = make_task("TASK-001", "done", &["TASK-002"]);
+        let graph = DependencyGraph::default();
+        let mut status_map = HashMap::new();
+        status_map.insert("TASK-002".to_string(), "draft".to_string());
+
+        // Ya es terminal, no debería cambiar
+        let result = wf.apply_automatic_transitions(&task, &graph, 0, &status_map);
+        assert_eq!(result, None);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // initial_state
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn initial_state_returns_configured_value() {
+        let wf = ConfigurableWorkflow::new(&make_workflow_config());
+        assert_eq!(wf.initial_state(), "draft");
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // ConfigurableWorkflow recibe &WorkflowConfig (referencia)
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn configurable_workflow_does_not_take_ownership() {
+        let config = make_workflow_config();
+        let wf = ConfigurableWorkflow::new(&config);
+        // La config original sigue siendo accesible
+        assert_eq!(config.states.initial, "draft");
+        assert!(wf.is_terminal("done"));
+    }
+}

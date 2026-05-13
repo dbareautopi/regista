@@ -25,7 +25,7 @@ pub struct Story {
     /// Línea del Activity Log que contiene la última razón de rechazo.
     pub last_rejection: Option<String>,
     /// Contenido completo del archivo (para reescribir al actualizar).
-    pub(crate) raw_content: String,
+    pub raw_content: String,
 }
 
 // ── Parseo ──────────────────────────────────────────────────────────────
@@ -143,47 +143,43 @@ fn extract_section(content: &str, header: &str) -> Option<String> {
 // ── Lectura / Escritura ─────────────────────────────────────────────────
 
 impl Story {
-    /// Carga una historia desde un archivo .md.
-    pub fn load(path: &Path) -> anyhow::Result<Self> {
-        let content = std::fs::read_to_string(path)?;
+    /// Parsea una historia desde su contenido markdown.
+    ///
+    /// El I/O de archivos se maneja en `infra::story_io`.
+    pub fn parse(path: &Path, content: &str) -> Result<Self, String> {
         let id = path
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("unknown")
             .to_string();
 
-        let status = parse_status(&content)
-            .ok_or_else(|| anyhow::anyhow!("{id}: no se pudo parsear el status"))?;
+        let status = parse_status(content)
+            .ok_or_else(|| format!("{id}: no se pudo parsear el status"))?;
 
         Ok(Self {
             id,
             path: path.to_path_buf(),
             status,
-            epic: parse_epic(&content),
-            blockers: parse_blockers(&content),
-            last_rejection: parse_last_rejection(&content),
-            raw_content: content,
+            epic: parse_epic(content),
+            blockers: parse_blockers(content),
+            last_rejection: parse_last_rejection(content),
+            raw_content: content.to_string(),
         })
     }
 
-    /// Actualiza el status en el archivo .md de forma segura.
+    /// Genera el contenido markdown con un nuevo status, sin tocar disco.
     ///
-    /// Escribe entre `**...**` en la línea siguiente a `## Status`.
-    /// Hace backup automático en `<archivo>.bak`.
-    pub fn set_status(&mut self, new_status: Status) -> anyhow::Result<()> {
-        let _old_status_str = format!("**{}**", self.status);
+    /// La escritura a disco (con backup atómico) se maneja en `infra::story_io`.
+    pub fn render_with_status(&self, new_status: Status) -> Result<String, String> {
         let new_status_str = format!("**{}**", new_status);
 
-        // Buscar y reemplazar la línea de status
         let mut lines: Vec<String> = self.raw_content.lines().map(|l| l.to_string()).collect();
         let mut found = false;
 
         for i in 0..lines.len() {
             if lines[i].to_lowercase().trim() == "## status" {
-                // La siguiente línea contiene el status actual
                 if i + 1 < lines.len() {
                     let old_line = &lines[i + 1];
-                    // Reemplazar manteniendo la indentación original
                     let leading = old_line.len() - old_line.trim_start().len();
                     let trailing = old_line.len() - old_line.trim_end().len();
                     let spaces_leading = " ".repeat(leading);
@@ -197,35 +193,15 @@ impl Story {
         }
 
         if !found {
-            anyhow::bail!("{}: no se encontró la sección '## Status'", self.id);
+            return Err(format!("{}: no se encontró la sección '## Status'", self.id));
         }
 
-        let new_content = lines.join("\n");
+        Ok(lines.join("\n"))
+    }
 
-        // Backup antes de escribir
-        std::fs::copy(&self.path, self.path.with_extension("md.bak"))?;
-        std::fs::write(&self.path, &new_content)?;
-
-        // Verificar que se leyó correctamente
-        let verification = Story::load(&self.path)?;
-        if verification.status != new_status {
-            // Restaurar backup
-            std::fs::copy(self.path.with_extension("md.bak"), &self.path)?;
-            let _ = std::fs::remove_file(self.path.with_extension("md.bak"));
-            anyhow::bail!(
-                "{}: la verificación falló tras escribir '{}', se lee '{}'",
-                self.id,
-                new_status,
-                verification.status
-            );
-        }
-
-        // Éxito: borrar backup
-        let _ = std::fs::remove_file(self.path.with_extension("md.bak"));
-
-        self.status = new_status;
-        self.raw_content = new_content;
-        Ok(())
+    /// Returns a reference to the file path.
+    pub fn file_path(&self) -> &std::path::Path {
+        &self.path
     }
 
     /// ¿Bloquea esta historia a otras? (útil para deadlock detection).

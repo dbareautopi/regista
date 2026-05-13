@@ -1,7 +1,7 @@
 # STORY-V10-005: Configuración de modelos LLM en TOML
 
 ## Status
-**Draft**
+**Done**
 
 ## Epic
 EPIC-V10-01
@@ -23,3 +23,4 @@ Cada modelo se referencia por un nombre lógico (ej. `gpt4o`, `claude`) que lueg
 
 ## Activity Log
 - 2026-05-08 | PO | historia creada desde DESIGN.md fase 1
+- 2026-05-09 | Dev | STORY-V10-005 completada: [models] en TOML, ModelConfig, resolve_model() con ${ENV_VAR}, validate_models() en app/validate.rs, 14 tests

@@ -1,7 +1,7 @@
 # STORY-V10-004: Retry con backoff, timeout y rate limiting en cliente LLM
 
 ## Status
-**Draft**
+**Done**
 
 ## Epic
 EPIC-V10-01
@@ -23,3 +23,4 @@ A diferencia de v0.x donde se reintentaba matando y relanzando procesos, aquí s
 
 ## Activity Log
 - 2026-05-08 | PO | historia creada desde DESIGN.md fase 1
+- 2026-05-09 | Dev | STORY-V10-004 completada: invoke_with_retry() async con backoff exponencial (cap 300s), RateLimiter, extract_retry_after, 5 async tests con mock providers

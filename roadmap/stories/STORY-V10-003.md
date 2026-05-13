@@ -1,7 +1,7 @@
 # STORY-V10-003: Implementar AnthropicProvider
 
 ## Status
-**Draft**
+**Done**
 
 ## Epic
 EPIC-V10-01
@@ -23,3 +23,4 @@ A diferencia de OpenAI, Anthropic requiere que el system prompt se envíe como c
 
 ## Activity Log
 - 2026-05-08 | PO | historia creada desde DESIGN.md fase 1
+- 2026-05-09 | Dev | STORY-V10-003 completada: AnthropicProvider con system top-level, retry-after extraction, 19 tests

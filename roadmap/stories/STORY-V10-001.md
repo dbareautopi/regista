@@ -1,7 +1,7 @@
 # STORY-V10-001: Definir trait LlmProvider y tipos base
 
 ## Status
-**Draft**
+**Done**
 
 ## Epic
 EPIC-V10-01
@@ -23,3 +23,4 @@ Este módulo reemplaza la lógica de `infra/providers.rs` + `infra/agent.rs` de 
 
 ## Activity Log
 - 2026-05-08 | PO | historia creada desde DESIGN.md fase 1
+- 2026-05-09 | Dev | STORY-V10-001 completada: trait LlmProvider, tipos Message/ChatResponse/TokenUsage, factory from_config(), 12 tests

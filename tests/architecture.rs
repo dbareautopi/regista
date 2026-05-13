@@ -48,14 +48,9 @@ impl Layer {
     /// (excluding its own layer — same-layer imports are always allowed).
     fn allowed_imports(self) -> HashSet<Layer> {
         match self {
-            Layer::Cli => [
-                Layer::App,
-                Layer::Domain,
-                Layer::Infra,
-                Layer::Config,
-            ]
-            .into_iter()
-            .collect(),
+            Layer::Cli => [Layer::App, Layer::Domain, Layer::Infra, Layer::Config]
+                .into_iter()
+                .collect(),
             Layer::App => [Layer::Domain, Layer::Infra, Layer::Config]
                 .into_iter()
                 .collect(),
@@ -99,8 +94,7 @@ fn root_file_layer(module: &str) -> Layer {
     match module {
         // ── Domain ──────────────────────────────────────────────────
         // v1.0
-        "state" | "deadlock" | "graph" | "templates" | "task"
-        | "workflow" => Layer::Domain,
+        "state" | "deadlock" | "graph" | "templates" | "task" | "workflow" => Layer::Domain,
         // —v0.x (remove in Phase 5)
         "story" | "dependency_graph" | "prompts" => Layer::Domain,
 
@@ -112,8 +106,7 @@ fn root_file_layer(module: &str) -> Layer {
 
         // ── Application ────────────────────────────────────────────
         // v1.0
-        "pipeline" | "plan" | "board" | "init" | "validate" | "health"
-        | "update" => Layer::App,
+        "pipeline" | "plan" | "board" | "init" | "validate" | "health" | "update" => Layer::App,
         // —v0.x (remove in Phase 5)
         "orchestrator" | "validator" => Layer::App,
 
@@ -293,10 +286,7 @@ fn architecture_layers_are_respected() {
     }
 
     if !violations.is_empty() {
-        let mut msg = format!(
-            "\n❌ Architecture violations found: {}\n",
-            violations.len()
-        );
+        let mut msg = format!("\n❌ Architecture violations found: {}\n", violations.len());
         msg.push_str(&"=".repeat(80));
         msg.push('\n');
 
@@ -729,10 +719,8 @@ fn build_module_layer_map(
     map.entry("config".to_string()).or_insert(Layer::Config);
 
     // v1.0 submodules — map them proactively so forward references resolve
-    map.entry("infra::llm".to_string())
-        .or_insert(Layer::Infra);
-    map.entry("app::presets".to_string())
-        .or_insert(Layer::App);
+    map.entry("infra::llm".to_string()).or_insert(Layer::Infra);
+    map.entry("app::presets".to_string()).or_insert(Layer::App);
 
     map
 }
@@ -913,18 +901,9 @@ fn test_helper() {
 
     #[test]
     fn test_file_layer_detects_by_directory() {
-        assert_eq!(
-            file_layer(Path::new("src/cli/args.rs")).0,
-            Layer::Cli
-        );
-        assert_eq!(
-            file_layer(Path::new("src/app/pipeline.rs")).0,
-            Layer::App
-        );
-        assert_eq!(
-            file_layer(Path::new("src/domain/task.rs")).0,
-            Layer::Domain
-        );
+        assert_eq!(file_layer(Path::new("src/cli/args.rs")).0, Layer::Cli);
+        assert_eq!(file_layer(Path::new("src/app/pipeline.rs")).0, Layer::App);
+        assert_eq!(file_layer(Path::new("src/domain/task.rs")).0, Layer::Domain);
         assert_eq!(
             file_layer(Path::new("src/infra/llm/openai.rs")).0,
             Layer::Infra

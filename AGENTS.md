@@ -3,6 +3,8 @@
 Guía para agentes de codificación que trabajen en este proyecto.  
 Incluye arquitectura, convenciones, comandos, y decisiones de diseño.
 
+> ⚠️ **Rama actual**: `rework` (refactor v0.10.0). La versión estable está en `main` (v0.9.5).
+
 ---
 
 ## 📌 ¿Qué es esto?
@@ -17,6 +19,15 @@ No importa si el proyecto usa Rust, Python, o cualquier cosa. Solo necesita:
 1. Dónde están las historias de usuario (archivos `.md`)
 2. Qué provider y qué instrucciones de rol usar para cada rol
 3. La máquina de estados fija que gobierna las transiciones
+
+**Rama `rework` (v0.10.0)**: El proyecto está en pleno refactor hacia una versión
+más genérica. Los cambios principales son:
+- Unificación de `plan`/`auto`/`run` en `run --plan-only`
+- `Task` genérico con `task_format` configurable (reemplaza al `Story` hardcodeado)
+- Templates de prompts con `{{variables}}` (reemplaza los 7 prompts fijos)
+- Cliente LLM nativo en `infra/llm/` (OpenAI, Anthropic)
+- Épicas como campo de task, no como archivos separados
+- Eliminación de la dependencia conceptual con `spartito`
 
 ---
 
@@ -43,22 +54,23 @@ No importa si el proyecto usa Rust, Python, o cualquier cosa. Solo necesita:
 ## 📁 Estructura del proyecto
 
 La arquitectura sigue un diseño por **capas** con dependencias unidireccionales
-verificadas automáticamente por `tests/architecture.rs`:
+verificadas automáticamente por `tests/architecture.rs` (18 tests):
 
 ```
 regista/
 ├── AGENTS.md                  ← este archivo
 ├── README.md                  ← descripción general para usuarios
 ├── Cargo.toml                 ← dependencias y metadata del crate
+├── CHANGELOG.md               ← historial de versiones (Keep a Changelog)
 ├── .gitignore
 ├── src/
 │   ├── main.rs                ← entry point: mod app, cli, config, domain, infra
-│   ├── config.rs              ← Config, AgentsConfig + AgentRoleConfig, StackConfig, carga TOML
+│   ├── config.rs              ← Config, AgentsConfig, StackConfig, ModelConfig, carga TOML
 │   │
 │   ├── cli/                   ← 🟢 Capa CLI: args + handlers (puede importar cualquier capa)
 │   │   ├── mod.rs
 │   │   ├── args.rs            ← Cli, Commands (Plan/Auto/Run/Logs/Status/Kill/Validate/Init/Update/Board)
-│   │   └── handlers.rs        ← dispatch(), handle_plan(), handle_run(), daemon, exit codes
+│   │   └── handlers.rs        ← dispatch(), handlers, daemon, exit codes
 │   │
 │   ├── app/                   ← 🟡 Capa Aplicación: casos de uso (importa domain + infra + config)
 │   │   ├── mod.rs
@@ -72,12 +84,14 @@ regista/
 │   │
 │   ├── domain/                ← 🔴 Capa Dominio: lógica pura (NO importa otras capas del crate)
 │   │   ├── mod.rs
-│   │   ├── state.rs           ← Status (9), Actor (5), Transition (14), SharedState (Arc<RwLock<>>)
+│   │   ├── state.rs           ← Status (enum con 9 variantes), Actor (enum), Transition, SharedState
 │   │   ├── story.rs           ← Story, parseo .md, set_status() atómico, advance_status_in_memory()
 │   │   ├── graph.rs           ← DependencyGraph, DFS para ciclos, blocks_count()
-│   │   ├── deadlock.rs        ← analyze(), DeadlockResolution, priorización por desbloqueo
-│   │   ├── prompts.rs         ← PromptContext, DomainStackConfig, 7 prompts stack-agnósticos
-│   │   └── workflow.rs        ← Trait Workflow + CanonicalWorkflow (extensible para #04)
+│   │   ├── deadlock.rs        ← analyze() (v0.x con Story) + analyze_deadlock() (v0.10.0 con Task)
+│   │   ├── prompts.rs         ← PromptContext, DomainStackConfig, 7 prompts stack-agnósticos (v0.x)
+│   │   ├── workflow.rs        ← Trait Workflow + CanonicalWorkflow + ConfigurableWorkflow (v0.10.0)
+│   │   ├── task.rs            ← [NUEVO v0.10.0] Task, TaskFormatConfig, parseo configurable de .md
+│   │   └── templates.rs       ← [NUEVO v0.10.0] render_template() con {{variables}} para prompts
 │   │
 │   └── infra/                 ← 🔵 Capa Infraestructura: I/O, procesos, git (importa solo config)
 │       ├── mod.rs
@@ -86,14 +100,34 @@ regista/
 │       ├── checkpoint.rs      ← OrchestratorState: save/load/remove (.regista/state.toml)
 │       ├── daemon.rs          ← detach(), status(), kill(), follow(), PidCleanup
 │       ├── git.rs             ← snapshot(), rollback() con spawn_blocking
-│       └── hooks.rs           ← run_hook(): comandos shell post-fase con tokio::process::Command
+│       ├── hooks.rs           ← run_hook(): comandos shell post-fase con tokio::process::Command
+│       └── llm/               ← [NUEVO v0.10.0] Cliente LLM nativo (sin tools CLI externas)
+│           ├── mod.rs         ← Trait LlmProvider + factory from_config()
+│           ├── types.rs       ← Message, ChatResponse, TokenUsage
+│           ├── openai.rs      ← OpenAiProvider (API Chat Completions)
+│           ├── anthropic.rs   ← AnthropicProvider (Messages API)
+│           ├── rate_limiter.rs
+│           └── retry.rs
 │
 ├── tests/
-│   ├── architecture.rs        ← 11 tests: verifica que las capas respetan R1-R5
+│   ├── architecture.rs        ← 18 tests: verifica que las capas respetan R1-R5
 │   └── fixtures/
 │       ├── story_draft.md
 │       ├── story_blocked.md
 │       └── story_business_review.md
+│
+├── docs/
+│   ├── refactor-plan.md
+│   └── architecture.md
+│
+├── specs/                     ← especificaciones usadas para desarrollar regista
+│   ├── 01-cli-subcomandos-daemon.md
+│   └── spec-logs-transparentes.md
+│
+└── roadmap/                   ← plan de refactor v0.10.0
+    ├── epics/                 ← 6 epics (EPIC-V10-01 a EPIC-V10-06)
+    ├── stories/               ← 24 stories (STORY-V10-001 a STORY-V10-024)
+    └── features/              ← 14+ archivos Gherkin .feature
 ```
 
 ---
@@ -113,7 +147,10 @@ cargo test
 # Ejecutar tests de un módulo específico
 cargo test --lib domain::state
 cargo test --lib domain::workflow
+cargo test --lib domain::task
+cargo test --lib domain::templates
 cargo test --lib infra::providers
+cargo test --lib infra::llm
 cargo test --lib app::pipeline
 
 # Ejecutar test ignorado (requiere pi instalado)
@@ -125,7 +162,7 @@ cargo check
 # Formatear
 cargo fmt
 
-# Linting
+# Linting (20 warnings actualmente — código v0.10.0 no cableado)
 cargo clippy -- -D warnings
 
 # Tests de arquitectura (verifica R1-R5)
@@ -142,11 +179,11 @@ cargo test --test architecture
 Draft ──PO(plan)──→ Ready ──QA(tests)──→ Tests Ready ──Dev(implement)──→ In Review
                                                                                 │
                                                                          Reviewer │
-                                                                                ▼
+                                                                                 ▼
                                 Done ←──PO(validate)── Business Review
 ```
 
-### Transiciones canónicas (inmutables, definidas en `domain/state.rs`)
+### Transiciones canónicas (inmutables, definidas en `domain/workflow.rs`)
 
 | # | De | A | Actor | Condición |
 |---|---|---|---|---|
@@ -173,9 +210,12 @@ Draft ──PO(plan)──→ Ready ──QA(tests)──→ Tests Ready ──D
 - `Done` — historia completada exitosamente
 - `Failed` — superó `max_reject_cycles`
 
-### Trait `Workflow` (extensibilidad)
+### `Status` como enum (v0.x) y `Workflow` trait
 
-El trait `Workflow` en `domain/workflow.rs` abstrae la lógica de transiciones:
+`Status` está definido como un enum en `domain/state.rs` con 9 variantes
+(`Draft`, `Ready`, `TestsReady`, `InProgress`, `InReview`, `BusinessReview`,
+`Done`, `Blocked`, `Failed`). El trait `Workflow` en `domain/workflow.rs`
+abstrae la lógica de transiciones:
 
 ```rust
 pub trait Workflow: Sync {
@@ -185,13 +225,13 @@ pub trait Workflow: Sync {
 }
 ```
 
-`CanonicalWorkflow` implementa las 14 transiciones fijas. El trait permite
-que futuros workflows configurables (#04) reemplacen esta lógica sin tocar
-el código del pipeline ni del board.
+`CanonicalWorkflow` implementa las 14 transiciones fijas. En v0.10.0,
+`ConfigurableWorkflow` permite definir workflows arbitrarios desde
+`.regista/config.toml`.
 
 ---
 
-## 📝 Contrato de historia (.md)
+## 📝 Contrato de historia (.md) — v0.x
 
 Los archivos de historia deben seguir este formato **exacto**:
 
@@ -228,6 +268,22 @@ EPIC-XXX
 | **Last rejection** | Busca `## Activity Log`, última línea que contiene "rechaz" (case-insensitive) |
 | **Last actor** | Busca `## Activity Log`, última línea, extrae actor entre `|` |
 
+### Contrato de tarea (.md) — v0.10.0 (nuevo, no cableado aún)
+
+El formato v0.10.0 es configurable vía `TaskFormatConfig` (`domain/task.rs`).
+Cada campo y su marcador de sección se define en TOML:
+
+```toml
+[workflow.task_format]
+id_pattern = "TASK-\\d+"
+section_markers = { status = "## Status", description = "## Descripción" }
+dependency_marker = "Bloqueado por:"
+```
+
+`Task::load()` extrae el ID del nombre de archivo usando `id_pattern`, parsea
+campos según `section_markers`, dependencias según `dependency_marker`, y el
+Activity Log de forma estándar.
+
 ---
 
 ## 🧩 Descripción de módulos
@@ -236,16 +292,15 @@ EPIC-XXX
 
 #### `args.rs` — Definición de CLI
 - `Cli` con `#[derive(Parser)]`, 10 subcomandos vía `Commands` enum
-- Estructuras compuestas con `#[command(flatten)]`: `RepoArgs`, `PlanModeArgs`, `CommonArgs`, `PipelineArgs`, `DaemonArgs`
-- `PlanArgs`, `AutoArgs`, `RunArgs`, `ValidateArgs`, `InitArgs`, `UpdateArgs`, `BoardArgs`, `RepoArgs`
+- `PlanArgs`, `AutoArgs`, `RunArgs`, `ValidateArgs`, `InitArgs`, `UpdateArgs`, `BoardArgs`
+- `--version` y `--help` nativos de clap
+- **En v0.10.0**: `plan` y `auto` se unifican en `run --plan-only`
 
 #### `handlers.rs` — Dispatch y handlers
 - `dispatch(cli)`: enruta cada subcomando a su handler
 - `handle_plan()`, `handle_auto()`, `handle_run()`: daemon / dry-run / sync dispatch
 - `handle_logs()`, `handle_status()`, `handle_kill()`: gestión del daemon
 - `handle_validate()`, `handle_init()`, `handle_update()`, `handle_board()`
-- `build_daemon_args()`: construye argumentos para el proceso hijo
-- `setup_daemon_tracing()` / `setup_user_tracing()`: configuración de logs
 - Exit codes: 0=OK, 1=error plan, 2=pipeline con Failed, 3=parada temprana
 
 ### Capa `app/` — Casos de uso (importa domain + infra + config)
@@ -259,157 +314,147 @@ EPIC-XXX
   - `effective_max_iterations()`: auto-escala con `nº historias × 6`
 - `run_dry()`: simulación en memoria sin agentes ni escritura a disco
 - `process_story()`: async, determina rol → resuelve provider + instrucciones → invoca agente
-  - Snapshot git con `spawn_blocking`, hooks con `spawn_blocking`
-  - Detecta si el agente rechazó e incrementa `reject_cycles`
 - `RunReport`: serializable a JSON con `StoryRecord` por historia
-- Tests: 18 tests
 
 #### `plan.rs` — Generación de backlog
 - `run()`: invoca al PO para descomponer spec en historias y épicas
-- **Bucle de validación**: plan → validate dependencias → feedback al PO → corregir (máx `plan_max_iterations`)
+- Bucle de validación: plan → validate dependencias → feedback al PO → corregir
 - `--max-stories` (0 = sin límite), `--replace`
-- Prompts: `plan_prompt_initial()`, `plan_prompt_fix()` con `PlanCtx`
-- Tests: 6 tests
+- **En v0.10.0**: absorbido por `run --plan-only`
 
 #### `board.rs` — Dashboard Kanban
 - `BoardData`: conteo por estado, `BlockedStory`, `FailedStory`
 - `render_board()`: acepta `&dyn Workflow` para orden dinámico de columnas
-- Columnas vacías (count=0) se omiten; orden canónico según workflow
 - `--json` para CI/CD, `--epic` para filtrar
-- Tests: 9 tests
 
 #### `health.rs` — Health & Metrics
 - `HealthReport`: métricas agregadas (iteraciones/hora, tiempo medio, tasa rechazo, coste)
-- `generate_report()`: cálculo puro desde datos crudos
 - `is_health_checkpoint()`: cada N iteraciones (default: 10)
-- `write_health_json()`: escritura atómica a `.regista/health.json` (tmp → rename)
-- `write_final_health_report()`: reporte final en PipelineComplete
-- Tests: 19 tests
+- `write_health_json()`: escritura atómica a `.regista/health.json`
 
 #### `validate.rs` — Chequeo pre-vuelo
-- Valida: config, skills multi-provider, providers en PATH, historias (parseo, Activity Log), dependencias (refs rotas, ciclos), git
-- `ValidationResult` con `Vec<Finding>` (severity: Error/Warning, category, message)
-- `validate_providers()`: verifica binarios en PATH (Error para codex → Warning)
+- Valida: config, skills multi-provider, providers en PATH, historias, dependencias, git
+- `ValidationResult` con `Vec<Finding>` (severity: Error/Warning)
 - `--json` para CI, exit codes: 0=OK, 1=errores, 2=warnings
-- Tests: 3 tests
 
 #### `init.rs` — Scaffolding
 - `init(project_dir, light, with_example, provider_name)`: genera `.regista/config.toml` + instrucciones
 - Directorios por provider: `pi`→`.pi/skills/`, `claude`→`.claude/agents/`, `codex`→`.agents/skills/`, `opencode`→`.opencode/agents/`
-- `--light`: solo config, `--with-example`: historia + épica de ejemplo
-- Skills inline como constantes con YAML frontmatter (`name`, `model`, `description`)
 - No pisa archivos existentes
-- Tests: 7 tests
 
 #### `update.rs` — Auto-update
 - `check()`: consulta crates.io vía `ureq`, compara versiones semánticas
 - `run(auto_yes)`: instala con `cargo install regista --version <latest>`
-- Flag `--yes` para omitir prompt interactivo
-- Tests: 2 tests
 
 ### Capa `domain/` — Lógica pura (NO importa otras capas del crate)
 
-#### `state.rs` — Wrapper de tipos + SharedState
-- Re-exports desde `spartito`: `Status` (newtype sobre String, constantes canónicas `&'static str`),
-  `Actor` (newtype sobre String, 5 roles canónicos), `Transition` (con `Guard` opcional)
-- `SharedState`: `Arc<RwLock<HashMap<>>>` para estado compartido entre tareas (paralelismo #01)
+#### `state.rs` — Tipos de la máquina de estados
+- `Status`: enum con 9 variantes (`Draft`, `Ready`, `TestsReady`, `InProgress`, `InReview`, `BusinessReview`, `Done`, `Blocked`, `Failed`)
+- `Actor`: enum con 5 variantes (`ProductOwner`, `QaEngineer`, `Developer`, `Reviewer`, `Orchestrator`)
+- `Transition`: struct con `from`, `to`, `actor`, y guard opcional
+- `SharedState`: `Arc<RwLock<HashMap<>>>` para estado compartido entre tareas
   - `reject_cycles`, `story_iterations`, `story_errors`
   - `Clone` comparte el mismo `Arc`; `read()`/`write()` con `RwLock`
-  - Es código propio de regista; los tipos vienen de spartito
-- Tests: tests de SharedState + tests de tipos delegados a spartito
 
-#### `story.rs` — Parseo de historias (delega en spartito)
-- `Story` struct: `id`, `path`, `status: spartito::Status`, `epic`, `blockers`, `last_rejection`, `raw_content`
-- `load()`: lee archivo .md y parsea todos los campos delegando en `spartito::story_format::*`
-- `set_status()`: escribe a disco usando `spartito::story_format::replace_status_in_content()`
+#### `story.rs` — Parseo de historias (v0.x, hardcodeado)
+- `Story` struct: `id`, `path`, `status: Status`, `epic`, `blockers`, `last_rejection`, `raw_content`
+- `load()`: lee archivo .md y parsea todos los campos
+- `set_status()`: escribe a disco con backup atómico (.bak)
 - `advance_status_in_memory()`: muta estado sin tocar disco (dry-run)
 - `last_actor()`: extrae último actor del Activity Log
-- El parser de IDs (STORY-NNN, EPIC-NNN) es zero-regex: iteración manual sobre `&str`
-- Tests: 12 tests (adaptados a Status newtype)
+- El parser de IDs (STORY-NNN, EPIC-NNN) usa regex compilado con `LazyLock`
+
+#### `task.rs` — [NUEVO v0.10.0, no cableado] Parseo genérico de tareas
+- `Task` struct: `id`, `path`, `fields: HashMap<String, String>`, `blockers`, `activity_log: Vec<ActivityLogEntry>`, `raw_content`
+- `TaskFormatConfig`: `id_pattern`, `section_markers`, `dependency_marker` — todo configurable
+- `load()`: parsea cualquier formato .md definido en `TaskFormatConfig`
+- `set_status()`: escribe campo genérico (no solo "status") con backup atómico
+- `last_rejection()`, `last_actor()`: equivalentes a `Story`
+- Reemplazará a `Story` cuando `pipeline.rs` se migre a `Task`
+
+#### `templates.rs` — [NUEVO v0.10.0, no cableado] Templates de prompts
+- `render_template(template, task, context)`: sustituye `{{variables}}`
+- Variables soportadas: `{{task_id}}`, `{{task_status}}`, `{{task_fields.<campo>}}`, `{{task_fields.*}}`, `{{last_rejection}}`, `{{blockers}}`, `{{context.<clave>}}`, `{{role_name}}`
+- Variables no encontradas → `"(no definido)"`
+- Reemplazará los 7 prompts hardcodeados de `prompts.rs`
 
 #### `graph.rs` — Grafo de dependencias
 - `DependencyGraph`: `forward` (bloqueador→bloqueados), `reverse`, DFS con colores
 - `blocks_count()`, `has_cycle_from()`, `has_any_cycle()`, `find_cycle_members()`
-- Tests: 4 tests
 
 #### `deadlock.rs` — Detección de bloqueos
 - `DeadlockResolution` enum: `NoDeadlock`, `InvokePoFor`, `PipelineComplete`
-- `analyze()`: algoritmo de 4 pasos con priorización
-  - Identifica Draft, ciclos, bloqueadores Draft
-  - Prioriza por: mayor `unblocks`, luego menor ID numérico
-- Tests: 7 tests
+- `analyze()`: algoritmo para `Story` (v0.x) con priorización por desbloqueo
+- `DeadlockResolutionV10` + `analyze_deadlock()`: versión genérica para `Task` (v0.10.0, no cableada)
+- Prioriza por: mayor `unblocks`, luego menor ID numérico
 
-#### `prompts.rs` — Generación de prompts
+#### `prompts.rs` — Generación de prompts (v0.x)
 - `PromptContext`: `story_id`, `stories_dir`, `decisions_dir`, `last_rejection`, `from`, `to`, `stack: DomainStackConfig`
 - `DomainStackConfig::render()`: bloque de comandos o instrucción genérica
-- `PromptContext::header()` / `suffix()`: helpers privados
 - 7 prompts: `po_plan()`, `po_validate()`, `qa_tests()`, `qa_fix_tests()`, `dev_implement()`, `dev_fix()`, `reviewer()`
-- `qa_tests()` incluye reglas estrictas (NO crear módulos, NO implementar, solo tests)
-- Tests: 15 tests
+- **En v0.10.0**: reemplazado por `templates.rs` + templates en `.regista/prompts/`
 
-#### `workflow.rs` — ELIMINADO (vive en spartito)
-- El trait `Workflow`, `CanonicalWorkflow` y `ConfigurableWorkflow` están en `spartito::workflow`
-- Regista importa directamente: `use spartito::workflow::{Workflow, CanonicalWorkflow, ConfigurableWorkflow}`
-- Los 35 tests de workflow migran a spartito o se adaptan como tests de integración
-- Ver [`spartito spec`](../../mezzala/docs/spec-spartito.md) para el diseño completo
+#### `workflow.rs` — Trait Workflow + implementaciones
+- `Workflow` trait: `next_status()`, `map_status_to_role()`, `canonical_column_order()`
+- `CanonicalWorkflow`: implementa las 14 transiciones fijas
+- `ConfigurableWorkflow`: [v0.10.0] workflow definido en `.regista/config.toml` con fases, roles, bifurcaciones y guards configurables
+- **Nota**: A diferencia de lo que indicaban versiones anteriores de AGENTS.md, `workflow.rs` NO está eliminado. Todo el código de workflow vive aquí (no hay dependencia externa `spartito`).
 
 ### Capa `infra/` — Infraestructura (importa solo `config`)
 
-#### `providers.rs` — Sistema de providers
+#### `providers.rs` — Sistema de providers (tools CLI externas)
 - `AgentProvider` trait: `binary()`, `build_args()`, `display_name()`, `instruction_name()`, `instruction_dir()`
 - El trait devuelve `Vec<String>` (no `Command`) — compatible con sync y async
 - **PiProvider**: `pi -p "..." --skill <path> --no-session`
 - **ClaudeCodeProvider**: `claude -p "..." --append-system-prompt-file <path> --permission-mode bypassPermissions`
 - **CodexProvider**: `codex exec --sandbox workspace-write "..."` (auto-descubre `.agents/skills/`)
-- **OpenCodeProvider**: `opencode run --agent <name> --dangerously-skip-permissions "..."` (soporta `-m <model>` desde YAML)
-- Factory `from_name(name)`: resuelve alias (claude-code, open-code, etc.), case-insensitive, retorna `Result`
-- `read_yaml_field()`: extrae campos del frontmatter YAML de archivos .md
-- `find_in_path()`: verifica disponibilidad de binarios
-- Tests: 17 tests
+- **OpenCodeProvider**: `opencode run --agent <name> --dangerously-skip-permissions "..."`
+- Factory `from_name(name)`: resuelve alias, case-insensitive, retorna `Result`
 
 #### `agent.rs` — Invocación de agentes (async)
 - `invoke_with_retry()`: async, loop con backoff exponencial (`delay *= 2`), timeout real con `tokio::time::timeout`
 - `invoke_once()`: async, usa `tokio::process::Command`, mata proceso por PID en timeout
 - `invoke_with_retry_blocking()`: wrapper síncrono con `RUNTIME.block_on()`
-- `AgentOptions`: `story_id`, `decisions_dir`, `inject_feedback`
 - `build_feedback_prompt()`: inyecta stderr truncado (2000 bytes) en reintentos
-- `save_agent_decision()`: async, guarda trazas en `decisions/` con `tokio::fs`
+- `save_agent_decision()`: async, guarda trazas en `decisions/`
 - `RUNTIME`: `LazyLock<tokio::runtime::Runtime>` global para callers síncronos
-- Tests: 3 tests + 1 ignorado
 
 #### `checkpoint.rs` — Persistencia del estado
 - `OrchestratorState`: `iteration`, `reject_cycles`, `story_iterations`, `story_errors`
 - `save()` / `load()` / `remove()` sobre `.regista/state.toml`
 - `load()` maneja archivos corruptos (los borra)
-- Test de integración con `SharedState` (clonación bajo read lock)
-- Tests: 5 tests
 
 #### `daemon.rs` — Modo daemon
 - `detach()`: spawnea proceso hijo con `--daemon` interno, guarda PID en `.regista/daemon.pid`
 - `status()`, `kill()`, `follow()`: gestión del proceso
 - `PidCleanup`: guard RAII que limpia el archivo PID al salir
-- `get_all_child_pids()`: recursivo vía `/proc/<pid>/task/*/children` (Linux) o `wmic` (Windows)
-- Soporte multiplataforma: `#[cfg(windows)]` / `#[cfg(not(windows))]`
-- Tests: 6 tests
+- `get_all_child_pids()`: recursivo vía `/proc` (Linux) o `wmic` (Windows)
+- ⚠️ 3 tests fallan en macOS (API `/proc/pid/task/*/children` es solo Linux)
 
 #### `git.rs` — Snapshots y rollback
 - `snapshot()`: `git add -A && git commit -q -m "snapshot: {label}"`, auto-inicializa repo
 - `rollback()`: `git reset --hard <hash>`
 - `check_git_changes()`: detecta cambios unstaged, staged, y untracked
-- Tests con `spawn_blocking` para seguridad async (STORY-012)
-- Tests: 5 tests
+- Usa `spawn_blocking` para seguridad async
 
 #### `hooks.rs` — Hooks post-fase
-- `run_hook()`: ejecuta `sh -c "<comando>"` con `tokio::process::Command` vía `RUNTIME`
-- Invocable desde sync y async (usa `spawn_blocking` en tests async)
-- Tests: 4 tests
+- `run_hook()`: ejecuta `sh -c "<comando>"` con `tokio::process::Command`
+
+#### `llm/` — [NUEVO v0.10.0, no cableado] Cliente LLM nativo
+- `LlmProvider` trait: `chat(messages, model, timeout)` + `provider_name()`
+- `from_config()`: factory que instancia el provider correcto desde `ModelConfig`
+- `OpenAiProvider`: llama a la API Chat Completions (soporta proxies y Ollama)
+- `AnthropicProvider`: llama a la Messages API (conversión de formato system/user/assistant)
+- `types.rs`: `Message` (system/user/assistant), `ChatResponse`, `TokenUsage`
+- `rate_limiter.rs`, `retry.rs`: control de concurrencia y reintentos HTTP
+- Reemplazará a `providers.rs` + `agent.rs` cuando se complete la migración
 
 ---
 
 ## 💡 Decisiones de diseño importantes
 
 1. **Arquitectura en capas**: `cli → app → domain/infra → config`.  
-   Dependencias unidireccionales verificadas por `tests/architecture.rs` (11 tests, reglas R1-R5).  
+   Dependencias unidireccionales verificadas por `tests/architecture.rs` (18 tests, reglas R1-R5).  
    `domain/` no puede importar `infra/`, `app/`, ni `cli/`. `infra/` solo importa `config`.
 
 2. **Agnóstico al proyecto anfitrión**: regista no sabe de Rust, cargo, ni nada.  
@@ -419,25 +464,20 @@ EPIC-XXX
    `tokio::process::Command` + `tokio::time::timeout` reemplazan busy-polling.  
    Timeout real mata el proceso por PID (sin zombies). Operaciones de bloqueo (git, hooks) usan `spawn_blocking`.
 
-4. **Workflow externalizado en `spartito`**: el contrato de estados, transiciones, formato de
-   historia y checklists DoD/DoR vive en un crate independiente compartido con `mezzala`.
-   Regista importa `spartito` como dependencia. Esto permite:
-   - Workflow canónico por defecto (14 transiciones fijas, `CanonicalWorkflow`).
-   - Workflow configurable vía `[workflow]` en `.regista/config.toml` (`ConfigurableWorkflow`).
-   - Bifurcaciones: un estado puede tener múltiples destinos; el agente elige (`transitions_from()`).
-   - Single source of truth: si el formato de historia cambia, regista y mezzala se actualizan
-     sincronizadamente con `cargo update`.
+4. **Workflow auto-contenido en `domain/workflow.rs`**: el trait `Workflow`, `CanonicalWorkflow`
+   (14 transiciones fijas) y `ConfigurableWorkflow` (workflow desde TOML) viven en el crate.
+   No hay dependencia externa `spartito`. El concepto de "partitura compartida" con `mezzala`
+   está en estudio para una fase posterior; actualmente regista es autosuficiente.
 
 5. **`SharedState` con `Arc<RwLock<>>`**: reemplaza `&mut HashMap` pasado por la pila.  
-   Clonable, compartible entre tareas, preparado para `tokio::spawn` en paralelismo (#01).
+   Clonable, compartible entre tareas, preparado para `tokio::spawn` en paralelismo.
 
 6. **Trait `AgentProvider` devuelve `Vec<String>`**: no `Command`, para ser  
-   compatible con ejecución síncrona y asíncrona (paralelismo #01).  
-   El invocador decide si usar `std::process::Command` o `tokio::process::Command`.
+   compatible con ejecución síncrona y asíncrona.
 
 7. **CLI con clap Subcommand**: la CLI usa `#[derive(Subcommand)]` de clap 4.  
-   Los subcomandos son `plan`, `auto`, `run`, `logs`, `status`, `kill`, `validate`, `init`, `update`, `board`.  
-   `--version` y `--help` son nativos de clap.
+   Subcomandos actuales: `plan`, `auto`, `run`, `logs`, `status`, `kill`, `validate`, `init`, `update`, `board`.  
+   **En v0.10.0**: `plan` y `auto` se unifican en `run --plan-only`.
 
 8. **Dry-run en memoria**: `advance_status_in_memory()` muta `Story` sin tocar el filesystem.  
    Permite simular pipelines completos sin gastar créditos de LLM.
@@ -459,10 +499,10 @@ EPIC-XXX
 14. **`set_status()` con backup atómico**: escribe → re-parsea → si falla, restaura `.bak`.
 
 15. **Provider por defecto `"pi"`**: retrocompatibilidad total. Si no se especifica  
-    provider en config ni CLI, se usa pi. Projects existentes siguen funcionando sin cambios.
+    provider en config ni CLI, se usa pi.
 
 16. **Provider por rol**: cada rol (PO, QA, Dev, Reviewer) puede usar un provider distinto.  
-    Ejemplo: PO con Claude Code, Dev con pi. Configurable en `.regista/config.toml`.
+    Configurable en `.regista/config.toml`.
 
 17. **Codex auto-descubre skills**: `CodexProvider` ignora el path de instrucciones —  
     Codex lee automáticamente `.agents/skills/` y `AGENTS.md` del proyecto.
@@ -472,56 +512,50 @@ EPIC-XXX
     OpenCode usa el campo `model` para pasar `-m <model>` automáticamente.
 
 19. **Health metrics**: `health.rs` calcula métricas del pipeline y las escribe  
-    atómicamente a `.regista/health.json`. Preparado para TUI (#11) y cost tracking (#12).
+    atómicamente a `.regista/health.json`.
 
 20. **`max_reject_cycles = 8`**: por defecto, 8 ciclos de rechazo antes de `Failed`.  
     `max_iterations = 0`: auto-escala a `max(10, historias × 6)`.
 
-21. **Dominio fijo, pipeline configurable**: spartito y regista están especializados en
-    **desarrollo de software** (formato de historia con CA, dependencias, épicas, DoD/DoR).
-    No son orquestadores genéricos. Lo configurable es el pipeline: estados, transiciones,
-    bifurcaciones, y asignación de providers por rol. El dominio no se abstrae.
+21. **`Status` como enum, no como newtype**: el enum con 9 variantes es el tipo canónico
+    en v0.x. `ConfigurableWorkflow` (v0.10.0) trabaja con strings para soportar estados
+    arbitrarios definidos en TOML, sin necesidad de un newtype intermedio.
 
-22. **`Status` newtype sobre `String`, no enum**: un enum no puede extenderse en runtime.
-    El newtype permite workflows con estados arbitrarios definidos en TOML.
-    Las constantes canónicas (`Status::DRAFT` como `&'static str`) preservan ergonomía.
+22. **Bifurcaciones sin sintaxis especial**: `transitions_from()` en `ConfigurableWorkflow`
+    devuelve múltiples destinos desde un mismo estado. El prompt presenta las opciones;
+    el agente decide; el orquestador solo valida.
 
-23. **Bifurcaciones sin sintaxis especial**: `transitions_from()` devuelve
-    `Vec<&Transition>`. Si hay N > 1 transiciones desde un estado, hay bifurcación.
-    El prompt presenta las opciones; el agente decide; el orquestador solo valida.
+23. **Dos sistemas de parseo coexistiendo**: `story.rs` (v0.x, formato hardcodeado
+    STORY-NNN) y `task.rs` (v0.10.0, formato configurable) conviven durante la transición.
+    `pipeline.rs` aún usa `Story`. La migración a `Task` es progresiva.
 
-24. **`Guard` enum con variante `Custom`**: 3 guards estándar (`HasUnresolvedDependencies`,
-    `AllDependenciesDone`, `MaxRejectCyclesExceeded`) + `Custom(String)` para extensibilidad.
+24. **Dos sistemas de prompts coexistiendo**: `prompts.rs` (v0.x, 7 funciones hardcodeadas)
+    y `templates.rs` (v0.10.0, sistema de `{{variables}}`) conviven durante la transición.
+    La migración es progresiva.
 
-25. **Zero regex en `spartito::story_format`**: búsqueda de IDs con iteración de caracteres
-    sobre `&str`. Menos dependencias, compatible con WASM.
+25. **Dos sistemas de invocación de agentes**: `providers.rs` + `agent.rs` (v0.x,
+    tools CLI externas) y `infra/llm/` (v0.10.0, APIs HTTP nativas) coexisten.
+    `infra/llm/` reemplazará a los providers CLI cuando esté completo.
 
-26. **Migración progresiva**: `domain/state.rs` se conserva como wrapper con re-exports
-    (`pub use spartito::Status;`). `domain/workflow.rs` se elimina por completo.
-    Esto minimiza el riesgo: los imports internos siguen funcionando durante la transición.
+26. **ModelConfig con soporte `${ENV_VAR}`**: las API keys en `[models]` usan
+    la sintaxis `${NOMBRE_VAR}` para no escribir secretos en claro en TOML.
 
 ---
 
-## 🔮 Decisiones de diseño — rework v1.0
+## 🔮 Decisiones de diseño — rework v0.10.0
 
 Estas decisiones aplican durante el refactor en la rama `rework` y reemplazan
 o amplían las decisiones de v0.x anteriores.
 
 ### 27. Unificación de `plan`/`auto`/`run` en `run --plan-only`
 
-v0.x tiene tres comandos de pipeline: `plan` (generar backlog), `auto` (plan + run),
-y `run` (solo pipeline). Con la generalización del motor de workflows, esto se unifica:
+v0.x tiene tres comandos de pipeline. En v0.10.0 se unifican:
 
 - **`regista run`**: único comando de ejecución. Si no hay tareas en `tasks_dir`,
   ejecuta primero la fase de descomposición del workflow y genera las tareas iniciales,
   luego ejecuta el pipeline completo sobre ellas.
-- **`regista run --plan-only`**: ejecuta solo la fase de descomposición (genera tareas
-  y termina, sin pipeline). Reemplaza al antiguo `plan`.
+- **`regista run --plan-only`**: ejecuta solo la fase de descomposición. Reemplaza a `plan`.
 - `plan` y `auto` desaparecen como subcomandos.
-
-La fase de descomposición se define en el workflow como una fase normal con
-`from = "_init_"` o marcada con `decomposition = true`. Si el workflow no declara
-fase de descomposición, `run` espera que las tareas ya existan.
 
 **Motivo**: `plan` y `auto` asumían el dominio software-dev (spec → historias).
 Con presets como `research` o `single-agent`, el concepto de "descomposición" no
@@ -553,7 +587,7 @@ La ubicación física de los archivos sigue siendo `[project].tasks_dir` (defaul
 ### 29. Épicas como campo de task, no como archivos separados
 
 v0.x tenía un directorio `epics/` con archivos `EPIC-NNN.md` independientes.
-En v1.0, "épica" es un campo más del `task_format`. Si el preset define:
+En v0.10.0, "épica" es un campo más del `task_format`:
 
 ```toml
 section_markers = { epic = "## Epic" }
@@ -562,26 +596,38 @@ section_markers = { epic = "## Epic" }
 Cada tarea puede referenciar una épica directamente (`EPIC-001`). El board puede
 filtrar por épica igual que antes. No hay archivos de épica separados.
 
-**Motivo**: Simplifica el modelo de datos. Una épica no tiene estado ni transiciones
-propias — es solo una etiqueta de agrupación. Tratarla como campo evita el problema
-de sincronizar dos directorios.
+### 30. Cliente LLM nativo (`infra/llm/`)
+
+En lugar de invocar tools CLI externas (`pi`, `claude`, `codex`, `opencode`),
+v0.10.0 se comunica directamente con las APIs HTTP de los modelos. El trait
+`LlmProvider` abstrae OpenAI y Anthropic, con `ModelConfig` por modelo.
+
+### 31. Templates de prompts con `{{variables}}`
+
+Los 7 prompts hardcodeados de `prompts.rs` se reemplazan por archivos de
+template en `.regista/prompts/` que usan sustitución de variables. Cada
+fase del workflow referencia su template; el sistema `templates.rs` sustituye
+`{{task_id}}`, `{{task_fields.*}}`, `{{context.<clave>}}`, etc.
 
 ---
 
 ## 🧪 Estrategia de testing
 
 - **Tests unitarios**: cada módulo tiene `#[cfg(test)] mod tests` con fixtures inline
-- **Tests de arquitectura**: `tests/architecture.rs` verifica R1-R5 (11 tests)
+- **Tests de arquitectura**: `tests/architecture.rs` verifica R1-R5 (18 tests)
 - **Fixtures**: `tests/fixtures/` contiene archivos .md de ejemplo
 - **Test ignorado**: `agent::tests::invoke_with_retry_fails_when_agent_not_installed` (requiere `pi` en PATH)
-- **Total**: 357 tests pasando, 0 fallos, 1 ignorado
+- **Total actual**: 723 tests pasando, 3 fallos (macOS daemon), 1 ignorado
+- **20 warnings de clippy**: código muerto en módulos v0.10.0 no cableados
 
 Para añadir tests:
 - Usa `make_story()` o `story_fixture()` helpers para crear Stories sintéticas
+- Para tests de `Task`, usa `TaskFormatConfig` con `section_markers` inline
 - No dependas de archivos reales salvo en tests de `story.rs` (que usan fixtures)
-- Para tests de providers, usa `from_name()` para obtener una instancia y verificar `build_args()`
-- Para tests de async, usa `#[tokio::test]` y `tokio::task::spawn_blocking` para operaciones de bloqueo
-- Para tests de workflow, implementa `Workflow` con un struct ad-hoc (ver tests de `AltWorkflow`)
+- Para tests de providers, usa `from_name()` y verifica `build_args()`
+- Para tests de `LlmProvider`, implementa el trait con un struct dummy
+- Para tests de async, usa `#[tokio::test]` y `tokio::task::spawn_blocking`
+- Para tests de workflow, implementa `Workflow` con un struct ad-hoc
 - Usa `tempfile::tempdir()` para aislar el filesystem
 
 ---
@@ -590,18 +636,20 @@ Para añadir tests:
 
 - ❌ **Romper la arquitectura de capas**: `domain/` NO puede importar `infra/`, `app/`, `cli/`, ni `config`.  
   `infra/` solo puede importar `config`. `app/` no puede importar `cli/`.  
-  `tests/architecture.rs` detecta estas violaciones.
+  `tests/architecture.rs` (18 tests) detecta estas violaciones.
 
-- ❌ **Añadir transiciones a `Status::ALL`**: rompe la inmutabilidad del workflow.  
-  Las 14 transiciones canónicas son el default. Para workflows custom, se define
-  `[workflow]` en `.regista/config.toml`. No se añaden transiciones en código.
+- ❌ **Añadir transiciones a la máquina de estados**: las 14 transiciones canónicas
+  son el default en `CanonicalWorkflow`. Para workflows custom, se define
+  `[workflow]` en `.regista/config.toml` vía `ConfigurableWorkflow`.
+  No se añaden transiciones en código.
 
-- ❌ **Implementar lógica de workflow en regista**: el trait `Workflow` y sus
-  implementaciones viven en `spartito`. Regista solo consume el trait.
+- ❌ **Asumir que `Status` es un newtype**: es un enum con 9 variantes.
+  `ConfigurableWorkflow` (v0.10.0) trabaja con strings para soportar estados arbitrarios.
 
-- ❌ **Parsear historias sin usar `extract_section()`**: usa las funciones existentes en `domain/story.rs`.
+- ❌ **Parsear historias sin usar `extract_section()`**: usa las funciones existentes
+  en `domain/story.rs` o `domain/task.rs` según corresponda.
 
-- ❌ **Modificar `raw_content` sin actualizar `status`**: deben estar siempre sincronizados.
+- ❌ **Modificar `raw_content` sin actualizar el campo correspondiente**: deben estar siempre sincronizados.
 
 - ❌ **Ejecutar hooks sin `sh -c`**: los hooks son comandos shell.
 
@@ -631,6 +679,14 @@ Para añadir tests:
 - ❌ **Bloquear el runtime async con operaciones síncronas**: usa `spawn_blocking` para  
   git, hooks, y cualquier I/O de bloqueo cuando estés en contexto async.
 
+- ❌ **Referenciar `spartito` en código o documentación nueva**: `spartito` no es una
+  dependencia del proyecto. No existe en `Cargo.toml` ni en ningún archivo `.rs`.
+  Las referencias en `AGENTS.md`, `README.md` y roadmap son documentación histórica
+  a eliminar (STORY-V10-020).
+
+- ❌ **Trabajar en `main` para cambios v0.10.0**: la rama activa de desarrollo es `rework`.
+  `main` contiene la versión estable v0.9.5.
+
 ---
 
 ## 🔑 Convenciones de código
@@ -646,3 +702,5 @@ Para añadir tests:
 - **Async tests**: `#[tokio::test]` para tests async, `#[test]` para sync
 - **Nuevos módulos**: siguen el patrón `pub fn run(...) -> anyhow::Result<...>` para su entry point
 - **Respetar capas**: antes de añadir un import `use crate::X`, verifica que `tests/architecture.rs` no lo rechace
+- **Módulos v0.10.0 no cableados**: llevan `#![allow(dead_code)]` al inicio del archivo.
+  No elimines este atributo hasta que el módulo esté integrado en el pipeline.

@@ -1,10 +1,13 @@
-//! Grafo de dependencias entre historias.
+//! Grafo de dependencias entre tareas (genérico).
 //!
 //! Permite detectar ciclos (dependencias circulares), calcular
-//! el conteo de referencias inversas (cuántas historias desbloquea cada una),
-//! y determinar si una historia bloqueada puede desbloquearse.
+//! el conteo de referencias inversas (cuántas tareas desbloquea cada una),
+//! y determinar si una tarea bloqueada puede desbloquearse.
+//!
+//! Soporta tanto `Story` (v0.x) como `Task` (v1.0) mediante métodos separados.
 
 use crate::domain::story::Story;
+use crate::domain::task::Task;
 use std::collections::{HashMap, HashSet};
 
 /// Grafo dirigido de dependencias: `bloqueador → bloqueados`.
@@ -20,7 +23,7 @@ pub struct DependencyGraph {
 }
 
 impl DependencyGraph {
-    /// Construye el grafo a partir de una lista de historias.
+    /// Construye el grafo a partir de una lista de historias (v0.x).
     pub fn from_stories(stories: &[Story]) -> Self {
         let mut graph = Self::default();
 
@@ -38,6 +41,33 @@ impl DependencyGraph {
                 graph
                     .reverse
                     .entry(story.id.clone())
+                    .or_default()
+                    .push(blocker.clone());
+            }
+        }
+
+        graph
+    }
+
+    /// Construye el grafo a partir de una lista de tareas genéricas (v1.0).
+    ///
+    /// No asume ningún formato de ID (STORY-NNN, TASK-NNN, ISSUE-NNN, etc.).
+    pub fn from_tasks(tasks: &[Task]) -> Self {
+        let mut graph = Self::default();
+
+        for task in tasks {
+            graph.forward.entry(task.id.clone()).or_default();
+            graph.reverse.entry(task.id.clone()).or_default();
+
+            for blocker in &task.blockers {
+                graph
+                    .forward
+                    .entry(blocker.clone())
+                    .or_default()
+                    .push(task.id.clone());
+                graph
+                    .reverse
+                    .entry(task.id.clone())
                     .or_default()
                     .push(blocker.clone());
             }
@@ -214,5 +244,104 @@ mod tests {
         let graph = DependencyGraph::from_stories(&stories);
         assert_eq!(graph.blocks_count("STORY-001"), 2);
         assert_eq!(graph.blocks_count("STORY-002"), 0);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // STORY-V10-009: from_tasks() con IDs genéricos
+    // ═══════════════════════════════════════════════════════════════
+
+    use crate::domain::task::Task;
+    use std::path::PathBuf;
+
+    fn task(id: &str, blockers: &[&str]) -> Task {
+        Task {
+            id: id.to_string(),
+            path: PathBuf::from(format!("tasks/{id}.md")),
+            fields: std::collections::HashMap::new(),
+            blockers: blockers.iter().map(|s| s.to_string()).collect(),
+            activity_log: vec![],
+            raw_content: String::new(),
+        }
+    }
+
+    #[test]
+    fn from_tasks_builds_graph_with_task_ids() {
+        let tasks = vec![
+            task("TASK-001", &[]),
+            task("TASK-002", &["TASK-001"]),
+            task("TASK-003", &["TASK-001"]),
+            task("TASK-004", &["TASK-002"]),
+            task("TASK-005", &["TASK-002"]),
+        ];
+        let graph = DependencyGraph::from_tasks(&tasks);
+        assert_eq!(graph.blocks_count("TASK-001"), 2);
+        assert_eq!(graph.blocks_count("TASK-002"), 2);
+        assert_eq!(graph.blocks_count("TASK-005"), 0);
+    }
+
+    #[test]
+    fn from_tasks_works_with_issue_ids() {
+        let tasks = vec![
+            task("ISSUE-010", &[]),
+            task("ISSUE-011", &[]),
+            task("ISSUE-012", &["ISSUE-010", "ISSUE-011"]),
+        ];
+        let graph = DependencyGraph::from_tasks(&tasks);
+        assert_eq!(graph.blocks_count("ISSUE-010"), 1);
+        assert_eq!(graph.blocks_count("ISSUE-011"), 1);
+        assert_eq!(graph.blocks_count("ISSUE-012"), 0);
+    }
+
+    #[test]
+    fn from_tasks_empty_graph() {
+        let tasks = vec![
+            task("TASK-001", &[]),
+            task("TASK-002", &[]),
+            task("TASK-003", &[]),
+        ];
+        let graph = DependencyGraph::from_tasks(&tasks);
+        assert!(!graph.has_any_cycle());
+        for id in &["TASK-001", "TASK-002", "TASK-003"] {
+            assert!(!graph.has_cycle_from(id));
+            assert_eq!(graph.blocks_count(id), 0);
+        }
+    }
+
+    #[test]
+    fn from_tasks_detects_cycle_with_generic_ids() {
+        let tasks = vec![
+            task("ISSUE-001", &["ISSUE-002"]),
+            task("ISSUE-002", &["ISSUE-001"]),
+        ];
+        let graph = DependencyGraph::from_tasks(&tasks);
+        assert!(graph.has_any_cycle());
+        assert!(graph.has_cycle_from("ISSUE-001"));
+        assert!(graph.has_cycle_from("ISSUE-002"));
+    }
+
+    #[test]
+    fn from_tasks_detects_cycle_with_three_ids() {
+        let tasks = vec![
+            task("TASK-A", &["TASK-C"]),
+            task("TASK-B", &["TASK-A"]),
+            task("TASK-C", &["TASK-B"]),
+        ];
+        let graph = DependencyGraph::from_tasks(&tasks);
+        assert!(graph.has_any_cycle());
+        let members = graph.find_cycle_members();
+        assert!(members.contains("TASK-A"));
+        assert!(members.contains("TASK-B"));
+        assert!(members.contains("TASK-C"));
+    }
+
+    #[test]
+    fn from_tasks_no_cycle_in_linear_chain() {
+        let tasks = vec![
+            task("TASK-001", &[]),
+            task("TASK-002", &["TASK-001"]),
+            task("TASK-003", &["TASK-002"]),
+        ];
+        let graph = DependencyGraph::from_tasks(&tasks);
+        assert!(!graph.has_any_cycle());
     }
 }

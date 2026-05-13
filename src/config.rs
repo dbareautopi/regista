@@ -6,6 +6,7 @@
 //! y qué provider usar.
 
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Configuración del stack tecnológico del proyecto anfitrión.
@@ -28,6 +29,24 @@ pub struct StackConfig {
     pub src_dir: Option<String>,
 }
 
+/// Configuración de un modelo LLM.
+///
+/// Cada entrada en `[models]` define un modelo lógico que puede referenciarse
+/// desde las fases del workflow. La `api_key` soporta el patrón `${ENV_VAR}`
+/// para no escribir secretos en claro en el archivo de configuración.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct ModelConfig {
+    /// Nombre del provider LLM: "openai" o "anthropic".
+    pub provider: String,
+    /// Identificador del modelo en la API (ej: "gpt-4o", "claude-sonnet-4-20250514").
+    pub model_id: String,
+    /// API key, con soporte para `${ENV_VAR}` (ej: "${OPENAI_API_KEY}").
+    pub api_key: String,
+    /// URL base de la API (opcional). Cada provider tiene su default.
+    pub base_url: Option<String>,
+}
+
 /// Configuración completa del orquestador.
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
@@ -40,6 +59,10 @@ pub struct Config {
     /// Configuración del stack tecnológico (comandos de build, test, lint, fmt).
     #[serde(default)]
     pub stack: StackConfig,
+    /// Modelos LLM disponibles, indexados por nombre lógico (ej: "gpt4o", "claude").
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub models: HashMap<String, ModelConfig>,
 }
 
 /// Dónde encontrar los artefactos del workflow.
@@ -151,68 +174,6 @@ impl AgentsConfig {
             .unwrap_or_else(|| self.provider.clone())
     }
 
-    /// Resuelve la ruta al archivo de instrucciones (skill) para un rol.
-    ///
-    /// Si el rol tiene `skill` explícito, lo usa.
-    /// Si no, usa la convención de directorio del provider.
-    /// Si el rol no es reconocido, devuelve String vacía.
-    pub fn skill_for_role(&self, role: &str) -> String {
-        let config = match role {
-            "product_owner" => &self.product_owner,
-            "qa_engineer" => &self.qa_engineer,
-            "developer" => &self.developer,
-            "reviewer" => &self.reviewer,
-            _ => return String::new(),
-        };
-
-        if let Some(ref skill) = config.skill {
-            return skill.clone();
-        }
-
-        let provider_name = self.provider_for_role(role);
-        let provider = crate::infra::providers::from_name(&provider_name).expect(
-            "provider inválido en configuración — ejecuta 'regista validate' para diagnosticar",
-        );
-        provider.instruction_dir(role)
-    }
-
-    /// Resuelve el modelo LLM para un rol con la prioridad:
-    /// 1. `AgentRoleConfig.model` del rol
-    /// 2. `AgentsConfig.model` (global)
-    /// 3. Campo `model` del YAML frontmatter del skill
-    /// 4. `"desconocido"`
-    ///
-    /// No paniquea si `skill_path` no existe — trata el error como fallback al paso 3.
-    #[allow(dead_code)]
-    pub fn model_for_role(&self, role: &str, skill_path: &Path) -> String {
-        // 1. Modelo específico del rol
-        let role_config = match role {
-            "product_owner" => Some(&self.product_owner),
-            "qa_engineer" => Some(&self.qa_engineer),
-            "developer" => Some(&self.developer),
-            "reviewer" => Some(&self.reviewer),
-            _ => None,
-        };
-
-        if let Some(config) = role_config {
-            if let Some(ref model) = config.model {
-                return model.clone();
-            }
-        }
-
-        // 2. Modelo global
-        if let Some(ref model) = self.model {
-            return model.clone();
-        }
-
-        // 3. YAML frontmatter del skill
-        if let Some(model) = crate::infra::providers::read_yaml_field(skill_path, "model") {
-            return model;
-        }
-
-        // 4. Fallback
-        "desconocido".to_string()
-    }
 }
 
 /// Límites operacionales para evitar bucles infinitos o bloqueos.
@@ -404,6 +365,9 @@ impl Config {
     }
 
     /// Valida que los campos de configuración sean coherentes.
+    ///
+    /// Es solo-lectura: NO crea directorios (STORY-003 CA2).
+    /// La creación de directorios se hace en el orchestrator o en `init`.
     fn validate(&self, project_root: &Path) -> anyhow::Result<()> {
         // Verificar que stories_dir existe
         let stories_path = project_root.join(&self.project.stories_dir);
@@ -420,11 +384,23 @@ impl Config {
             );
         }
 
-        // Crear directorios necesarios
-        for dir in [&self.project.decisions_dir, &self.project.log_dir] {
-            let path = project_root.join(dir);
-            std::fs::create_dir_all(&path)?;
+        // Verificar que epics_dir existe (STORY-003 CA1)
+        let epics_path = project_root.join(&self.project.epics_dir);
+        if !epics_path.exists() {
+            anyhow::bail!(
+                "El directorio de épicas no existe: {}",
+                epics_path.display()
+            );
         }
+        if !epics_path.is_dir() {
+            anyhow::bail!(
+                "La ruta de épicas no es un directorio: {}",
+                epics_path.display()
+            );
+        }
+
+        // STORY-003 CA2: NO crear directorios aquí.
+        // La creación se mueve al orchestrator (run_real) e init.
 
         Ok(())
     }
@@ -434,6 +410,74 @@ impl Config {
     pub fn resolve(&self, project_root: &Path, relative: &str) -> PathBuf {
         project_root.join(relative)
     }
+
+    /// Busca un modelo por su nombre lógico y expande `${ENV_VAR}` en `api_key`.
+    ///
+    /// Devuelve error si el modelo no existe en `[models]` o si una variable
+    /// de entorno referenciada en `api_key` no está definida.
+    #[allow(dead_code)]
+    pub fn resolve_model(&self, name: &str) -> anyhow::Result<ModelConfig> {
+        let mut config = self
+            .models
+            .get(name)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "modelo '{}' no encontrado en [models]. Modelos definidos: {}",
+                    name,
+                    if self.models.is_empty() {
+                        "(ninguno)".to_string()
+                    } else {
+                        self.models
+                            .keys()
+                            .map(|k| k.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    }
+                )
+            })?
+            .clone();
+
+        config.api_key = expand_env_vars(&config.api_key)?;
+        Ok(config)
+    }
+}
+
+/// Expande referencias a variables de entorno con el patrón `${VAR_NAME}`.
+///
+/// Si no hay `${...}`, devuelve el valor sin modificar.
+/// Si una variable de entorno no está definida, devuelve error descriptivo.
+#[allow(dead_code)]
+pub fn expand_env_vars(value: &str) -> anyhow::Result<String> {
+    let mut result = String::with_capacity(value.len());
+    let mut chars = value.char_indices().peekable();
+
+    while let Some((pos, ch)) = chars.next() {
+        if ch == '$' {
+            // Peek ahead: if next char is '{', it's an env var reference
+            let remaining = &value[pos..];
+            if let Some(rest) = remaining.strip_prefix("${") {
+                if let Some(end_idx) = rest.find('}') {
+                    let var_name = &rest[..end_idx];
+                    let var_value = std::env::var(var_name).map_err(|_| {
+                        anyhow::anyhow!(
+                            "variable de entorno '{}' no definida. Define '{}' antes de ejecutar regista",
+                            var_name, var_name
+                        )
+                    })?;
+                    result.push_str(&var_value);
+                    // Skip the characters we've consumed
+                    let skip_len = 3 + var_name.len(); // ${ + name + }
+                    for _ in 0..(skip_len - 1) {
+                        chars.next();
+                    }
+                    continue;
+                }
+            }
+        }
+        result.push(ch);
+    }
+
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -462,15 +506,15 @@ mod tests {
         // Por defecto, el provider es pi → usa .pi/skills/<rol>/SKILL.md
         // Roles con underscore se convierten a hyphens (requisito de pi)
         assert_eq!(
-            cfg.agents.skill_for_role("product_owner"),
+            crate::app::resolver::skill_path(&cfg.agents, "product_owner"),
             ".pi/skills/product-owner/SKILL.md"
         );
         assert_eq!(
-            cfg.agents.skill_for_role("qa_engineer"),
+            crate::app::resolver::skill_path(&cfg.agents, "qa_engineer"),
             ".pi/skills/qa-engineer/SKILL.md"
         );
         assert_eq!(
-            cfg.agents.skill_for_role("developer"),
+            crate::app::resolver::skill_path(&cfg.agents, "developer"),
             ".pi/skills/developer/SKILL.md"
         );
     }
@@ -525,12 +569,12 @@ skill = ".pi/skills/senior-reviewer/SKILL.md"
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
         assert_eq!(
-            cfg.agents.skill_for_role("reviewer"),
+            crate::app::resolver::skill_path(&cfg.agents, "reviewer"),
             ".pi/skills/senior-reviewer/SKILL.md"
         );
         // Los demás usan la convención
         assert_eq!(
-            cfg.agents.skill_for_role("developer"),
+            crate::app::resolver::skill_path(&cfg.agents, "developer"),
             ".pi/skills/developer/SKILL.md"
         );
     }
@@ -552,13 +596,13 @@ provider = "codex"
 
         assert_eq!(cfg.agents.provider_for_role("product_owner"), "claude");
         assert_eq!(
-            cfg.agents.skill_for_role("product_owner"),
+            crate::app::resolver::skill_path(&cfg.agents, "product_owner"),
             ".claude/agents/po-custom.md"
         );
 
         assert_eq!(cfg.agents.provider_for_role("developer"), "codex");
         assert_eq!(
-            cfg.agents.skill_for_role("developer"),
+            crate::app::resolver::skill_path(&cfg.agents, "developer"),
             ".agents/skills/developer/SKILL.md"
         );
 
@@ -731,7 +775,7 @@ provider = "opencode"
     #[test]
     fn story002_ca2_method_exists_skill_for_role() {
         let cfg = Config::default();
-        let result = cfg.agents.skill_for_role("developer");
+        let result = crate::app::resolver::skill_path(&cfg.agents, "developer");
         assert_eq!(result, ".pi/skills/developer/SKILL.md");
     }
 
@@ -740,15 +784,15 @@ provider = "opencode"
     fn story002_ca2_pi_convention_skill_paths() {
         let cfg = Config::default();
         assert_eq!(
-            cfg.agents.skill_for_role("product_owner"),
+            crate::app::resolver::skill_path(&cfg.agents, "product_owner"),
             ".pi/skills/product-owner/SKILL.md"
         );
         assert_eq!(
-            cfg.agents.skill_for_role("qa_engineer"),
+            crate::app::resolver::skill_path(&cfg.agents, "qa_engineer"),
             ".pi/skills/qa-engineer/SKILL.md"
         );
         assert_eq!(
-            cfg.agents.skill_for_role("reviewer"),
+            crate::app::resolver::skill_path(&cfg.agents, "reviewer"),
             ".pi/skills/reviewer/SKILL.md"
         );
     }
@@ -762,7 +806,7 @@ provider = "claude"
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
         assert_eq!(
-            cfg.agents.skill_for_role("developer"),
+            crate::app::resolver::skill_path(&cfg.agents, "developer"),
             ".claude/agents/developer.md"
         );
     }
@@ -776,7 +820,7 @@ provider = "codex"
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
         assert_eq!(
-            cfg.agents.skill_for_role("developer"),
+            crate::app::resolver::skill_path(&cfg.agents, "developer"),
             ".agents/skills/developer/SKILL.md"
         );
     }
@@ -790,7 +834,7 @@ provider = "opencode"
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
         assert_eq!(
-            cfg.agents.skill_for_role("developer"),
+            crate::app::resolver::skill_path(&cfg.agents, "developer"),
             ".opencode/agents/developer.md"
         );
     }
@@ -807,7 +851,7 @@ skill = ".pi/skills/senior-reviewer/SKILL.md"
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
         assert_eq!(
-            cfg.agents.skill_for_role("reviewer"),
+            crate::app::resolver::skill_path(&cfg.agents, "reviewer"),
             ".pi/skills/senior-reviewer/SKILL.md"
         );
     }
@@ -816,7 +860,7 @@ skill = ".pi/skills/senior-reviewer/SKILL.md"
     #[test]
     fn story002_ca2_unknown_role_returns_empty_string() {
         let cfg = Config::default();
-        assert_eq!(cfg.agents.skill_for_role("unknown_role"), "");
+        assert_eq!(crate::app::resolver::skill_path(&cfg.agents, "unknown_role"), "");
     }
 
     /// CA2: skill_for_role con provider explícito por rol y skill explícito.
@@ -836,16 +880,16 @@ provider = "codex"
         let cfg: Config = toml::from_str(toml).unwrap();
 
         assert_eq!(
-            cfg.agents.skill_for_role("product_owner"),
+            crate::app::resolver::skill_path(&cfg.agents, "product_owner"),
             ".claude/agents/po-custom.md"
         );
         assert_eq!(
-            cfg.agents.skill_for_role("developer"),
+            crate::app::resolver::skill_path(&cfg.agents, "developer"),
             ".agents/skills/developer/SKILL.md"
         );
         // QA y Reviewer heredan pi
         assert_eq!(
-            cfg.agents.skill_for_role("qa_engineer"),
+            crate::app::resolver::skill_path(&cfg.agents, "qa_engineer"),
             ".pi/skills/qa-engineer/SKILL.md"
         );
     }
@@ -881,7 +925,7 @@ provider = "codex"
         let cfg = Config::default();
         let role = "developer";
         let provider_name = cfg.agents.provider_for_role(role);
-        let skill_path = cfg.agents.skill_for_role(role);
+        let skill_path = crate::app::resolver::skill_path(&cfg.agents, role);
 
         assert_eq!(provider_name, "pi");
         assert_eq!(skill_path, ".pi/skills/developer/SKILL.md");
@@ -902,14 +946,14 @@ provider = "codex"
         // PO usa claude (global)
         assert_eq!(cfg.agents.provider_for_role("product_owner"), "claude");
         assert_eq!(
-            cfg.agents.skill_for_role("product_owner"),
+            crate::app::resolver::skill_path(&cfg.agents, "product_owner"),
             ".claude/agents/product_owner.md"
         );
 
         // Dev usa codex (específico)
         assert_eq!(cfg.agents.provider_for_role("developer"), "codex");
         assert_eq!(
-            cfg.agents.skill_for_role("developer"),
+            crate::app::resolver::skill_path(&cfg.agents, "developer"),
             ".agents/skills/developer/SKILL.md"
         );
     }
@@ -925,7 +969,7 @@ provider = "opencode"
 
         // plan.rs usa "product_owner" como rol fijo
         let provider_name = cfg.agents.provider_for_role("product_owner");
-        let skill_path_str = cfg.agents.skill_for_role("product_owner");
+        let skill_path_str = crate::app::resolver::skill_path(&cfg.agents, "product_owner");
 
         assert_eq!(provider_name, "opencode");
         assert_eq!(skill_path_str, ".opencode/agents/product-owner.md");
@@ -985,7 +1029,7 @@ provider = "opencode"
     fn story019_ca3_model_for_role_exists_and_compiles() {
         let cfg = AgentsConfig::default();
         // Solo verificamos que compila y devuelve un String
-        let result = cfg.model_for_role("developer", Path::new("nonexistent.md"));
+        let result = crate::app::resolver::model(&cfg, "developer", Path::new("nonexistent.md"));
         let _s: String = result;
     }
 
@@ -994,7 +1038,7 @@ provider = "opencode"
     fn story019_ca3_model_for_role_accepts_all_canonical_roles() {
         let cfg = AgentsConfig::default();
         for role in AgentsConfig::all_roles() {
-            let result = cfg.model_for_role(role, Path::new("nonexistent.md"));
+            let result = crate::app::resolver::model(&cfg, role, Path::new("nonexistent.md"));
             let _s: String = result; // compila para los 4 roles
         }
     }
@@ -1003,7 +1047,7 @@ provider = "opencode"
     #[test]
     fn story019_ca3_model_for_role_accepts_unknown_role() {
         let cfg = AgentsConfig::default();
-        let result = cfg.model_for_role("unknown_role", Path::new("nonexistent.md"));
+        let result = crate::app::resolver::model(&cfg, "unknown_role", Path::new("nonexistent.md"));
         let _s: String = result;
     }
 
@@ -1020,9 +1064,7 @@ provider = "pi"
 model = "gpt-5"
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
-        let result = cfg
-            .agents
-            .model_for_role("developer", Path::new("nonexistent.md"));
+        let result = crate::app::resolver::model(&cfg.agents, "developer", Path::new("nonexistent.md"));
         assert_eq!(result, "gpt-5");
     }
 
@@ -1038,9 +1080,7 @@ model = "claude-sonnet-4"
 model = "gpt-5"
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
-        let result = cfg
-            .agents
-            .model_for_role("developer", Path::new("nonexistent.md"));
+        let result = crate::app::resolver::model(&cfg.agents, "developer", Path::new("nonexistent.md"));
         assert_eq!(
             result, "gpt-5",
             "El modelo de rol (gpt-5) debe prevalecer sobre el global (claude-sonnet-4)"
@@ -1058,9 +1098,7 @@ provider = "pi"
 model = "claude-sonnet-4"
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
-        let result = cfg
-            .agents
-            .model_for_role("developer", Path::new("nonexistent.md"));
+        let result = crate::app::resolver::model(&cfg.agents, "developer", Path::new("nonexistent.md"));
         assert_eq!(result, "claude-sonnet-4");
     }
 
@@ -1081,7 +1119,7 @@ provider = "pi"
 model = "claude-sonnet-4"
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
-        let result = cfg.agents.model_for_role("developer", &skill);
+        let result = crate::app::resolver::model(&cfg.agents, "developer", &skill);
         assert_eq!(
             result, "claude-sonnet-4",
             "El modelo global debe prevalecer sobre el YAML del skill"
@@ -1103,7 +1141,7 @@ model = "claude-sonnet-4"
         .unwrap();
 
         let cfg = AgentsConfig::default(); // sin model global ni por rol
-        let result = cfg.model_for_role("developer", &skill);
+        let result = crate::app::resolver::model(&cfg, "developer", &skill);
         assert_eq!(result, "opencode/gpt-5-nano");
     }
 
@@ -1120,7 +1158,7 @@ model = "claude-sonnet-4"
         .unwrap();
 
         let cfg = AgentsConfig::default();
-        let result = cfg.model_for_role("custom_role", &skill);
+        let result = crate::app::resolver::model(&cfg, "custom_role", &skill);
         assert_eq!(result, "mistral-large");
     }
 
@@ -1131,7 +1169,7 @@ model = "claude-sonnet-4"
     #[test]
     fn story019_ca7_returns_desconocido_when_no_model_anywhere() {
         let cfg = AgentsConfig::default();
-        let result = cfg.model_for_role("developer", Path::new("/nonexistent/skill.md"));
+        let result = crate::app::resolver::model(&cfg, "developer", Path::new("/nonexistent/skill.md"));
         assert_eq!(result, "desconocido");
     }
 
@@ -1147,7 +1185,7 @@ model = "claude-sonnet-4"
         .unwrap();
 
         let cfg = AgentsConfig::default();
-        let result = cfg.model_for_role("developer", &skill);
+        let result = crate::app::resolver::model(&cfg, "developer", &skill);
         assert_eq!(result, "desconocido");
     }
 
@@ -1158,7 +1196,7 @@ model = "claude-sonnet-4"
     fn story019_ca8_no_panic_on_missing_skill_path() {
         let cfg = AgentsConfig::default();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            cfg.model_for_role("developer", Path::new("/definitivamente/no/existe.md"))
+            crate::app::resolver::model(&cfg, "developer", Path::new("/definitivamente/no/existe.md"))
         }));
         assert!(
             result.is_ok(),
@@ -1171,7 +1209,7 @@ model = "claude-sonnet-4"
     #[test]
     fn story019_ca8_missing_skill_returns_desconocido() {
         let cfg = AgentsConfig::default();
-        let result = cfg.model_for_role("qa_engineer", Path::new("/tmp/no-existe.md"));
+        let result = crate::app::resolver::model(&cfg, "qa_engineer", Path::new("/tmp/no-existe.md"));
         assert_eq!(
             result, "desconocido",
             "skill_path inexistente debe devolver 'desconocido', no paniquear"
@@ -1183,7 +1221,7 @@ model = "claude-sonnet-4"
     fn story019_ca8_empty_skill_path_does_not_panic() {
         let cfg = AgentsConfig::default();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            cfg.model_for_role("developer", Path::new(""))
+            crate::app::resolver::model(&cfg, "developer", Path::new(""))
         }));
         assert!(
             result.is_ok(),
@@ -1231,7 +1269,7 @@ enabled = false
         assert_eq!(cfg.agents.provider, "claude");
         assert_eq!(cfg.agents.provider_for_role("developer"), "pi");
         assert_eq!(
-            cfg.agents.skill_for_role("developer"),
+            crate::app::resolver::skill_path(&cfg.agents, "developer"),
             ".pi/skills/senior-dev/SKILL.md"
         );
         assert_eq!(cfg.limits.max_iterations, 10);
@@ -1301,7 +1339,7 @@ model = "gpt-5"
 "#;
         let cfg1: Config = toml::from_str(toml1).unwrap();
         assert_eq!(
-            cfg1.agents.model_for_role("product_owner", &skill),
+            crate::app::resolver::model(&cfg1.agents, "product_owner", &skill),
             "gpt-5",
             "Caso 1: modelo de rol debe usarse"
         );
@@ -1314,7 +1352,7 @@ model = "claude-sonnet-4"
 "#;
         let cfg2: Config = toml::from_str(toml2).unwrap();
         assert_eq!(
-            cfg2.agents.model_for_role("product_owner", &skill),
+            crate::app::resolver::model(&cfg2.agents, "product_owner", &skill),
             "claude-sonnet-4",
             "Caso 2: modelo global debe usarse cuando no hay de rol"
         );
@@ -1322,14 +1360,14 @@ model = "claude-sonnet-4"
         // Caso 3: YAML frontmatter (sin config)
         let cfg3 = AgentsConfig::default();
         assert_eq!(
-            cfg3.model_for_role("product_owner", &skill),
+            crate::app::resolver::model(&cfg3, "product_owner", &skill),
             "gpt-5-nano",
             "Caso 3: YAML frontmatter debe usarse cuando no hay config"
         );
 
         // Caso 4: "desconocido" (nada definido)
         assert_eq!(
-            cfg3.model_for_role("product_owner", Path::new("/no/existe.md")),
+            crate::app::resolver::model(&cfg3, "product_owner", Path::new("/no/existe.md")),
             "desconocido",
             "Caso 4: 'desconocido' cuando no hay modelo en ningún lado"
         );
@@ -1342,9 +1380,11 @@ model = "claude-sonnet-4"
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         std::fs::create_dir(root.join("stories")).unwrap();
+        std::fs::create_dir(root.join("epics")).unwrap();
 
         let mut cfg = Config::default();
         cfg.project.stories_dir = "stories".to_string();
+        cfg.project.epics_dir = "epics".to_string();
 
         assert!(cfg.validate(root).is_ok());
     }
@@ -1426,11 +1466,13 @@ model = "claude-sonnet-4"
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         std::fs::create_dir(root.join("stories")).unwrap();
+        std::fs::create_dir(root.join("epics")).unwrap();
 
         let mut cfg = Config::default();
         cfg.project.stories_dir = "stories".to_string();
         cfg.project.decisions_dir = "decisions".to_string();
         cfg.project.log_dir = "log".to_string();
+        cfg.project.epics_dir = "epics".to_string();
 
         assert!(cfg.validate(root).is_ok());
 
@@ -1460,5 +1502,236 @@ model = "claude-sonnet-4"
         cfg.project.log_dir = "log".to_string();
 
         assert!(cfg.validate(root).is_ok());
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // EPIC-V10-01 | STORY-V10-005: Configuración de modelos LLM en TOML
+    // ═══════════════════════════════════════════════════════════════
+
+    // ── CA1: [models] sección en TOML, ModelConfig struct ───────────
+
+    /// CA1: ModelConfig se deserializa correctamente desde TOML.
+    #[test]
+    fn story_v10005_ca1_model_config_deserializes() {
+        let toml = r#"
+[models.gpt4o]
+provider = "openai"
+model_id = "gpt-4o"
+api_key = "${OPENAI_API_KEY}"
+base_url = "https://api.openai.com/v1"
+
+[models.claude]
+provider = "anthropic"
+model_id = "claude-sonnet-4-20250514"
+api_key = "${ANTHROPIC_API_KEY}"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+
+        assert_eq!(cfg.models.len(), 2);
+        assert!(cfg.models.contains_key("gpt4o"));
+        assert!(cfg.models.contains_key("claude"));
+
+        let gpt = &cfg.models["gpt4o"];
+        assert_eq!(gpt.provider, "openai");
+        assert_eq!(gpt.model_id, "gpt-4o");
+        assert_eq!(gpt.api_key, "${OPENAI_API_KEY}");
+        assert_eq!(gpt.base_url.as_deref(), Some("https://api.openai.com/v1"));
+
+        let claude = &cfg.models["claude"];
+        assert_eq!(claude.provider, "anthropic");
+        assert_eq!(claude.model_id, "claude-sonnet-4-20250514");
+        assert_eq!(claude.api_key, "${ANTHROPIC_API_KEY}");
+        assert!(claude.base_url.is_none());
+    }
+
+    /// CA1: La sección [models] es opcional (default vacía).
+    #[test]
+    fn story_v10005_ca1_models_section_is_optional() {
+        let toml = r#"
+[agents]
+provider = "pi"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert!(cfg.models.is_empty());
+    }
+
+    /// CA1: ModelConfig con solo campos obligatorios (sin base_url).
+    #[test]
+    fn story_v10005_ca1_model_config_minimal_fields() {
+        let toml = r#"
+[models.local]
+provider = "openai"
+model_id = "llama3"
+api_key = "no-auth-needed"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let m = &cfg.models["local"];
+        assert_eq!(m.provider, "openai");
+        assert_eq!(m.model_id, "llama3");
+        assert_eq!(m.api_key, "no-auth-needed");
+        assert!(m.base_url.is_none());
+    }
+
+    /// CA1: ModelConfig con base_url personalizado.
+    #[test]
+    fn story_v10005_ca1_model_config_with_custom_base_url() {
+        let toml = r#"
+[models.ollama]
+provider = "openai"
+model_id = "llama3"
+api_key = "ollama"
+base_url = "http://localhost:11434/v1"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let m = &cfg.models["ollama"];
+        assert_eq!(m.base_url.as_deref(), Some("http://localhost:11434/v1"));
+        assert_eq!(m.provider, "openai");
+    }
+
+    // ── CA2: resolve_model busca y expande ────────────────────────────
+
+    /// CA2: resolve_model encuentra modelo y expande ${ENV_VAR}.
+    #[test]
+    fn story_v10005_ca2_resolve_model_expands_env_var() {
+        std::env::set_var("TEST_V10_005_KEY", "sk-test-12345");
+
+        let toml = r#"
+[models.test]
+provider = "openai"
+model_id = "gpt-4o"
+api_key = "${TEST_V10_005_KEY}"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let resolved = cfg.resolve_model("test").unwrap();
+
+        assert_eq!(resolved.provider, "openai");
+        assert_eq!(resolved.model_id, "gpt-4o");
+        assert_eq!(resolved.api_key, "sk-test-12345");
+    }
+
+    /// CA2: resolve_model devuelve error si el modelo no existe.
+    #[test]
+    fn story_v10005_ca2_resolve_model_error_for_unknown_model() {
+        let cfg = Config::default();
+        let result = cfg.resolve_model("nonexistent");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("nonexistent"),
+            "error debe mencionar el nombre: {err}"
+        );
+        assert!(err.contains("modelo"), "error debe ser descriptivo: {err}");
+    }
+
+    /// CA2: resolve_model lista los modelos disponibles en el error.
+    #[test]
+    fn story_v10005_ca2_resolve_model_lists_available_models_in_error() {
+        let toml = r#"
+[models.gpt4o]
+provider = "openai"
+model_id = "gpt-4o"
+api_key = "sk-123"
+
+[models.claude]
+provider = "anthropic"
+model_id = "claude-sonnet"
+api_key = "sk-456"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let result = cfg.resolve_model("unknown");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("gpt4o"), "debe listar gpt4o: {err}");
+        assert!(err.contains("claude"), "debe listar claude: {err}");
+    }
+
+    /// CA2: resolve_model indica "(ninguno)" si no hay modelos definidos.
+    #[test]
+    fn story_v10005_ca2_resolve_model_empty_models_says_ninguno() {
+        let cfg = Config::default();
+        let result = cfg.resolve_model("any");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("(ninguno)"), "error: {err}");
+    }
+
+    /// CA2: resolve_model falla si la variable de entorno no está definida.
+    #[test]
+    fn story_v10005_ca2_resolve_model_fails_on_missing_env_var() {
+        // Use an env var name that definitely doesn't exist
+        let toml = r#"
+[models.broken]
+provider = "openai"
+model_id = "gpt-4o"
+api_key = "${DEFINITELY_NOT_SET_12345_XYZ}"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let result = cfg.resolve_model("broken");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("DEFINITELY_NOT_SET_12345_XYZ"),
+            "error debe mencionar la variable: {err}"
+        );
+        assert!(
+            err.contains("no definida"),
+            "error debe decir que no está definida: {err}"
+        );
+    }
+
+    // ── expand_env_vars ─────────────────────────────────────────────
+
+    /// expand_env_vars expande una variable de entorno.
+    #[test]
+    fn expand_env_vars_replaces_variable() {
+        std::env::set_var("RE_TEST_KEY", "my-secret-value");
+        let result = expand_env_vars("prefix-${RE_TEST_KEY}-suffix").unwrap();
+        assert_eq!(result, "prefix-my-secret-value-suffix");
+    }
+
+    /// expand_env_vars devuelve el valor sin cambios si no hay ${...}.
+    #[test]
+    fn expand_env_vars_no_placeholder_returns_unchanged() {
+        let result = expand_env_vars("plain-text-no-vars").unwrap();
+        assert_eq!(result, "plain-text-no-vars");
+    }
+
+    /// expand_env_vars expande múltiples variables.
+    #[test]
+    fn expand_env_vars_multiple_variables() {
+        std::env::set_var("EX_A", "alpha");
+        std::env::set_var("EX_B", "beta");
+        let result = expand_env_vars("${EX_A}-and-${EX_B}").unwrap();
+        assert_eq!(result, "alpha-and-beta");
+    }
+
+    /// expand_env_vars falla si la variable no existe.
+    #[test]
+    fn expand_env_vars_fails_on_missing_var() {
+        let result = expand_env_vars("${NONEXISTENT_VAR_12345}");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("NONEXISTENT_VAR_12345"), "error: {err}");
+    }
+
+    /// expand_env_vars maneja correctamente $ sin llaves (literal).
+    #[test]
+    fn expand_env_vars_dollar_without_braces_is_literal() {
+        let result = expand_env_vars("cost: $100").unwrap();
+        assert_eq!(result, "cost: $100");
+    }
+
+    /// expand_env_vars maneja ${} vacío.
+    #[test]
+    fn expand_env_vars_empty_braces_fails() {
+        // ${} is an env var named "" which doesn't exist
+        let result = expand_env_vars("${}");
+        assert!(result.is_err());
+    }
+
+    /// expand_env_vars expande al final del string.
+    #[test]
+    fn expand_env_vars_at_end_of_string() {
+        std::env::set_var("TAIL_KEY", "endofline");
+        let result = expand_env_vars("start-${TAIL_KEY}").unwrap();
+        assert_eq!(result, "start-endofline");
     }
 }

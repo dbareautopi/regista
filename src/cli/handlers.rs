@@ -262,7 +262,8 @@ fn handle_auto(args: AutoArgs) {
         }
 
         // Pipeline dry-run
-        let mut run_options = build_run_options(&args.pipeline, args.common.quiet, args.common.compact);
+        let mut run_options =
+            build_run_options(&args.pipeline, args.common.quiet, args.common.compact);
         run_options.dry_run = true;
         match app::pipeline::run(project_root, &cfg, &run_options, None) {
             Ok(report) => print_pipeline_summary(&report),
@@ -354,7 +355,8 @@ fn handle_run(args: RunArgs) {
             args.common.config.as_deref(),
             args.common.provider.as_deref(),
         );
-        let mut run_options = build_run_options(&args.pipeline, args.common.quiet, args.common.compact);
+        let mut run_options =
+            build_run_options(&args.pipeline, args.common.quiet, args.common.compact);
         run_options.dry_run = true;
         match app::pipeline::run(project_root, &cfg, &run_options, None) {
             Ok(report) => print_pipeline_summary(&report),
@@ -624,7 +626,11 @@ fn load_config(
 }
 
 /// Construye `RunOptions` desde los flags de pipeline.
-fn build_run_options(pipeline: &PipelineArgs, quiet: bool, compact: bool) -> app::pipeline::RunOptions {
+fn build_run_options(
+    pipeline: &PipelineArgs,
+    quiet: bool,
+    compact: bool,
+) -> app::pipeline::RunOptions {
     let epics_range = pipeline.epics.as_ref().and_then(|range| {
         let parts: Vec<&str> = range.split("..").collect();
         if parts.len() == 2 {
@@ -787,7 +793,7 @@ fn spawn_and_optionally_follow(
 }
 
 /// Imprime el resumen del pipeline (modo dry-run).
-fn print_pipeline_summary(report: &app::pipeline::RunReport) {
+fn print_pipeline_summary(report: &app::report::RunReport) {
     if let Some(ref reason) = report.stop_reason {
         println!("\n⚠️  Pipeline detenido: {reason}");
     } else {
@@ -803,7 +809,7 @@ fn print_pipeline_summary(report: &app::pipeline::RunReport) {
 }
 
 /// Calcula el exit code según el resultado del pipeline.
-fn exit_code_from_report(report: &app::pipeline::RunReport) -> i32 {
+fn exit_code_from_report(report: &app::report::RunReport) -> i32 {
     if report.stop_reason.is_some() {
         3
     } else if report.failed > 0 {
@@ -883,9 +889,9 @@ pub fn format_session_header(
     let models = config::AgentsConfig::all_roles()
         .iter()
         .map(|role| {
-            let skill_rel = cfg.agents.skill_for_role(role);
+            let skill_rel = crate::app::resolver::skill_path(&cfg.agents, role);
             let skill_abs = project_root.join(&skill_rel);
-            let model = cfg.agents.model_for_role(role, &skill_abs);
+            let model = crate::app::resolver::model(&cfg.agents, role, &skill_abs);
             let abbr = role_abbreviation(role);
             format!("{abbr}={model}")
         })
@@ -1045,7 +1051,7 @@ mod tests {
 
     #[test]
     fn exit_code_all_done_is_zero() {
-        let report = app::pipeline::RunReport {
+        let report = app::report::RunReport {
             total: 5,
             done: 5,
             failed: 0,
@@ -1062,7 +1068,7 @@ mod tests {
 
     #[test]
     fn exit_code_with_failures_is_2() {
-        let report = app::pipeline::RunReport {
+        let report = app::report::RunReport {
             total: 5,
             done: 3,
             failed: 2,
@@ -1079,7 +1085,7 @@ mod tests {
 
     #[test]
     fn exit_code_stopped_early_is_3() {
-        let report = app::pipeline::RunReport {
+        let report = app::report::RunReport {
             total: 10,
             done: 2,
             failed: 0,
@@ -1446,9 +1452,9 @@ model = "gpt-5"
                 ("developer", "Dev"),
                 ("reviewer", "Reviewer"),
             ] {
-                let skill_rel = cfg.agents.skill_for_role(role);
+                let skill_rel = crate::app::resolver::skill_path(&cfg.agents, role);
                 let skill_abs = project_root.join(&skill_rel);
-                let expected_model = cfg.agents.model_for_role(role, &skill_abs);
+                let expected_model = crate::app::resolver::model(&cfg.agents, role, &skill_abs);
                 let expected_fragment = format!("{role_abbr}={expected_model}");
                 assert!(
                     header.contains(&expected_fragment),
